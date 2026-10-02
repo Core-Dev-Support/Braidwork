@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.75"
 description = "Braidwork core: device identity, family trust, encrypted sessions, multi-transport, no server"
 license = "Apache-2.0"
-repository = "https://github.com/example/braidwork-core"
+repository = "https://github.com/Core-Dev-Support/Braidwork"
 
 [lib]
 name = "braidwork_core"
@@ -14,28 +14,23 @@ name = "braidwork_core"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# Криптография. Noise XX реализация, а не самодельный обмен ключами.
+# Криптография. Noise XX и ed25519 — готовые реализации, а не самодельный обмен ключами.
+# Фича rand_core обязательна: генерация ключей идёт из того же OsRng, что и подпись,
+# иначе типы ключей не сойдутся.
 snow = "0.9"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 x25519-dalek = { version = "2", features = ["static_secrets", "getrandom"] }
 blake3 = "1"
-rand = "0.8"
 rand_core = "0.6"
 zeroize = { version = "1", features = ["derive"] }
 
 # Сериализация. Protobuf для всех сообщений, включая BLE. Решение D-003.
 prost = "0.13"
-prost-types = "0.13"
 
-# Время.
 thiserror = "1"
-parking_lot = "0.12"
 
 [dev-dependencies]
 serde_json = "1"
-hex = "0.4"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync"] }
-tempfile = "3"
 
 [build-dependencies]
 prost-build = "0.13"
@@ -46,9 +41,10 @@ default = ["transport-lan", "transport-ble", "transport-ice", "transport-usb", "
 # Клиент без интерфейса и без BLE не должен тащить их в сборку.
 transport-lan = []
 transport-ble = []
-transport-ice = ["dep:stun"]
 transport-usb = []
 transport-softap = []
+# ICE-канал нужен только для связи между разными сетками. Тянет tokio и stun.
+transport-ice = ["dep:stun", "dep:tokio"]
 # Экранный поток тянет кодировщики. Включается только клиентами, которым они нужны.
 media = ["dep:tokio"]
 
