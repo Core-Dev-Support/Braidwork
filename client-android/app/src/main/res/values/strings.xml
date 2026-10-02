@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Braidwork</string>
+
+    <!-- Текст системного диалога, где выдаётся доступ к уведомлениям. -->
+    <string name="notification_relay_label">Braidwork: пересылка уведомлений</string>
+
+    <string name="channel_link">Связь устройств</string>
+</resources>

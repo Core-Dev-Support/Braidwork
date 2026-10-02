@@ -14,7 +14,10 @@ use zeroize::Zeroize;
 /// Менять нельзя: смена значения делает все выпущенные устройства чужими.
 const DEVICE_ID_DOMAIN: &[u8] = b"bw-device-id-v1";
 
-#[derive(Debug, Error)]
+/// Префикс доменного разделения при хэшировании набора возможностей.
+const CAPS_DOMAIN: &[u8] = b"bw-caps-v1";
+
+#[derive(Debug, Error, PartialEq, Eq, Clone, Copy)]
 pub enum CryptoError {
     #[error("криптографическая операция отклонена")]
     Rejected,
@@ -46,9 +49,14 @@ impl DeviceKeys {
         let mut static_bytes = [0u8; 32];
         let mut signing_bytes = [0u8; 32];
         let mut qr_bytes = [0u8; 32];
-        OsRng.fill_bytes(&mut static_bytes);
-        OsRng.fill_bytes(&mut signing_bytes);
-        OsRng.fill_bytes(&mut qr_bytes);
+
+        // OsRng — единовременный источник, но RngCore требует изменяемый
+        // получатель, поэтому берём его в переменную, а не обращаемся к
+        // временному значению.
+        let mut rng = OsRng;
+        rng.fill_bytes(&mut static_bytes);
+        rng.fill_bytes(&mut signing_bytes);
+        rng.fill_bytes(&mut qr_bytes);
 
         Self {
             static_key: x25519_dalek::StaticSecret::from(static_bytes),
@@ -65,8 +73,12 @@ impl DeviceKeys {
         self.signing_key.verifying_key().to_bytes()
     }
 
-    pub fn signing_key(&self) -> &SigningKey {
-        &self.signing_key
+    /// Статический секрет для Noise XX.
+    ///
+    /// Отдаётся ссылкой и остаётся внутри объекта: копия секрета в руках
+    /// вызывающей стороны рано или поздно оказалась бы в дампе памяти.
+    pub fn static_secret(&self) -> &x25519_dalek::StaticSecret {
+        &self.static_key
     }
 
     /// Одноразовый ключ для QR. Забирается ровно один раз.
@@ -89,29 +101,21 @@ impl DeviceKeys {
     /// Идентификатор не выдаётся, а выводится, поэтому он не может быть занят
     /// другим устройством и переживает перезагрузку.
     pub fn device_id(&self) -> DeviceId {
-        let mut buf = Vec::with_capacity(DEVICE_ID_DOMAIN.len() + 32);
-        buf.extend_from_slice(DEVICE_ID_DOMAIN);
-        buf.extend_from_slice(&self.signing_public());
-        let hash = blake3::hash(&buf);
-        let id = hash.as_bytes()[..16].to_vec();
-
-        // base32 без заполнения, как в RFC 4648, чтобы id оставался компактным.
-        let encoded = base32_nopad(&id);
-        DeviceId(encoded)
+        device_id_from_signing(&self.signing_public())
     }
 
-    /// Заголовок рукопожатия: байты, которые подписываются в `Hello`.
+    /// Лента, подписываемая в `Hello`.
     ///
-    /// Отдельная функция, а не свободная сборка на стороне вызова: иначе
-    /// подписываемое и проверяемое разъедутся при первой же правке.
+    /// Набор возможностей входит не строкой, а хэшем: иначе `["a", "b"]` и
+    /// `["a\nb"]` дали бы одинаковую подпись, и подмена не была бы заметна.
     ///
-    /// Принимает `&self`, хотя поля не читает: так подпись всегда собирается
-    /// тем же экземпляром ключей, который её потом и проверит.
-    pub fn handshake_tape(&self, capabilities: &[u8], nonce: u64) -> Vec<u8> {
-        let mut tape = Vec::with_capacity(72 + capabilities.len());
+    /// Принимает `&self`, хотя поля читает не все: так подпись всегда
+    /// собирается тем же экземпляром ключей, который её потом и проверит.
+    pub fn handshake_tape(&self, capabilities_hash: &[u8; 32], nonce: u64) -> Vec<u8> {
+        let mut tape = Vec::with_capacity(16 + 32 + 32 + 8);
         tape.extend_from_slice(self.device_id().as_bytes());
         tape.extend_from_slice(&self.static_public());
-        tape.extend_from_slice(capabilities);
+        tape.extend_from_slice(capabilities_hash);
         tape.extend_from_slice(&nonce.to_be_bytes());
         tape
     }
@@ -124,6 +128,32 @@ impl Drop for DeviceKeys {
         let mut bytes = self.signing_key.to_bytes();
         bytes.zeroize();
     }
+}
+
+/// Хэш набора возможностей для подписи.
+///
+/// Разделитель `\n` исключает неоднозначность: без него `["ab", "c"]` и
+/// `["a", "bc"]` дали бы один хэш.
+pub fn capabilities_hash(capabilities: &[String]) -> [u8; 32] {
+    let mut buf = Vec::with_capacity(CAPS_DOMAIN.len() + capabilities.len() * 8);
+    buf.extend_from_slice(CAPS_DOMAIN);
+    for cap in capabilities {
+        buf.extend_from_slice(cap.as_bytes());
+        buf.push(b'\n');
+    }
+    *blake3::hash(&buf).as_bytes()
+}
+
+/// `device_id` из публичного ключа подписи.
+///
+/// Нужен там, где приватного ключа нет, но идентификатор показать надо:
+/// клиент сверяет его по QR, не имея доступа к ключам устройства.
+pub fn device_id_from_signing(signing_public: &[u8; 32]) -> DeviceId {
+    let mut buf = Vec::with_capacity(DEVICE_ID_DOMAIN.len() + 32);
+    buf.extend_from_slice(DEVICE_ID_DOMAIN);
+    buf.extend_from_slice(signing_public);
+    let hash = blake3::hash(&buf);
+    DeviceId::from_raw(&hash.as_bytes()[..16])
 }
 
 /// Идентификатор устройства в текстовом виде.
@@ -140,27 +170,21 @@ impl DeviceId {
     }
 
     /// Сборка идентификатора из уже посчитанного хэша.
-    ///
-    /// Нужен там, где приватного ключа нет, но идентификатор показать надо:
-    /// клиент сверяет его по QR, не имея доступа к ключам устройства.
     pub fn from_raw(hash: &[u8]) -> Self {
         DeviceId(base32_nopad(hash))
     }
 
     /// Короткий отпечаток для сверки человеком: четыре группы по четыре символа.
     pub fn fingerprint(&self) -> String {
-        let bytes = self.0.as_bytes();
         let mut out = String::with_capacity(19);
-        for (i, chunk) in bytes.chunks(4).enumerate() {
-            if i > 0 {
-                out.push(' ');
-            }
-            for b in chunk {
-                out.push_str(&format!("{:02x}", b));
-            }
-            if out.len() > 17 {
+        for (i, b) in self.0.as_bytes().iter().enumerate() {
+            if i == 16 {
                 break;
             }
+            if i > 0 && i % 4 == 0 {
+                out.push(' ');
+            }
+            out.push_str(&format!("{:02x}", b));
         }
         out
     }
@@ -199,9 +223,8 @@ fn base32_nopad(data: &[u8]) -> String {
 
 /// Проверка подписи `Hello`.
 ///
-/// Проверяется и сама подпись, и соответствие: подпись должна быть сделана тем
-/// ключом, чьё имя указано в поле `signing`. Без второй проверки устройство
-/// подписало бы чужим ключом и прошло верификацию.
+/// Проверяется сама подпись. Соответствие подписи объявленному ключу — задача
+/// вызывающей стороны: она знает, как устройство объявило себя при обнаружении.
 pub fn verify_handshake(
     signing_public: &[u8; 32],
     tape: &[u8],
@@ -230,9 +253,6 @@ pub fn noise_params() -> Result<NoiseParams, CryptoError> {
 }
 
 /// Сторона рукопожатия: инициирующая.
-///
-/// Статический ключ передаётся байтами один раз, дальше `snow` держит его внутри
-/// состояния рукопожатия.
 pub fn noise_initiator(secret: &x25519_dalek::StaticSecret) -> Result<HandshakeState, CryptoError> {
     let params = noise_params()?;
     let bytes = secret.to_bytes();
@@ -256,24 +276,31 @@ pub fn noise_responder(secret: &x25519_dalek::StaticSecret) -> Result<HandshakeS
 mod tests {
     use super::*;
 
+    fn caps(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
     #[test]
     fn ключи_разные_у_разных_устройств() {
         let a = DeviceKeys::generate();
         let b = DeviceKeys::generate();
         assert_ne!(a.device_id(), b.device_id());
         assert_ne!(a.static_public(), b.static_public());
+        assert_ne!(a.signing_public(), b.signing_public());
     }
 
     #[test]
     fn идентификатор_стабилен_между_вызовами() {
         let a = DeviceKeys::generate();
         assert_eq!(a.device_id(), a.device_id());
+        assert_eq!(a.device_id().as_bytes().len(), 16);
     }
 
     #[test]
     fn подпись_проходит_проверку() {
         let a = DeviceKeys::generate();
-        let tape = a.handshake_tape(b"cap/v1", 42);
+        let hash = capabilities_hash(&caps(&["feature/v1"]));
+        let tape = a.handshake_tape(&hash, 42);
         let sig = a.sign(&tape);
         verify_handshake(&a.signing_public(), &tape, &sig).unwrap();
     }
@@ -282,16 +309,17 @@ mod tests {
     fn подпись_чужого_ключа_отвергается() {
         let a = DeviceKeys::generate();
         let b = DeviceKeys::generate();
-        let tape = a.handshake_tape(b"cap/v1", 42);
+        let hash = capabilities_hash(&caps(&["feature/v1"]));
+        let tape = a.handshake_tape(&hash, 42);
         let sig = a.sign(&tape);
-        // Проверяем подпись, но заявляем ключ другого устройства.
         assert!(verify_handshake(&b.signing_public(), &tape, &sig).is_err());
     }
 
     #[test]
     fn подпись_на_другой_ленте_отвергается() {
         let a = DeviceKeys::generate();
-        let tape = a.handshake_tape(b"cap/v1", 42);
+        let hash = capabilities_hash(&caps(&["feature/v1"]));
+        let tape = a.handshake_tape(&hash, 42);
         let sig = a.sign(&tape);
         let mut tampered = tape.clone();
         tampered[0] ^= 0xff;
@@ -308,5 +336,37 @@ mod tests {
     #[test]
     fn base32_совпадает_с_ожидаемым() {
         assert_eq!(base32_nopad(b"foobar"), "MZXW6YTBOI");
+    }
+
+    /// Главное свойство хэша возможностей: разные наборы не должны
+    /// подменяться друг под другом.
+    #[test]
+    fn хэш_возможностей_различает_неоднозначные_наборы() {
+        assert_ne!(
+            capabilities_hash(&caps(&["ab", "c"])),
+            capabilities_hash(&caps(&["a", "bc"]))
+        );
+        assert_ne!(
+            capabilities_hash(&caps(&["feature/v1"])),
+            capabilities_hash(&caps(&["feature/v2"]))
+        );
+        assert_eq!(
+            capabilities_hash(&caps(&["a", "b"])),
+            capabilities_hash(&caps(&["a", "b"]))
+        );
+        // Порядок значим: наборы сравниваются как множества на стороне клиента,
+        // а подпись должна соответствовать фактически отправленному порядку.
+        assert_ne!(
+            capabilities_hash(&caps(&["a", "b"])),
+            capabilities_hash(&caps(&["b", "a"]))
+        );
+    }
+
+    #[test]
+    fn отпечаток_читаемый() {
+        let a = DeviceKeys::generate();
+        let fp = a.device_id().fingerprint();
+        assert_eq!(fp.len(), 19, "четыре группы по четыре символа через пробел");
+        assert_eq!(fp.matches(' ').count(), 3);
     }
 }

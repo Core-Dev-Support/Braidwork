@@ -17,14 +17,21 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod crypto;
+mod session;
+
 pub mod pb {
     #![allow(clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/braidwork.v1.rs"));
 }
 
-pub use crypto::{
-    verify_handshake, CryptoError, DeviceId, DeviceKeys,
+pub use crypto::{verify_handshake, CryptoError, DeviceId, DeviceKeys};
+pub use session::{
+    build_hello, default_capabilities, parse_and_verify_hello, Handshake, HandshakeStep, Role,
+    Session, SessionError,
 };
+
+/// Версия протокола, которую объявляет ядро в `Hello`.
+pub const PROTOCOL_VERSION: u32 = 1;
 
 // =============================================================================
 // Статус-коды
@@ -291,6 +298,9 @@ mod tests {
         let a = device_id_from_signing(&key).unwrap();
         let b = device_id_from_signing(&key).unwrap();
         assert_eq!(a, b);
+        // Идентификатор — текст, а не сырые байты хэша.
+        assert!(!a.as_str().is_empty());
+        assert_eq!(a.as_bytes().len(), 16);
     }
 
     #[test]

@@ -1,0 +1,142 @@
+name: Android APK
+
+# Отладочная сборка Android-клиента.
+#
+# Собирается только здесь, локально не требуется: на машине владельца нет
+# Android Studio с нужным набором SDK, а лишние сборки на слабом ноутбуке
+# съедают время. Готовый APK кладётся в релиз на GitHub.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Имя релиза. Пусто — без публикации, только артефакт сборки'
+        required: false
+        type: string
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    name: Сборка APK
+    runs-on: ubuntu-latest
+    env:
+      TAG_INPUT: ${{ inputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+      - name: Приём лицензий SDK
+        run: sdkmanager --licenses </dev/null || true
+      - name: Установка платформы и build-tools
+        run: |
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Кэш Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('client-android/**/*.kt', 'client-android/**/*.toml') }}
+          restore-keys: gradle-
+
+      # Ядро собирается отдельно и кладётся в jniLibs. Собирать его внутри
+      # Gradle нельзя: тот же исходник уходит в Windows и Linux-сборки, и
+      # лишняя сборка внутри Android сломала бы разделение сред (D-012).
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: >-
+            aarch64-linux-android
+            armv7-linux-androideabi
+            i686-linux-android
+            x86_64-linux-android
+
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: '29'
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: apk
+
+      - name: Сборка ядра под все ABI
+        working-directory: core
+        run: |
+          ndk_dir="$ANDROID_NDK_ROOT"
+          if [ -z "$ndk_dir" ]; then
+            ndk_dir=$(ls -d "$ANDROID_SDK_ROOT/ndk/"* 2>/dev/null | tail -1)
+          fi
+          if [ -z "$ndk_dir" ]; then
+            sdkmanager "ndk;27.2.12479018"
+            ndk_dir="$ANDROID_SDK_ROOT/ndk/27.2.12479018"
+          fi
+          echo "NDK=$ndk_dir" >> "$GITHUB_ENV"
+          export NDK="$ndk_dir"
+
+          bin="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CC_aarch64_linux_android="$bin/aarch64-linux-android21-clang"
+          export CC_armv7_linux_androideabi="$bin/armv7a-linux-androideabi21-clang"
+          export CC_i686_linux_android="$bin/i686-linux-android21-clang"
+          export CC_x86_64_linux_android="$bin/x86_64-linux-android21-clang"
+          export AR="$bin/llvm-ar"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CC_aarch64_linux_android"
+          export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="$CC_armv7_linux_androideabi"
+          export CARGO_TARGET_I686_LINUX_ANDROID_LINKER="$CC_i686_linux_android"
+          export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$CC_x86_64_linux_android"
+
+          cargo build --release --target aarch64-linux-android
+          cargo build --release --target armv7-linux-androideabi
+          cargo build --release --target i686-linux-android
+          cargo build --release --target x86_64-linux-android
+
+          out="../client-android/app/src/main/jniLibs"
+          mkdir -p "$out"
+          copy() {
+            mkdir -p "$out/$1"
+            cp "target/$2/release/libbraidwork_core.so" "$out/$1/"
+          }
+          copy arm64-v8a    aarch64-linux-android
+          copy armeabi-v7a  armv7-linux-androideabi
+          copy x86         i686-linux-android
+          copy x86_64      x86_64-linux-android
+
+          ls -laR "$out"
+
+      - name: Сборка APK
+        working-directory: client-android
+        run: ./gradlew --no-daemon :app:assembleDebug
+
+      - name: Загрузка артефакта сборки
+        uses: actions/upload-artifact@v4
+        with:
+          name: braidwork-debug-apk
+          path: client-android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      # Релиз создаётся только если задан тег. Обычный запуск пайплайна
+      # оставляет APK в артефактах сборки и не засоряет список релизов.
+      - name: Публикация в релиз
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.tag != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ inputs.tag || github.ref_name }}
+          draft: true
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+          files: client-android/app/build/outputs/apk/debug/*.apk
+          body: |
+            Отладочная сборка.
+
+            Подпись debug: обновление поверх ранее установленной версии
+            сработает, пока ключ тот же. Для стабильных версий нужна
+            собственная подпись.

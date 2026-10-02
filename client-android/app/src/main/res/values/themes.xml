@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Базовая тема. Compose рисует интерфейс сам, поэтому тема нужна только
+        для системных элементов: строки состояния, диалогов и фона окна.
+        android:Theme.Material доступен с API 21, отдельная зависимость не нужна.
+    -->
+    <style name="Theme.Braidwork" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#FF1B1B1B</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

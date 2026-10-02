@@ -1,0 +1,93 @@
+name: Ядро
+
+# Сборка и тесты ядра. Только Linux: раннеры бесплатные и не требуют
+# установки Visual Studio, а ядро кроссплатформенное по определению (D-001).
+# Кросс-компиляция под Android проверяется отдельным заданием.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # Новый пуш отменяет предыдущий: незачем ждать, пока досидит устаревший.
+  group: core-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Сборка и тесты
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: core
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установка Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # protoc обязателен: prost-build генерирует типы из схемы.
+      # На раннере он есть, но полагаться на это нельзя — версия может уехать.
+      - name: protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: '29'
+
+      - name: Кэш cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
+      - name: Форматирование
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Тесты
+        run: cargo test --all-features -- --nocapture
+
+      - name: Сборка в release
+        # release-профиль проверяется отдельно: там снят panic = abort (D-008),
+        # и ошибка в unwind-настройках видна только на этой сборке.
+        run: cargo build --release
+
+  cross:
+    name: Кросс-компиляция под Android
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: >-
+            aarch64-linux-android
+            armv7-linux-androideabi
+            i686-linux-android
+            x86_64-linux-android
+
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: '29'
+
+      # Ядро собирается под четыре ABI: клиент отдаётся универсальным APK.
+      - name: Проверка всех ABI
+        run: |
+          for target in \
+            aarch64-linux-android \
+            armv7-linux-androideabi \
+            i686-linux-android \
+            x86_64-linux-android; do
+            echo "=== $target ==="
+            cargo build --target "$target"
+          done
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: android-cross
