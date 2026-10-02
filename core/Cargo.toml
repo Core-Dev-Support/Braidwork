@@ -1,0 +1,78 @@
+[package]
+name = "braidwork-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Braidwork core: device identity, family trust, encrypted sessions, multi-transport, no server"
+license = "Apache-2.0"
+repository = "https://github.com/example/braidwork-core"
+
+[lib]
+name = "braidwork_core"
+# cdylib — для вызова из Android (JNI), HarmonyOS (NAPI), Windows (P/Invoke), Linux (C-FFI).
+# rlib — для встроенного использования ядра в тестах и в десктопном демоне.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Криптография. Noise XX реализация, а не самодельный обмен ключами.
+snow = "0.9"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+x25519-dalek = { version = "2", features = ["static_secrets", "getrandom"] }
+blake3 = "1"
+rand = "0.8"
+rand_core = "0.6"
+zeroize = { version = "1", features = ["derive"] }
+
+# Сериализация. Protobuf для всех сообщений, включая BLE. Решение D-003.
+prost = "0.13"
+prost-types = "0.13"
+
+# Время.
+thiserror = "1"
+parking_lot = "0.12"
+
+[dev-dependencies]
+serde_json = "1"
+hex = "0.4"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync"] }
+tempfile = "3"
+
+[build-dependencies]
+prost-build = "0.13"
+
+[features]
+default = ["transport-lan", "transport-ble", "transport-ice", "transport-usb", "transport-softap"]
+# Каналы — включаемые по умолчанию, но каждый можно отключить у конкретного клиента.
+# Клиент без интерфейса и без BLE не должен тащить их в сборку.
+transport-lan = []
+transport-ble = []
+transport-ice = ["dep:stun"]
+transport-usb = []
+transport-softap = []
+# Экранный поток тянет кодировщики. Включается только клиентами, которым они нужны.
+media = ["dep:tokio"]
+
+[dependencies.stun]
+version = "0.2"
+optional = true
+
+[dependencies.tokio]
+version = "1"
+features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync"]
+optional = true
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+# panic = "abort" недопустим (D-008): ядро грузится в процесс чужого клиента, и abort
+# убил бы его без перехвата. С unwind catch_unwind на границе C ABI работает.
+# Плата — около 10-15% размера cdylib.
+panic = "unwind"
+strip = true
+
+# Профиль для десктопного демона: важна скорость, размер вторичен.
+# Unwind наследуется, снятие недопустимо и здесь: демон переживает панику.
+[profile.release-fast]
+inherits = "release"
+opt-level = 3

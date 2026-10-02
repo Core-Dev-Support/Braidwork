@@ -1,0 +1,39 @@
+target/
+build/
+*.apk
+*.aab
+*.exe
+*.dll
+*.so
+*.a
+*.keystore
+*.jks
+key.properties
+local.properties
+
+# Сгенерированный protobuf-код: воспроизводится из схемы через build.rs
+OUT_DIR/
+*.pb.rs
+
+# Сборки клиентов
+.gradle/
+.idea/
+*.iml
+.kotlin/
+
+# Ядро: артефакты отладки
+**/*.pdb
+**/*.ilk
+*.rlib
+
+# Локальные данные и логи
+*.log
+logs/
+data/
+
+# Кэш и временное
+.cache/
+tmp/
+temp/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,421 @@
+syntax = "proto3";
+
+package braidwork.v1;
+
+option go_package = "./braidworkv1";
+
+// =============================================================================
+// Заголовок
+//
+// Читается без разбора тела, чтобы незнакомые типы отбрасывались дёшево.
+// Поля фрейма, не попавшие в protobuf-тело:
+//   magic   u16  0xF1 0x4C
+//   version u8   1
+//   kind    u8   MessageKind (ниже)
+//   flags   u16  FrameFlags
+//   length  u32
+// =============================================================================
+
+enum FrameFlags {
+  FRAME_FLAGS_NONE        = 0;
+  FRAME_FLAGS_COMPRESSED  = 1;  // тело сжато zstd
+  FRAME_FLAGS_ACK_REQUIRED= 2;
+  FRAME_FLAGS_FRAGMENT    = 4;  // составное сообщение
+  FRAME_FLAGS_LAST_FRAG   = 8;  // последний фрагмент
+  FRAME_FLAGS_INTERNAL    = 16; // не пересылать дальше по mesh
+}
+
+enum MessageKind {
+  KIND_UNSPECIFIED      = 0;
+
+  // Рукопожатие
+  KIND_HELLO            = 1;
+  KIND_HELLO_ACK        = 2;
+  KIND_JOIN_REQUEST     = 3;
+  KIND_JOIN_RESPONSE    = 4;
+  KIND_REVOKE_NOTICE    = 5;
+  KIND_KEY_ROTATE       = 6;
+
+  // Обнаружение и поддержание
+  KIND_HEARTBEAT        = 16;
+  KIND_CANDIDATE_OFFER  = 17;
+  KIND_CANDIDATE_REPLY  = 18;
+  KIND_ROUTE_PREFERENCE = 19;
+  KIND_BYE              = 20;
+
+  // Данные
+  KIND_CLIPBOARD_SET       = 32;
+  KIND_CLIPBOARD_REQUEST   = 33;
+  KIND_CLIPBOARD_CONTENT   = 34;
+  KIND_FILE_OFFER          = 35;
+  KIND_FILE_BLOCK          = 36;
+  KIND_FILE_REQUEST        = 37;
+  KIND_GALLERY_DELTA       = 38;
+
+  // Оповещения и мультимедиа
+  KIND_NOTIFICATION_POST     = 48;
+  KIND_NOTIFICATION_DISMISS  = 49;
+  KIND_NOTIFICATION_ACTION   = 50;
+  KIND_MEDIA_STATE           = 51;
+
+  // Экран и ввод
+  KIND_SCREEN_OFFER  = 64;
+  KIND_SCREEN_START  = 65;
+  KIND_SCREEN_STOP   = 66;
+  KIND_VIDEO_FRAME   = 67;
+  KIND_INPUT_EVENT   = 68;
+}
+
+// =============================================================================
+// Идентичность
+// =============================================================================
+
+// Байты Ed25519 public key.
+message SigningPublic {
+  bytes key = 1;
+}
+
+// Байты X25519 public key.
+message StaticPublic {
+  bytes key = 1;
+}
+
+// device_id = base32_nopad(blake3("bw-device-id-v1" || signing_public)[0..16])
+// Отпечаток для сверки человеком — четыре группы по четыре символа оттуда же.
+message DeviceIdentity {
+  bytes device_id       = 1;
+  SigningPublic signing = 2;
+  StaticPublic static_key = 3;
+  string display_name   = 4;  // только для интерфейса, никогда для идентификации
+  uint32 protocol_version = 5;
+}
+
+// =============================================================================
+// Рукопожатие
+// =============================================================================
+
+message Hello {
+  DeviceIdentity identity   = 1;
+  CapabilitySet capabilities = 2;
+  // Подпись Ed25519 над (device_id || static_key || capabilities || nonce)
+  bytes signature           = 3;
+  uint64 nonce              = 4;
+  uint64 unix_time_ms        = 5;
+}
+
+message HelloAck {
+  bytes accepted_capabilities = 1;
+  // Короткий отпечаток для показа пользователю при первом соединении.
+  bytes fingerprint           = 2;
+  bool  device_known          = 3;  // уже в семье
+}
+
+// Одноразовый токен QR. Живёт 120 секунд, не переиспользуется.
+message QrBootstrap {
+  StaticPublic qr_key = 1;
+  bytes token        = 2;
+  uint64 expires_unix_ms = 3;
+  string family_hint  = 4;  // косметика, для подсказки в интерфейсе
+}
+
+message JoinRequest {
+  DeviceIdentity identity   = 1;
+  CapabilitySet capabilities = 2;
+  bytes signature           = 3;
+  uint64 nonce              = 4;
+  // Кого устройство считает своим корнем на момент запроса.
+  bytes claimed_root_id     = 5;
+}
+
+message JoinResponse {
+  // Заверение нового устройства. Подписано устройством, которое вводит.
+  bytes endorsement = 1;
+  bytes endorser_id = 2;
+  // Заверения на всё, чему endorser доверяет. Ограничены политикой.
+  repeated Endorsement transitive = 3;
+  bool approved = 4;
+}
+
+message Endorsement {
+  bytes endorser_id       = 1;
+  bytes endorsed_id       = 2;
+  bytes signature         = 3;  // подпись endorser
+  uint64 issued_unix_ms   = 4;
+}
+
+// Отзыв устройства. Списки рассылаются gossip-сообщениями.
+message RevokeNotice {
+  bytes revoked_id  = 1;
+  bytes issuer_id   = 2;
+  bytes signature   = 3;
+  uint32 reason     = 4;
+  uint64 unix_time_ms = 5;
+}
+
+message KeyRotate {
+  DeviceIdentity new_signing = 1;
+  bytes signature_by_old_key = 2;
+  bytes old_signing_public    = 3;
+}
+
+// =============================================================================
+// Обнаружение и поддержание
+// =============================================================================
+
+message Heartbeat {
+  uint64 unix_time_ms      = 1;
+  uint32 battery_percent   = 2;
+  bool  charging           = 3;
+  TransportKind transport  = 4;
+  uint32 measured_kbps     = 5;
+}
+
+message CandidateOffer {
+  repeated IceCandidate candidates = 1;
+  bytes session_id = 2;
+}
+
+// Простое описание кандидата, а не импорт чужой структуры.
+// ufrag|pwd|type|ip|port, где ip — 4 или 16 байт.
+message IceCandidate {
+  string ufrag = 1;
+  string pwd   = 2;
+  string type  = 3;  // host | srflx | relay
+  bytes  ip    = 4;
+  uint32 port  = 5;
+  uint32 priority = 6;
+}
+
+message CandidateReply {
+  repeated IceCandidate candidates = 1;
+  bytes session_id = 2;
+  bool accepts_turn = 3;  // разрешён ли чужой TURN как последний резерв
+}
+
+// Устройство сообщает, какой канал для него дешевле по батарее.
+message RoutePreference {
+  repeated TransportCost costs = 1;
+}
+
+message TransportCost {
+  TransportKind transport = 1;
+  uint32 cost_milli        = 2;  // произвольная шкала
+}
+
+message Bye {
+  Reason reason = 1;
+  enum Reason {
+    BYE_REASON_UNSPECIFIED = 0;
+    BYE_REASON_USER        = 1;
+    BYE_REASON_IDLE        = 2;
+    BYE_REASON_TRANSPORT   = 3;
+    BYE_REASON_REVOKED     = 4;
+    BYE_REASON_SHUTDOWN    = 5;
+  }
+}
+
+// =============================================================================
+// Транспорт
+// =============================================================================
+
+enum TransportKind {
+  TRANSPORT_UNSPECIFIED = 0;
+  TRANSPORT_LAN         = 1;
+  TRANSPORT_SOFTAP      = 2;
+  TRANSPORT_USB         = 3;
+  TRANSPORT_BLE         = 4;
+  TRANSPORT_ICE         = 5;
+}
+
+// =============================================================================
+// Данные
+// =============================================================================
+
+// Содержимое отправляется отдельно: в этом сообщении только метаданные,
+// чтобы не рассылать буфер обмена тем, кто его не запрашивал.
+message ClipboardSet {
+  bytes content_hash = 1;  // blake3 содержимого
+  repeated string mime_types = 2;
+  uint32 size_bytes   = 3;
+  bool sensitive      = 4;   // поле пароля: не пересылать, только локально
+  uint64 unix_time_ms = 5;
+  DeviceIdentity origin = 6;
+  uint64 sequence     = 7;   // дедупликация, снимает петли между устройствами
+}
+
+message ClipboardRequest {
+  bytes content_hash = 1;
+  bytes requested_by  = 2;
+}
+
+message ClipboardContent {
+  bytes content_hash = 1;
+  bytes content      = 2;
+  string mime_type   = 3;
+}
+
+// Блок 256 КиБ, см. PROTOCOL.md раздел 7.
+message FileOffer {
+  bytes transfer_id    = 1;
+  string file_name     = 2;
+  uint64 total_size    = 3;
+  bytes total_hash     = 4;
+  repeated FileBlock blocks = 5;
+  DeviceIdentity origin = 6;
+}
+
+message FileBlock {
+  uint64 offset      = 1;
+  uint32 length      = 2;
+  bytes  data        = 3;
+  bytes  block_hash  = 4;
+  bytes  transfer_id = 5;
+}
+
+// Докачка: получатель сообщает, чего у него не хватает.
+message FileRequest {
+  bytes transfer_id   = 1;
+  repeated uint64 missing_offsets = 2;  // сжатый список, попарно
+  bytes partial_hash  = 3;
+}
+
+message GalleryDelta {
+  repeated GalleryItem added = 1;
+  repeated bytes removed_hashes = 2;
+  DeviceIdentity origin = 3;
+}
+
+message GalleryItem {
+  bytes content_hash = 1;
+  uint64 size_bytes  = 2;
+  uint64 taken_ms    = 3;
+  string mime_type   = 4;
+  bytes thumbnail    = 5;
+}
+
+// =============================================================================
+// Оповещения и мультимедиа
+// =============================================================================
+
+message NotificationPost {
+  string android_key  = 1;  // системный ключ для снятия на источнике
+  string package_name = 2;
+  string title        = 3;
+  string body         = 4;
+  uint64 posted_ms    = 5;
+  repeated string categories = 6;
+  repeated NotificationAction actions = 7;
+  string group_key    = 8;
+  DeviceIdentity origin = 9;
+}
+
+message NotificationAction {
+  string action_key = 1;
+  string label      = 2;
+}
+
+message NotificationDismiss {
+  string android_key = 1;
+}
+
+message NotificationActionInvoke {
+  string android_key = 1;
+  string action_key  = 2;
+  // Подтверждение выполнения на источнике, чтобы не повторять.
+  bool delivered = 3;
+}
+
+message MediaState {
+  string source_package = 1;
+  string track_title    = 2;
+  string artist         = 3;
+  PlaybackState state   = 4;
+  uint32 position_ms    = 5;
+  uint32 duration_ms    = 6;
+  uint32 volume         = 7;
+  repeated TransportKind available_outputs = 8;
+
+  enum PlaybackState {
+    PLAYBACK_STATE_UNSPECIFIED = 0;
+    PLAYBACK_STATE_PLAYING     = 1;
+    PLAYBACK_STATE_PAUSED      = 2;
+    PLAYBACK_STATE_STOPPED     = 3;
+  }
+}
+
+// =============================================================================
+// Экран и ввод
+// =============================================================================
+
+message ScreenOffer {
+  uint32 width          = 1;
+  uint32 height         = 2;
+  uint32 bitrate_kbps   = 3;
+  uint32 fps            = 4;
+  string codec          = 5;  // h264 | h265 | vp9 | av1
+  string profile        = 6;
+  bool interactive      = 7;  // доступен ли ввод
+}
+
+message ScreenStart {
+  bytes session_id = 1;
+}
+
+message ScreenStop {
+  ScreenStopCause cause = 1;
+  enum ScreenStopCause {
+    SCREEN_STOP_CAUSE_UNSPECIFIED = 0;
+    SCREEN_STOP_CAUSE_USER        = 1;
+    SCREEN_STOP_CAUSE_ERROR       = 2;
+    SCREEN_STOP_CAUSE_TIMEOUT     = 3;
+  }
+}
+
+// Поток видео идёт отдельным каналом, чтобы не блокировать управление.
+message VideoFrame {
+  bytes session_id = 1;
+  bytes frame      = 2;  // кодек-специфичная нагрузка
+  uint64 frame_id  = 3;  // для дедупликации после переключения транспорта
+  uint64 pts_ms    = 4;
+  bool keyframe    = 5;
+}
+
+message InputEvent {
+  bytes session_id = 1;
+  InputType type   = 2;
+  uint64 serial    = 3;  // дедупликация: событие доставляется ровно один раз
+  uint32 x         = 4;
+  uint32 y         = 5;
+  uint32 width     = 6;
+  uint32 height    = 7;
+  uint32 pressure  = 8;
+  uint32 keycode   = 9;
+  uint32 modifiers = 10;
+  string text      = 11;
+
+  enum InputType {
+    INPUT_TYPE_UNSPECIFIED = 0;
+    INPUT_TYPE_TOUCH_DOWN   = 1;
+    INPUT_TYPE_TOUCH_MOVE   = 2;
+    INPUT_TYPE_TOUCH_UP     = 3;
+    INPUT_TYPE_KEY_DOWN     = 4;
+    INPUT_TYPE_KEY_UP       = 5;
+    INPUT_TYPE_TEXT         = 6;
+    INPUT_TYPE_SCROLL       = 7;
+  }
+}
+
+// =============================================================================
+// Возможности
+//
+// Пересечение списков в HelloAck. Несогласованная возможность не используется
+// отправителем и молча игнорируется получателем. Это позволяет добавлять
+// функции без синхронизации версий между устройствами.
+// =============================================================================
+
+message CapabilitySet {
+  repeated string offered = 1;  // строки вида "feature/v1" или "codec/h264"
+}
+
+// Добавление новых сообщений и возможностей — конец файла. Обёртки ради
+// обёрток не добавляем: тип должен соответствовать одному MessageKind.
