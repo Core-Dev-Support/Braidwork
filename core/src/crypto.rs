@@ -8,7 +8,7 @@ use rand_core::{OsRng, RngCore};
 use snow::params::NoiseParams;
 use snow::{Builder, HandshakeState};
 use thiserror::Error;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::Zeroize;
 
 /// Префикс доменного разделения при выводе `device_id`.
 /// Менять нельзя: смена значения делает все выпущенные устройства чужими.
@@ -104,21 +104,25 @@ impl DeviceKeys {
     ///
     /// Отдельная функция, а не свободная сборка на стороне вызова: иначе
     /// подписываемое и проверяемое разъедутся при первой же правке.
-    pub fn handshake_tape(device_id: &DeviceId, static_public: &[u8; 32], capabilities: &[u8], nonce: u64) -> Vec<u8> {
-        let mut tape = Vec::with_capacity(64 + capabilities.len());
-        tape.extend_from_slice(device_id.as_bytes());
-        tape.extend_from_slice(static_public);
+    ///
+    /// Принимает `&self`, хотя поля не читает: так подпись всегда собирается
+    /// тем же экземпляром ключей, который её потом и проверит.
+    pub fn handshake_tape(&self, capabilities: &[u8], nonce: u64) -> Vec<u8> {
+        let mut tape = Vec::with_capacity(72 + capabilities.len());
+        tape.extend_from_slice(self.device_id().as_bytes());
+        tape.extend_from_slice(&self.static_public());
         tape.extend_from_slice(capabilities);
         tape.extend_from_slice(&nonce.to_be_bytes());
         tape
     }
 }
 
-impl ZeroizeOnDrop for DeviceKeys {
-    fn zeroize_on_drop(&mut self) {
-        self.signing_key
-            .to_bytes()
-            .zeroize();
+impl Drop for DeviceKeys {
+    fn drop(&mut self) {
+        // Приватный ключ подписи затирается при уничтожении объекта, а не при
+        // выходе из функции: иначе он остался бы в стеке и в дампе памяти.
+        let mut bytes = self.signing_key.to_bytes();
+        bytes.zeroize();
     }
 }
 
@@ -164,7 +168,7 @@ impl DeviceId {
 
 impl AsRef<[u8]> for DeviceId {
     fn as_ref(&self) -> &[u8] {
-        &self.0
+        self.0.as_bytes()
     }
 }
 
@@ -204,28 +208,46 @@ pub fn verify_handshake(
     signature: &[u8; 64],
 ) -> Result<(), CryptoError> {
     let key = VerifyingKey::from_bytes(signing_public).map_err(|_| CryptoError::Rejected)?;
-    key.verify(tape, &ed25519_dalek::Signature::from_bytes(*signature))
+    key.verify(tape, &ed25519_dalek::Signature::from_bytes(signature))
         .map_err(|_| CryptoError::BadSignature)
 }
 
-/// Параметры Noise XX.
+/// Параметры Noise XX: X25519, ChaChaPoly, SHA-256.
 ///
-/// `fallback` не используется: мы не готовы вести переговоры без шифрования,
-/// а тихое понижение до открытого канала хуже отказа.
-pub fn noise_params() -> NoiseParams {
-    NoiseParams::xx
+/// Строка разбора совпадает с обозначением из спецификации Noise, поэтому
+/// параметры читаются глазами без обращения к исходнику.
+///
+/// `psk` не используется: без предварительного общего секрета рукопожатие идёт
+/// по открытым каналам, и первый услышавший может подменить ключи. Ключи
+/// сверяются по отпечатку при первом сопряжении, а на каждом соединении
+/// подпись проверяется заново.
+///
+/// `fallback` не используется: тихое понижение до открытого канала хуже отказа.
+pub fn noise_params() -> Result<NoiseParams, CryptoError> {
+    "Noise_XX_25519_ChaChaPoly_SHA256"
+        .parse()
+        .map_err(|_| CryptoError::Rejected)
 }
 
-/// Сторона рукопожатия: принимающая.
+/// Сторона рукопожатия: инициирующая.
+///
+/// Статический ключ передаётся байтами один раз, дальше `snow` держит его внутри
+/// состояния рукопожатия.
 pub fn noise_initiator(secret: &x25519_dalek::StaticSecret) -> Result<HandshakeState, CryptoError> {
-    Builder::new(noise_params())
+    let params = noise_params()?;
+    let bytes = secret.to_bytes();
+    Builder::new(params)
+        .local_private_key(&bytes)
         .build_initiator()
         .map_err(|_| CryptoError::Rejected)
 }
 
 /// Сторона рукопожатия: отвечающая.
 pub fn noise_responder(secret: &x25519_dalek::StaticSecret) -> Result<HandshakeState, CryptoError> {
-    Builder::new(noise_params())
+    let params = noise_params()?;
+    let bytes = secret.to_bytes();
+    Builder::new(params)
+        .local_private_key(&bytes)
         .build_responder()
         .map_err(|_| CryptoError::Rejected)
 }
@@ -251,7 +273,7 @@ mod tests {
     #[test]
     fn подпись_проходит_проверку() {
         let a = DeviceKeys::generate();
-        let tape = a.handshake_tape(&a.device_id(), &a.static_public(), b"cap/v1", 42);
+        let tape = a.handshake_tape(b"cap/v1", 42);
         let sig = a.sign(&tape);
         verify_handshake(&a.signing_public(), &tape, &sig).unwrap();
     }
@@ -260,7 +282,7 @@ mod tests {
     fn подпись_чужого_ключа_отвергается() {
         let a = DeviceKeys::generate();
         let b = DeviceKeys::generate();
-        let tape = a.handshake_tape(&a.device_id(), &a.static_public(), b"cap/v1", 42);
+        let tape = a.handshake_tape(b"cap/v1", 42);
         let sig = a.sign(&tape);
         // Проверяем подпись, но заявляем ключ другого устройства.
         assert!(verify_handshake(&b.signing_public(), &tape, &sig).is_err());
@@ -269,7 +291,7 @@ mod tests {
     #[test]
     fn подпись_на_другой_ленте_отвергается() {
         let a = DeviceKeys::generate();
-        let tape = a.handshake_tape(&a.device_id(), &a.static_public(), b"cap/v1", 42);
+        let tape = a.handshake_tape(b"cap/v1", 42);
         let sig = a.sign(&tape);
         let mut tampered = tape.clone();
         tampered[0] ^= 0xff;

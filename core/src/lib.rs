@@ -63,6 +63,12 @@ fn guard<F: FnOnce() -> FlStatus>(f: F) -> FlStatus {
     }
 }
 
+/// Длина буфера публичных ключей: signing (32) + static (32) + qr (32).
+const PUBLIC_KEYS_LEN: usize = 96;
+
+/// Максимальная длина `device_id` в байтах.
+const DEVICE_ID_MAX: usize = 32;
+
 // =============================================================================
 // Хэндлы
 // =============================================================================
@@ -73,20 +79,29 @@ fn guard<F: FnOnce() -> FlStatus>(f: F) -> FlStatus {
 /// объекта и ломают 32-битный Android. Значение составное — индекс слота плюс
 /// счётчик поколений, что закрывает ABA: после освобождения и переиспользования
 /// слота старый хэндл не указывает на новый объект.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(transparent)]
 pub struct FlHandle(pub u64);
 
 const HANDLE_INVALID: FlHandle = FlHandle(0);
 
+/// Счётчик слотов. Начинается с 1, потому что слот 0 зарезервирован.
 static NEXT_SLOT: AtomicU64 = AtomicU64::new(1);
 
 /// Начальное поколение. Ноль зарезервирован под «слот не выдавался».
 const GENERATION_START: u64 = 1;
 
 /// Выдаёт хэндл для нового объекта ядра.
+///
+/// Ноль не может получиться: слот начинается с 1, а поколение с 1, значит
+/// младшие 32 бита ненулевые и весь хэндл тоже ненулевой. Клиент
+/// использует `HANDLE_INVALID` как признак «объекта нет», поэтому
+/// выдача нуля означала бы, что несуществующий объект выглядит как
+/// освобождённый.
 fn alloc_handle(generation: u64) -> FlHandle {
     let slot = NEXT_SLOT.fetch_add(1, Ordering::Relaxed);
+    debug_assert!(slot > 0 && slot <= u32::MAX as u64, "слот исчерпан");
+    debug_assert!(generation > 0 && generation <= u32::MAX as u64, "поколение вне диапазона");
     FlHandle((slot << 32) | (generation & 0xffff_ffff))
 }
 
@@ -94,6 +109,13 @@ fn alloc_handle(generation: u64) -> FlHandle {
 fn split_handle(handle: FlHandle) -> (usize, u64) {
     let raw = handle.0;
     ((raw >> 32) as usize, raw & 0xffff_ffff)
+}
+
+impl FlHandle {
+    /// Хэндл не ссылается ни на один объект.
+    pub fn is_valid(&self) -> bool {
+        *self != HANDLE_INVALID
+    }
 }
 
 // =============================================================================
@@ -122,13 +144,13 @@ pub unsafe extern "C" fn fl_init(out_public: *mut u8, out_len: *mut usize) -> Fl
         // и больше не может его взять.
         let qr = keys.take_qr_key().unwrap_or([0u8; 32]);
 
-        let out = std::slice::from_raw_parts_mut(out_public, 96);
+        let out = std::slice::from_raw_parts_mut(out_public, PUBLIC_KEYS_LEN);
         out[..32].copy_from_slice(&signing);
         out[32..64].copy_from_slice(&static_public);
-        out[64..96].copy_from_slice(&qr);
+        out[64..PUBLIC_KEYS_LEN].copy_from_slice(&qr);
 
         // Записываем длину только после успешного заполнения.
-        *out_len = 96;
+        *out_len = PUBLIC_KEYS_LEN;
 
         FL_OK
     })
@@ -149,16 +171,21 @@ pub unsafe extern "C" fn fl_device_id(
             return FL_ERR_INVALID_ARG;
         }
 
-        let signing: [u8; 32] = std::slice::from_raw_parts(signing_public, 32)
-            .try_into()
-            .map_err(|_| FL_ERR_INVALID_ARG)?;
+        let signing: [u8; 32] = match std::slice::from_raw_parts(signing_public, 32).try_into() {
+            Ok(v) => v,
+            Err(_) => return FL_ERR_INVALID_ARG,
+        };
 
-        let id = device_id_from_signing(&signing).map_err(|_| FL_ERR_CRYPTO)?;
+        let id = match device_id_from_signing(&signing) {
+            Ok(v) => v,
+            Err(_) => return FL_ERR_CRYPTO,
+        };
 
         let bytes = id.as_bytes();
-        let out = std::slice::from_raw_parts_mut(out_id, bytes.len());
-        out.copy_from_slice(bytes);
-        *out_len = bytes.len();
+        let out = std::slice::from_raw_parts_mut(out_id, DEVICE_ID_MAX);
+        let n = bytes.len().min(DEVICE_ID_MAX);
+        out[..n].copy_from_slice(&bytes[..n]);
+        *out_len = n;
 
         FL_OK
     })
@@ -245,7 +272,10 @@ mod tests {
         let (slot, gen) = split_handle(h);
         assert_eq!(gen, GENERATION_START);
         assert_ne!(slot, 0);
-        assert_eq!(h.0, 0, "нулевой хэндл зарезервирован");
+        // Ноль зарезервирован под «объекта нет», выдавать его нельзя.
+        assert_ne!(h, HANDLE_INVALID);
+        assert!(h.is_valid());
+        assert!(!HANDLE_INVALID.is_valid());
     }
 
     #[test]
