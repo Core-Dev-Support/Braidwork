@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Ядро и диагностика</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{text-decoration:none}
+button{font-family:inherit}
+</style>
+</helmet>
+<div style="width:390px;height:1320px;position:relative;overflow:hidden;box-sizing:border-box;background:linear-gradient(180deg,#E3EAF4 0,#F1F2F6 360px);font-family:Onest,system-ui,sans-serif;color:#121316">
+
+  <div style="padding:56px 12px 0 12px">
+    <a href="Settings.dc.html" aria-label="Назад" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:#121316">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ic.back}}"/></svg>
+    </a>
+  </div>
+  <h1 style="margin:4px 24px 0 24px;font-size:32px;line-height:38px;font-weight:700;letter-spacing:-0.5px">Ядро и диагностика</h1>
+  <div style="margin:4px 24px 0 24px;font-size:16px;line-height:22px;color:#666A75">Rust-ядро под приложением</div>
+
+  <section style="margin:20px 16px 0 16px;background:#FFFFFF;border-radius:24px;padding:18px;display:flex;align-items:center;gap:14px">
+    <div style="width:52px;height:52px;border-radius:16px;background:#EFEAFB;color:#6038C9;display:flex;align-items:center;justify-content:center;flex:none">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ic.cpu}}"/></svg>
+    </div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:17px;line-height:23px;font-weight:600">Ядро работает</div>
+      <div style="font-size:13px;line-height:18px;color:#666A75">Шаг 0 · тест двух устройств без интерфейса</div>
+    </div>
+    <div style="height:26px;padding:0 10px;border-radius:13px;background:#E4F1FF;color:#14498F;font-size:12px;font-weight:600;display:flex;align-items:center">Шаг 0</div>
+  </section>
+
+  <sc-for list="{{groupsA}}" as="g" hint-placeholder-count="2">
+    <div style="margin:20px 16px 0 16px">
+      <div style="padding:0 8px 8px 8px;font-size:13px;line-height:17px;font-weight:500;color:#666A75">{{g.title}}</div>
+      <div style="background:#FFFFFF;border-radius:24px;overflow:hidden">
+        <sc-for list="{{g.rows}}" as="r" hint-placeholder-count="4">
+          <div style="display:flex;align-items:center;gap:14px;padding:12px 18px;min-height:56px;box-sizing:border-box;border-top:{{r.border}}">
+            <div style="flex:1;min-width:0;font-size:16px;line-height:22px;font-weight:500">{{r.title}}</div>
+            <div style="font-size:14px;line-height:20px;color:#666A75">{{r.value}}</div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </sc-for>
+
+  <div style="margin:20px 16px 0 16px">
+    <div style="padding:0 8px 8px 8px;font-size:13px;line-height:17px;font-weight:500;color:#666A75">Тест двух устройств</div>
+    <div style="background:#FFFFFF;border-radius:24px;overflow:hidden">
+      <sc-for list="{{tests}}" as="r" hint-placeholder-count="3">
+        <div style="display:flex;align-items:center;gap:14px;padding:12px 18px;min-height:66px;box-sizing:border-box;border-top:{{r.border}}">
+          <div style="width:40px;height:40px;border-radius:12px;background:{{r.bg}};color:{{r.fg}};display:flex;align-items:center;justify-content:center;flex:none">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{r.d}}"/></svg>
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:16px;line-height:22px;font-weight:500">{{r.title}}</div>
+            <div style="font-size:13px;line-height:18px;color:#666A75">{{r.sub}}</div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <button type="button" onClick="{{run}}" style="margin:20px 16px 0 16px;width:358px;height:56px;border:0;border-radius:28px;background:#1A6FDB;color:#FFFFFF;display:flex;align-items:center;justify-content:center;gap:10px;font-size:16px;font-weight:600;cursor:pointer">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{runIcon}}"/></svg>
+    {{runText}}
+  </button>
+
+  <sc-for list="{{groupsB}}" as="g" hint-placeholder-count="1">
+    <div style="margin:20px 16px 0 16px">
+      <div style="padding:0 8px 8px 8px;font-size:13px;line-height:17px;font-weight:500;color:#666A75">{{g.title}}</div>
+      <div style="background:#FFFFFF;border-radius:24px;overflow:hidden">
+        <sc-for list="{{g.rows}}" as="r" hint-placeholder-count="3">
+          <div style="display:flex;align-items:center;gap:14px;padding:12px 18px;min-height:56px;box-sizing:border-box;border-top:{{r.border}}">
+            <div style="flex:1;min-width:0;font-size:16px;line-height:22px;font-weight:500;color:{{r.titleColor}}">{{r.title}}</div>
+            <sc-if value="{{r.nav}}" hint-placeholder-val="{{false}}">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8A8D97" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none"><path d="{{ic.chev}}"/></svg>
+            </sc-if>
+            <sc-if value="{{r.isToggle}}" hint-placeholder-val="{{false}}">
+              <button type="button" role="switch" aria-checked="{{r.on}}" aria-label="{{r.title}}" onClick="{{r.toggle}}" style="width:52px;height:32px;border:0;border-radius:16px;padding:0;position:relative;cursor:pointer;flex:none;background:{{r.trackBg}}"><span style="position:absolute;top:2px;left:{{r.knobLeft}};width:28px;height:28px;border-radius:50%;background:#FFFFFF;box-shadow:0 1px 3px rgba(0,0,0,0.25)"></span></button>
+            </sc-if>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":1320}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { ran: false, t: { verbose: false } };
+  }
+  renderVals() {
+    const I = {
+      back: 'M15 6l-6 6 6 6',
+      chev: 'M9 6l6 6-6 6',
+      cpu: 'M8 7h8a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1zM10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4',
+      check: 'M5 12l4 4 10-10',
+      clock: 'M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0M12 7v5l3 2',
+      play: 'M8 5l11 7-11 7z',
+      refresh: 'M20 11a8 8 0 0 0-14-4M4 4v4h4M4 13a8 8 0 0 0 14 4M20 20v-4h-4'
+    };
+    const self = this;
+    const ran = this.state.ran;
+    function withBorder(rows) { return rows.map(function (r, i) { return Object.assign({}, r, { border: i === 0 ? 'none' : '1px solid #F0F0F3' }); }); }
+    const groupsA = [
+      { title: 'Сборка', rows: withBorder([
+        { title: 'Версия ядра', value: '0.1.0-step0' },
+        { title: 'Версия протокола', value: 'v1 (Protobuf)' },
+        { title: 'Формат сборки', value: 'cdylib + rlib' },
+        { title: 'Обработка паник', value: 'unwind (D-008)' }
+      ]) },
+      { title: 'Хэндлы', rows: withBorder([
+        { title: 'Активные хэндлы', value: '2' },
+        { title: 'Схема хэндла', value: 'uint64: слот + поколение' },
+        { title: 'Устаревший хэндл', value: 'Отклоняется' }
+      ]) }
+    ];
+    const tests = withBorder([
+      { title: 'Рукопожатие Noise XX', sub: ran ? 'Успешно' : 'Ожидает запуска' },
+      { title: 'Обмен сообщением', sub: ran ? 'Успешно' : 'Ожидает запуска' },
+      { title: 'Закрытие хэндлов', sub: ran ? 'Успешно' : 'Ожидает запуска' }
+    ]).map(function (r) {
+      return Object.assign({}, r, { d: ran ? I.check : I.clock, bg: ran ? '#E8F6EE' : '#EEEEF1', fg: ran ? '#16804A' : '#4A4D57' });
+    });
+    const t = this.state.t;
+    const groupsB = [
+      { title: 'Журнал', rows: withBorder([
+        { title: 'Подробный журнал', isToggle: true, id: 'verbose' },
+        { title: 'Экспортировать журнал', nav: true },
+        { title: 'Сбросить хэндлы', nav: true, danger: true }
+      ]) }
+    ].map(function (g) {
+      return { title: g.title, rows: g.rows.map(function (r) {
+        const on = !!t[r.id];
+        return Object.assign({}, r, {
+          titleColor: r.danger ? '#C42B2B' : '#121316',
+          on: on, trackBg: on ? '#2B8CF5' : '#A4A7B2', knobLeft: on ? '22px' : '2px',
+          toggle: function () { const n = Object.assign({}, self.state.t); n[r.id] = !n[r.id]; self.setState({ t: n }); }
+        });
+      }) };
+    });
+    return {
+      ic: I, groupsA: groupsA, tests: tests, groupsB: groupsB,
+      runText: ran ? 'Запустить тест снова' : 'Запустить тест',
+      runIcon: ran ? I.refresh : I.play,
+      run: function () { self.setState({ ran: true }); }
+    };
+  }
+}
+</script>
+</body>
+</html>

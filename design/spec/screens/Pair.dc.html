@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Сопряжение по QR</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{text-decoration:none}
+button{font-family:inherit}
+</style>
+</helmet>
+<div style="width:390px;height:960px;position:relative;overflow:hidden;box-sizing:border-box;background:linear-gradient(180deg,#E3EAF4 0,#F1F2F6 360px);font-family:Onest,system-ui,sans-serif;color:#121316">
+
+  <div style="padding:56px 12px 0 12px">
+    <a href="Family.dc.html" aria-label="Назад" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:#121316">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ic.back}}"/></svg>
+    </a>
+  </div>
+  <h1 style="margin:4px 24px 0 24px;font-size:32px;line-height:38px;font-weight:700;letter-spacing:-0.5px">Добавить устройство</h1>
+  <div style="margin:4px 24px 0 24px;font-size:16px;line-height:22px;color:#666A75">Сопряжение по QR-коду</div>
+
+  <div style="margin:20px 16px 0 16px;height:48px;box-sizing:border-box;padding:4px;border-radius:24px;background:#E4E6EC;display:flex">
+    <sc-for list="{{tabs}}" as="tb" hint-placeholder-count="2">
+      <button type="button" role="tab" aria-selected="{{tb.sel}}" onClick="{{tb.pick}}" style="flex:1;border:0;border-radius:20px;cursor:pointer;font-size:15px;font-weight:600;background:{{tb.bg}};color:{{tb.fg}}">{{tb.label}}</button>
+    </sc-for>
+  </div>
+
+  <section style="margin:20px 16px 0 16px;background:#FFFFFF;border-radius:28px;padding:24px;display:flex;flex-direction:column;align-items:center;box-shadow:0 1px 2px rgba(20,30,50,0.04)">
+    <sc-if value="{{showCode}}" hint-placeholder-val="{{true}}">
+      <div style="width:240px;height:240px;border-radius:20px;background:#FFFFFF;border:1.5px solid #E4E6EC;display:flex;align-items:center;justify-content:center">
+        <svg width="212" height="212" viewBox="-1 -1 27 27" shape-rendering="crispEdges" role="img" aria-label="QR-код для сопряжения"><path fill-rule="evenodd" fill="#121316" d="{{qr}}"/></svg>
+      </div>
+      <div style="margin-top:16px;font-size:16px;line-height:22px;font-weight:600">Код действует 04:32</div>
+      <div style="margin-top:2px;font-size:13px;line-height:18px;color:#666A75">Покажи его новому устройству</div>
+    </sc-if>
+    <sc-if value="{{showScan}}" hint-placeholder-val="{{false}}">
+      <div style="width:240px;height:240px;border-radius:20px;background:#1A1D26;position:relative;overflow:hidden">
+        <div style="position:absolute;left:36px;top:36px;width:168px;height:168px;border-radius:16px;border:3px solid #FFFFFF;box-sizing:border-box"></div>
+        <div style="position:absolute;left:36px;right:36px;top:119px;height:2px;background:#4FE3F2"></div>
+      </div>
+      <div style="margin-top:16px;font-size:16px;line-height:22px;font-weight:600">Наведи камеру на код</div>
+      <div style="margin-top:2px;font-size:13px;line-height:18px;color:#666A75">Код на экране доверенного участника</div>
+    </sc-if>
+  </section>
+
+  <div style="margin:20px 24px 0 24px;font-size:13px;line-height:17px;font-weight:500;color:#666A75">Как подключить</div>
+  <section style="margin:8px 16px 0 16px;background:#FFFFFF;border-radius:24px;overflow:hidden">
+    <sc-for list="{{steps}}" as="s" hint-placeholder-count="3">
+      <div style="display:flex;align-items:center;gap:14px;padding:12px 18px;min-height:66px;box-sizing:border-box;border-top:{{s.border}}">
+        <div style="width:36px;height:36px;border-radius:50%;background:#E4F1FF;color:#1A6FDB;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;flex:none">{{s.n}}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:16px;line-height:22px;font-weight:500">{{s.title}}</div>
+          <div style="font-size:13px;line-height:18px;color:#666A75">{{s.sub}}</div>
+        </div>
+      </div>
+    </sc-for>
+  </section>
+
+  <section style="margin:20px 16px 0 16px;background:#E4F1FF;border-radius:20px;padding:14px 16px;display:flex;gap:12px;align-items:flex-start;color:#14498F">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none;margin-top:1px"><path d="{{ic.lock}}"/></svg>
+    <div style="font-size:14px;line-height:20px">Ключи семьи выдаёт только доверенный участник. Новое устройство получает их после подтверждения.</div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":960}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { mode: 'show' };
+  }
+  renderVals() {
+    const I = {
+      back: 'M15 6l-6 6 6 6',
+      lock: 'M7 11h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2zM8 11V8a4 4 0 0 1 8 0v3'
+    };
+    const self = this;
+    const mode = this.state.mode;
+    const N = 25;
+    let seed = 7;
+    function rnd() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return (seed >> 16) & 1; }
+    function inFinder(x, y) { return (x < 8 && y < 8) || (x >= N - 8 && y < 8) || (x < 8 && y >= N - 8); }
+    let d = '';
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        if (inFinder(x, y)) continue;
+        if (rnd()) d += 'M' + x + ' ' + y + 'h1v1h-1z';
+      }
+    }
+    [[0, 0], [N - 7, 0], [0, N - 7]].forEach(function (p) {
+      const fx = p[0], fy = p[1];
+      d += 'M' + fx + ' ' + fy + 'h7v7h-7z';
+      d += 'M' + (fx + 1) + ' ' + (fy + 1) + 'h5v5h-5z';
+      d += 'M' + (fx + 2) + ' ' + (fy + 2) + 'h3v3h-3z';
+    });
+    const tabs = [
+      { id: 'show', label: 'Показать код' },
+      { id: 'scan', label: 'Сканировать' }
+    ].map(function (tb) {
+      const on = mode === tb.id;
+      return { label: tb.label, sel: on, bg: on ? '#FFFFFF' : 'transparent', fg: on ? '#121316' : '#4A4D57', pick: function () { self.setState({ mode: tb.id }); } };
+    });
+    const steps = [
+      { n: '1', title: 'Открой FamSync', sub: 'На новом устройстве' },
+      { n: '2', title: 'Нажми «Присоединиться»', sub: 'Выбери вход по QR' },
+      { n: '3', title: 'Отсканируй код', sub: 'Дождись подтверждения' }
+    ].map(function (s, i) { return Object.assign({}, s, { border: i === 0 ? 'none' : '1px solid #F0F0F3' }); });
+    return { ic: I, qr: d, tabs: tabs, steps: steps, showCode: mode === 'show', showScan: mode === 'scan' };
+  }
+}
+</script>
+</body>
+</html>

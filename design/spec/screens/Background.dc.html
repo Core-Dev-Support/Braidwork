@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Фоновая работа</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{text-decoration:none}
+button{font-family:inherit}
+</style>
+</helmet>
+<div style="width:390px;height:1040px;position:relative;overflow:hidden;box-sizing:border-box;background:linear-gradient(180deg,#E3EAF4 0,#F1F2F6 360px);font-family:Onest,system-ui,sans-serif;color:#121316">
+
+  <div style="padding:56px 12px 0 12px">
+    <a href="Settings.dc.html" aria-label="Назад" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:#121316">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ic.back}}"/></svg>
+    </a>
+  </div>
+  <h1 style="margin:4px 24px 0 24px;font-size:32px;line-height:38px;font-weight:700;letter-spacing:-0.5px">Фоновая работа</h1>
+  <div style="margin:4px 24px 0 24px;font-size:16px;line-height:22px;color:#666A75">Чтобы связь не обрывалась на экране блокировки</div>
+
+  <section style="margin:20px 16px 0 16px;background:#FFFFFF;border-radius:24px;padding:16px 18px;display:flex;align-items:center;gap:14px">
+    <div style="width:44px;height:44px;border-radius:12px;background:#E8F6EE;color:#16804A;display:flex;align-items:center;justify-content:center;flex:none">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ic.power}}"/></svg>
+    </div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:16px;line-height:22px;font-weight:600">Watchdog-служба работает</div>
+      <div style="font-size:13px;line-height:18px;color:#666A75">Сама перезапускается, если система её закрыла</div>
+    </div>
+  </section>
+
+  <div style="margin:20px 24px 0 24px;font-size:13px;line-height:17px;font-weight:500;color:#666A75">Бренд устройства</div>
+  <div style="margin:8px 16px 0 16px;display:flex;flex-wrap:wrap;gap:8px" role="radiogroup" aria-label="Бренд устройства">
+    <sc-for list="{{brands}}" as="b" hint-placeholder-count="5">
+      <button type="button" role="radio" aria-checked="{{b.sel}}" onClick="{{b.pick}}" style="height:44px;padding:0 18px;border:0;border-radius:22px;cursor:pointer;font-size:15px;font-weight:500;background:{{b.bg}};color:{{b.fg}}">{{b.label}}</button>
+    </sc-for>
+  </div>
+
+  <div style="margin:20px 24px 0 24px;font-size:13px;line-height:17px;font-weight:500;color:#666A75">{{stepsTitle}}</div>
+  <section style="margin:8px 16px 0 16px;background:#FFFFFF;border-radius:24px;overflow:hidden">
+    <sc-for list="{{steps}}" as="s" hint-placeholder-count="4">
+      <div style="display:flex;align-items:center;gap:14px;padding:12px 18px;min-height:66px;box-sizing:border-box;border-top:{{s.border}}">
+        <div style="width:40px;height:40px;border-radius:12px;background:{{s.bg}};color:{{s.fg}};display:flex;align-items:center;justify-content:center;flex:none">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{s.d}}"/></svg>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:16px;line-height:22px;font-weight:500">{{s.title}}</div>
+          <div style="font-size:13px;line-height:18px;color:{{s.subColor}}">{{s.sub}}</div>
+        </div>
+      </div>
+    </sc-for>
+  </section>
+
+  <a href="#" style="margin:20px 16px 0 16px;height:56px;border-radius:28px;background:#1A6FDB;color:#FFFFFF;display:flex;align-items:center;justify-content:center;gap:10px;font-size:16px;font-weight:600">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ic.settings}}"/></svg>
+    Открыть настройки системы
+  </a>
+
+  <sc-for list="{{groups}}" as="g" hint-placeholder-count="1">
+    <div style="margin:20px 16px 0 16px">
+      <div style="padding:0 8px 8px 8px;font-size:13px;line-height:17px;font-weight:500;color:#666A75">{{g.title}}</div>
+      <div style="background:#FFFFFF;border-radius:24px;overflow:hidden">
+        <sc-for list="{{g.rows}}" as="r" hint-placeholder-count="3">
+          <div style="display:flex;align-items:center;gap:14px;padding:12px 18px;min-height:{{r.minH}};box-sizing:border-box;border-top:{{r.border}}">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:16px;line-height:22px;font-weight:500">{{r.title}}</div>
+              <sc-if value="{{r.sub}}" hint-placeholder-val="{{true}}">
+                <div style="margin-top:1px;font-size:13px;line-height:18px;color:#666A75">{{r.sub}}</div>
+              </sc-if>
+            </div>
+            <sc-if value="{{r.value}}" hint-placeholder-val="{{true}}">
+              <div style="font-size:14px;line-height:20px;color:#666A75">{{r.value}}</div>
+            </sc-if>
+            <sc-if value="{{r.isToggle}}" hint-placeholder-val="{{false}}">
+              <button type="button" role="switch" aria-checked="{{r.on}}" aria-label="{{r.title}}" onClick="{{r.toggle}}" style="width:52px;height:32px;border:0;border-radius:16px;padding:0;position:relative;cursor:pointer;flex:none;background:{{r.trackBg}}"><span style="position:absolute;top:2px;left:{{r.knobLeft}};width:28px;height:28px;border-radius:50%;background:#FFFFFF;box-shadow:0 1px 3px rgba(0,0,0,0.25)"></span></button>
+            </sc-if>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":1040}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { brand: 'Xiaomi', t: { boot: true, notif: true } };
+  }
+  renderVals() {
+    const I = {
+      back: 'M15 6l-6 6 6 6',
+      power: 'M12 3v9M7 6.5a7.5 7.5 0 1 0 10 0',
+      check: 'M5 12l4 4 10-10',
+      warn: 'M12 4l9 16H3zM12 10v4M12 17v.5',
+      settings: 'M4 7h9M17 7h3M4 17h3M11 17h9M13 7a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7 17a2 2 0 1 0 4 0a2 2 0 1 0-4 0'
+    };
+    const self = this;
+    const brand = this.state.brand;
+    const STEPS = {
+      'Xiaomi': ['Автозапуск', 'Батарея без ограничений', 'Закрепить в недавних', 'Экран блокировки'],
+      'Samsung': ['Не усыплять приложение', 'Батарея без ограничений', 'Исключить из оптимизации', 'Работа в фоне'],
+      'Huawei': ['Автозапуск', 'Ручное управление запуском', 'Работа в фоне', 'Не закрывать при очистке'],
+      'Realme': ['Автозапуск', 'Фоновая активность', 'Батарея без ограничений', 'Закрепить в недавних'],
+      'Другой': ['Батарея без ограничений', 'Автозапуск', 'Уведомление службы', 'Закрепить в недавних']
+    };
+    const done = [true, true, false, false];
+    const brands = Object.keys(STEPS).map(function (b) {
+      const on = brand === b;
+      return { label: b, sel: on, bg: on ? '#1A6FDB' : '#FFFFFF', fg: on ? '#FFFFFF' : '#121316', pick: function () { self.setState({ brand: b }); } };
+    });
+    const steps = STEPS[brand].map(function (title, i) {
+      const ok = done[i];
+      return {
+        title: title, sub: ok ? 'Готово' : 'Нужно настроить',
+        d: ok ? I.check : I.warn,
+        bg: ok ? '#E8F6EE' : '#FFF1E6', fg: ok ? '#16804A' : '#B4500A',
+        subColor: ok ? '#666A75' : '#B4500A',
+        border: i === 0 ? 'none' : '1px solid #F0F0F3'
+      };
+    });
+    const t = this.state.t;
+    const raw = [
+      { title: 'Дополнительно', rows: [
+        { kind: 'toggle', id: 'boot', title: 'Запуск при включении' },
+        { kind: 'toggle', id: 'notif', title: 'Постоянное уведомление', sub: 'Нужно для работы службы' },
+        { title: 'Проверка Watchdog', value: 'Каждые 15 мин' }
+      ] }
+    ];
+    const groups = raw.map(function (g) {
+      return { title: g.title, rows: g.rows.map(function (r, i) {
+        const on = !!t[r.id];
+        return {
+          title: r.title, sub: r.sub || '', value: r.value || '', isToggle: r.kind === 'toggle',
+          on: on, trackBg: on ? '#2B8CF5' : '#A4A7B2', knobLeft: on ? '22px' : '2px',
+          border: i === 0 ? 'none' : '1px solid #F0F0F3',
+          minH: r.sub ? '66px' : '56px',
+          toggle: function () { const n = Object.assign({}, self.state.t); n[r.id] = !n[r.id]; self.setState({ t: n }); }
+        };
+      }) };
+    });
+    return { ic: I, brands: brands, steps: steps, stepsTitle: 'Шаги для ' + brand, groups: groups };
+  }
+}
+</script>
+</body>
+</html>

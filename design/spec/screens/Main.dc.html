@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Главная</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{text-decoration:none}
+button{font-family:inherit}
+</style>
+</helmet>
+<div style="width:390px;height:844px;position:relative;overflow:hidden;box-sizing:border-box;background:linear-gradient(180deg,#E3EAF4 0,#F1F2F6 360px);font-family:Onest,system-ui,sans-serif;color:#121316">
+
+  <div style="padding:60px 24px 0 24px;display:flex;justify-content:space-between;align-items:flex-start">
+    <div>
+      <h1 style="margin:0;font-size:32px;line-height:38px;font-weight:700;letter-spacing:-0.5px">Моя семья</h1>
+      <div style="margin-top:4px;font-size:16px;line-height:22px;color:#666A75">4 устройства в сети</div>
+    </div>
+    <div style="display:flex;gap:2px;margin-top:-2px">
+      <button type="button" aria-label="Уведомления" style="width:44px;height:44px;border:0;background:transparent;color:#121316;display:flex;align-items:center;justify-content:center;padding:0">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ic.bell}}"/></svg>
+      </button>
+      <a href="Pair.dc.html" aria-label="Добавить устройство" style="width:44px;height:44px;color:#121316;display:flex;align-items:center;justify-content:center">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ic.plus}}"/></svg>
+      </a>
+    </div>
+  </div>
+
+  <div style="margin:16px 24px 0 24px;display:flex;align-items:center;gap:8px;font-size:14px;line-height:20px;color:#3A3D46">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ic.wifi}}"/></svg>
+    <span>Домашняя сеть · LAN</span>
+    <span style="color:#9A9CA6">•</span>
+    <span>3 прямых соединения</span>
+  </div>
+
+  <section style="margin:18px 16px 0 16px;background:#FFFFFF;border-radius:28px;padding:20px 12px 20px 12px;box-shadow:0 1px 2px rgba(20,30,50,0.04)">
+    <div style="display:flex;align-items:center;gap:14px;padding:0 8px">
+      <div style="width:64px;height:64px;border-radius:18px;background:#EAF3FF;color:#1A6FDB;display:flex;align-items:center;justify-content:center;flex:none">
+        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ic.phone}}"/></svg>
+      </div>
+      <div style="min-width:0">
+        <div style="font-size:20px;line-height:26px;font-weight:600">Телефон Кости</div>
+        <div style="margin-top:2px;font-size:14px;line-height:20px;color:#666A75">Это устройство · ключи в порядке</div>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:space-around;margin-top:22px">
+      <sc-for list="{{modes}}" as="m" hint-placeholder-count="3">
+        <div style="width:100px;display:flex;flex-direction:column;align-items:center;gap:8px">
+          <button type="button" aria-label="{{m.label}}" onClick="{{m.pick}}" style="width:68px;height:68px;border-radius:50%;border:0;padding:0;cursor:pointer;display:flex;align-items:center;justify-content:center;background:{{m.bg}};color:{{m.fg}}">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{m.d}}"/></svg>
+          </button>
+          <div style="font-size:15px;line-height:20px;font-weight:{{m.w}}">{{m.label}}</div>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="display:flex;gap:12px;margin-top:22px">
+      <a href="Network.dc.html" style="flex:1;height:56px;border-radius:28px;background:#EEEEF1;color:#121316;display:flex;align-items:center;justify-content:center;gap:8px;font-size:16px;font-weight:500">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ic.bluetooth}}"/></svg>
+        Рядом (BLE)
+      </a>
+      <a href="Network.dc.html" style="flex:1;height:56px;border-radius:28px;background:#EEEEF1;color:#121316;display:flex;align-items:center;justify-content:center;gap:8px;font-size:16px;font-weight:500">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ic.hotspot}}"/></svg>
+        Точка доступа
+      </a>
+    </div>
+  </section>
+
+  <section style="margin:16px 16px 0 16px;background:#FFFFFF;border-radius:28px;padding:16px 4px 14px 4px;display:flex;box-shadow:0 1px 2px rgba(20,30,50,0.04)">
+    <sc-for list="{{quick}}" as="q" hint-placeholder-count="4">
+      <a href="{{q.href}}" style="flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:8px;color:#121316">
+        <div style="width:52px;height:52px;border-radius:50%;background:{{q.bg}};color:{{q.fg}};display:flex;align-items:center;justify-content:center">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{q.d}}"/></svg>
+        </div>
+        <div style="font-size:13px;line-height:18px;font-weight:500;letter-spacing:-0.2px;text-align:center">{{q.label}}</div>
+      </a>
+    </sc-for>
+  </section>
+
+  <div style="margin:20px 24px 0 24px;font-size:18px;line-height:24px;font-weight:600">Последняя активность</div>
+  <section style="margin:10px 16px 0 16px;background:#FFFFFF;border-radius:24px;overflow:hidden">
+    <sc-for list="{{activity}}" as="a" hint-placeholder-count="3">
+      <div style="display:flex;align-items:center;gap:14px;padding:12px 18px;border-top:{{a.border}}">
+        <div style="width:40px;height:40px;border-radius:12px;background:{{a.bg}};color:{{a.fg}};display:flex;align-items:center;justify-content:center;flex:none">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{a.d}}"/></svg>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:16px;line-height:22px;font-weight:500">{{a.title}}</div>
+          <div style="font-size:13px;line-height:18px;color:#666A75">{{a.sub}}</div>
+        </div>
+        <div style="font-size:13px;color:#666A75">{{a.time}}</div>
+      </div>
+    </sc-for>
+  </section>
+
+  <nav aria-label="Основное меню" style="position:absolute;left:0;right:0;bottom:0;height:84px;box-sizing:border-box;padding:8px 6px 22px 6px;display:flex;background:#FFFFFF;border-top:1px solid #E8E9EE">
+    <sc-for list="{{nav}}" as="n" hint-placeholder-count="5">
+      <a href="{{n.href}}" style="flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:{{n.color}};font-size:11px;line-height:14px;font-weight:{{n.w}}">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{n.d}}"/></svg>
+        {{n.label}}
+      </a>
+    </sc-for>
+  </nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { mode: 'auto' };
+  }
+  renderVals() {
+    const I = {
+      bell: 'M6 17v-6a6 6 0 1 1 12 0v6l1.5 2h-15zM10 21h4',
+      plus: 'M12 5v14M5 12h14',
+      wifi: 'M3 9a14 14 0 0 1 18 0M6 12.5a9.5 9.5 0 0 1 12 0M9 16a5 5 0 0 1 6 0M11 19.5a1 1 0 1 0 2 0a1 1 0 1 0-2 0',
+      phone: 'M8 3h8a1.5 1.5 0 0 1 1.5 1.5v15A1.5 1.5 0 0 1 16 21H8a1.5 1.5 0 0 1-1.5-1.5v-15A1.5 1.5 0 0 1 8 3zM11 18h2',
+      sync: 'M4 8h13l-3-3M20 16H7l3 3',
+      globe: 'M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18',
+      bluetooth: 'M7 7l10 10-5 4V3l5 4L7 17',
+      hotspot: 'M10 12a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.9 4.9a10 10 0 0 0 0 14.2M19.1 4.9a10 10 0 0 1 0 14.2',
+      clipboard: 'M8 4h8a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM9.5 4V3h5v1M9 11h6M9 15h6',
+      folder: 'M4 6a1 1 0 0 1 1-1h5l2 2h7a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z',
+      mirror: 'M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM8 20h8M12 17v3',
+      home: 'M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z',
+      devices: 'M3 6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v9H3zM1 19h16M19 9h2a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z',
+      family: 'M6 8a3 3 0 1 0 6 0a3 3 0 1 0-6 0M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M14.7 6.2a2.6 2.6 0 0 1 0 5.2M17 14.2c2.4.6 4 2.6 4 5.3',
+      settings: 'M4 7h9M17 7h3M4 17h3M11 17h9M13 7a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7 17a2 2 0 1 0 4 0a2 2 0 1 0-4 0'
+    };
+    const self = this;
+    const modes = [
+      { id: 'lan', label: 'Только LAN', d: I.wifi },
+      { id: 'auto', label: 'Авто', d: I.sync },
+      { id: 'ice', label: 'Интернет', d: I.globe }
+    ].map(function (m) {
+      const on = self.state.mode === m.id;
+      return { label: m.label, d: m.d, bg: on ? '#2B8CF5' : '#EDEDF0', fg: on ? '#FFFFFF' : '#121316', w: on ? '600' : '400', pick: function () { self.setState({ mode: m.id }); } };
+    });
+    const quick = [
+      { href: 'Clipboard.dc.html', label: 'Буфер', d: I.clipboard, bg: '#FFF1E6', fg: '#C65D0E' },
+      { href: 'Files.dc.html', label: 'Файлы', d: I.folder, bg: '#E8F6EE', fg: '#16804A' },
+      { href: 'Notifs.dc.html', label: 'Уведомления', d: I.bell, bg: '#EFEAFB', fg: '#6038C9' },
+      { href: 'Mirror.dc.html', label: 'Зеркало', d: I.mirror, bg: '#E4F1FF', fg: '#1A6FDB' }
+    ];
+    const activity = [
+      { d: I.clipboard, bg: '#FFF1E6', fg: '#C65D0E', title: 'Текст скопирован', sub: 'Ноутбук Linux · 3 устройства', time: '11:24' },
+      { d: I.folder, bg: '#E8F6EE', fg: '#16804A', title: 'Файл получен', sub: 'Планшет мамы · 14 МБ', time: '11:02' },
+      { d: I.bell, bg: '#EFEAFB', fg: '#6038C9', title: 'Уведомление отправлено', sub: 'ПК с Windows', time: '10:48' }
+    ].map(function (a, i) { return Object.assign({}, a, { border: i === 0 ? 'none' : '1px solid #F0F0F3' }); });
+    const nav = [
+      { href: 'Main.dc.html', label: 'Главная', d: I.home },
+      { href: 'Devices.dc.html', label: 'Устройства', d: I.devices },
+      { href: 'Share.dc.html', label: 'Обмен', d: I.sync },
+      { href: 'Family.dc.html', label: 'Семья', d: I.family },
+      { href: 'Settings.dc.html', label: 'Настройки', d: I.settings }
+    ].map(function (n, i) { return Object.assign({}, n, { color: i === 0 ? '#1A6FDB' : '#666A75', w: i === 0 ? '600' : '500' }); });
+    return { ic: I, modes: modes, quick: quick, activity: activity, nav: nav };
+  }
+}
+</script>
+</body>
+</html>

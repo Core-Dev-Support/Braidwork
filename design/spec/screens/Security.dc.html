@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Безопасность и ключи</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{text-decoration:none}
+button{font-family:inherit}
+</style>
+</helmet>
+<div style="width:390px;height:1120px;position:relative;overflow:hidden;box-sizing:border-box;background:linear-gradient(180deg,#E3EAF4 0,#F1F2F6 360px);font-family:Onest,system-ui,sans-serif;color:#121316">
+
+  <div style="padding:56px 12px 0 12px">
+    <a href="Settings.dc.html" aria-label="Назад" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:#121316">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ic.back}}"/></svg>
+    </a>
+  </div>
+  <h1 style="margin:4px 24px 0 24px;font-size:32px;line-height:38px;font-weight:700;letter-spacing:-0.5px">Безопасность и ключи</h1>
+  <div style="margin:4px 24px 0 24px;font-size:16px;line-height:22px;color:#666A75">Защита данных между устройствами</div>
+
+  <section style="margin:20px 16px 0 16px;background:#FFFFFF;border-radius:24px;padding:18px;display:flex;align-items:center;gap:14px">
+    <div style="width:52px;height:52px;border-radius:16px;background:#E8F6EE;color:#16804A;display:flex;align-items:center;justify-content:center;flex:none">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ic.shield}}"/></svg>
+    </div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:17px;line-height:23px;font-weight:600">Сквозное шифрование</div>
+      <div style="font-size:13px;line-height:18px;color:#666A75">Noise XX · ключи хранятся только на устройстве</div>
+    </div>
+  </section>
+
+  <sc-for list="{{groups}}" as="g" hint-placeholder-count="4">
+    <div style="margin:20px 16px 0 16px">
+      <sc-if value="{{g.title}}" hint-placeholder-val="{{true}}">
+        <div style="padding:0 8px 8px 8px;font-size:13px;line-height:17px;font-weight:500;color:#666A75">{{g.title}}</div>
+      </sc-if>
+      <div style="background:#FFFFFF;border-radius:24px;overflow:hidden">
+        <sc-for list="{{g.rows}}" as="r" hint-placeholder-count="3">
+          <div style="display:flex;align-items:center;gap:14px;padding:12px 18px;min-height:{{r.minH}};box-sizing:border-box;border-top:{{r.border}}">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:16px;line-height:22px;font-weight:500;color:{{r.titleColor}}">{{r.title}}</div>
+              <sc-if value="{{r.sub}}" hint-placeholder-val="{{true}}">
+                <div style="margin-top:1px;font-size:13px;line-height:18px;color:#666A75">{{r.sub}}</div>
+              </sc-if>
+            </div>
+            <sc-if value="{{r.value}}" hint-placeholder-val="{{true}}">
+              <div style="font-size:14px;line-height:20px;color:#666A75">{{r.value}}</div>
+            </sc-if>
+            <sc-if value="{{r.nav}}" hint-placeholder-val="{{false}}">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8A8D97" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none"><path d="{{ic.chev}}"/></svg>
+            </sc-if>
+            <sc-if value="{{r.isToggle}}" hint-placeholder-val="{{false}}">
+              <button type="button" role="switch" aria-checked="{{r.on}}" aria-label="{{r.title}}" onClick="{{r.toggle}}" style="width:52px;height:32px;border:0;border-radius:16px;padding:0;position:relative;cursor:pointer;flex:none;background:{{r.trackBg}}"><span style="position:absolute;top:2px;left:{{r.knobLeft}};width:28px;height:28px;border-radius:50%;background:#FFFFFF;box-shadow:0 1px 3px rgba(0,0,0,0.25)"></span></button>
+            </sc-if>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":1120}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { t: { trusted: true, confirm: true, bio: false, preview: true } };
+  }
+  renderVals() {
+    const I = {
+      back: 'M15 6l-6 6 6 6',
+      chev: 'M9 6l6 6-6 6',
+      shield: 'M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6zM9 12l2 2 4-4'
+    };
+    const raw = [
+      { title: 'Ключи', rows: [
+        { title: 'Идентификатор устройства', value: '4F2A…9C1' },
+        { nav: true, title: 'Отпечаток ключа', value: 'Показать' },
+        { nav: true, title: 'Ротация ключей', value: 'Каждые 30 дней' }
+      ] },
+      { title: 'Доверие', rows: [
+        { kind: 'toggle', id: 'trusted', title: 'Доверенные выдают ключи', sub: 'Новые устройства подключает не только админ' },
+        { kind: 'toggle', id: 'confirm', title: 'Подтверждать новые устройства', sub: 'Запрос приходит всем доверенным' },
+        { nav: true, title: 'Заблокированные', value: '0' }
+      ] },
+      { title: 'Защита приложения', rows: [
+        { kind: 'toggle', id: 'bio', title: 'Биометрия при входе', sub: 'Отпечаток или лицо' },
+        { kind: 'toggle', id: 'preview', title: 'Скрывать превью в недавних' }
+      ] },
+      { title: 'Опасная зона', rows: [
+        { nav: true, title: 'Сбросить ключи устройства', sub: 'Потребуется новое сопряжение', danger: true },
+        { nav: true, title: 'Выйти из семьи', danger: true }
+      ] }
+    ];
+    const self = this;
+    const t = this.state.t;
+    const groups = raw.map(function (g) {
+      return { title: g.title, rows: g.rows.map(function (r, i) {
+        const on = !!t[r.id];
+        return {
+          title: r.title, sub: r.sub || '', value: r.value || '', nav: !!r.nav,
+          isToggle: r.kind === 'toggle', titleColor: r.danger ? '#C42B2B' : '#121316',
+          on: on, trackBg: on ? '#2B8CF5' : '#A4A7B2', knobLeft: on ? '22px' : '2px',
+          border: i === 0 ? 'none' : '1px solid #F0F0F3',
+          minH: r.sub ? '66px' : '56px',
+          toggle: function () { const n = Object.assign({}, self.state.t); n[r.id] = !n[r.id]; self.setState({ t: n }); }
+        };
+      }) };
+    });
+    return { ic: I, groups: groups };
+  }
+}
+</script>
+</body>
+</html>

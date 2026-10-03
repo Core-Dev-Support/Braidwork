@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Зеркало экрана</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{text-decoration:none}
+button{font-family:inherit}
+</style>
+</helmet>
+<div style="width:390px;height:1250px;position:relative;overflow:hidden;box-sizing:border-box;background:linear-gradient(180deg,#E3EAF4 0,#F1F2F6 360px);font-family:Onest,system-ui,sans-serif;color:#121316">
+
+  <div style="padding:56px 12px 0 12px">
+    <a href="Settings.dc.html" aria-label="Назад" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:#121316">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ic.back}}"/></svg>
+    </a>
+  </div>
+  <h1 style="margin:4px 24px 0 24px;font-size:32px;line-height:38px;font-weight:700;letter-spacing:-0.5px">Зеркало экрана</h1>
+  <div style="margin:4px 24px 0 24px;font-size:16px;line-height:22px;color:#666A75">Показывай экран телефона на другом устройстве</div>
+
+  <section style="margin:20px 16px 0 16px;background:#1C1C1F;border-radius:28px;padding:16px;color:#FFFFFF">
+    <div style="height:150px;border-radius:16px;background:linear-gradient(135deg,#2E4470 0,#1A2238 100%);position:relative;overflow:hidden">
+      <div style="position:absolute;left:14px;top:14px;height:26px;padding:0 10px;border-radius:13px;background:rgba(0,0,0,0.45);display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600">
+        <span style="width:8px;height:8px;border-radius:50%;background:{{dot}}"></span>{{liveText}}
+      </div>
+      <div style="position:absolute;left:84px;top:34px;width:222px;height:100px;border-radius:12px;background:rgba(255,255,255,0.12)"></div>
+      <div style="position:absolute;left:96px;top:46px;width:90px;height:10px;border-radius:5px;background:rgba(255,255,255,0.35)"></div>
+      <div style="position:absolute;left:96px;top:66px;width:196px;height:8px;border-radius:4px;background:rgba(255,255,255,0.2)"></div>
+      <div style="position:absolute;left:96px;top:82px;width:160px;height:8px;border-radius:4px;background:rgba(255,255,255,0.2)"></div>
+      <div style="position:absolute;left:96px;top:104px;width:70px;height:20px;border-radius:10px;background:#2B8CF5"></div>
+      <div style="position:absolute;left:14px;top:50px;width:56px;height:84px;border-radius:12px;background:rgba(255,255,255,0.2);border:2px solid rgba(255,255,255,0.5);box-sizing:border-box"></div>
+    </div>
+    <div style="margin-top:14px;display:flex">
+      <sc-for list="{{stats}}" as="s" hint-placeholder-count="3">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:20px;line-height:26px;font-weight:600">{{s.value}}</div>
+          <div style="font-size:13px;line-height:18px;color:#B4B7C0">{{s.label}}</div>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <button type="button" onClick="{{toggleLive}}" style="margin:12px 16px 0 16px;width:358px;height:56px;border:0;border-radius:28px;background:{{btnBg}};color:{{btnFg}};display:flex;align-items:center;justify-content:center;gap:10px;font-size:16px;font-weight:600;cursor:pointer">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{btnIcon}}"/></svg>
+    {{btnText}}
+  </button>
+
+  <sc-for list="{{groups}}" as="g" hint-placeholder-count="3">
+    <div style="margin:20px 16px 0 16px">
+      <sc-if value="{{g.title}}" hint-placeholder-val="{{true}}">
+        <div style="padding:0 8px 8px 8px;font-size:13px;line-height:17px;font-weight:500;color:#666A75">{{g.title}}</div>
+      </sc-if>
+      <div style="background:#FFFFFF;border-radius:24px;overflow:hidden">
+        <sc-for list="{{g.rows}}" as="r" hint-placeholder-count="3">
+          <div style="display:flex;align-items:center;gap:14px;padding:12px 18px;min-height:{{r.minH}};box-sizing:border-box;border-top:{{r.border}}">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:16px;line-height:22px;font-weight:500">{{r.title}}</div>
+              <sc-if value="{{r.sub}}" hint-placeholder-val="{{true}}">
+                <div style="margin-top:1px;font-size:13px;line-height:18px;color:#666A75">{{r.sub}}</div>
+              </sc-if>
+            </div>
+            <sc-if value="{{r.value}}" hint-placeholder-val="{{true}}">
+              <div style="font-size:14px;line-height:20px;color:#666A75">{{r.value}}</div>
+            </sc-if>
+            <sc-if value="{{r.isToggle}}" hint-placeholder-val="{{false}}">
+              <button type="button" role="switch" aria-checked="{{r.on}}" aria-label="{{r.title}}" onClick="{{r.toggle}}" style="width:52px;height:32px;border:0;border-radius:16px;padding:0;position:relative;cursor:pointer;flex:none;background:{{r.trackBg}}"><span style="position:absolute;top:2px;left:{{r.knobLeft}};width:28px;height:28px;border-radius:50%;background:#FFFFFF;box-shadow:0 1px 3px rgba(0,0,0,0.25)"></span></button>
+            </sc-if>
+            <sc-if value="{{r.isRadio}}" hint-placeholder-val="{{false}}">
+              <button type="button" role="radio" aria-checked="{{r.checked}}" aria-label="{{r.title}}" onClick="{{r.pick}}" style="width:28px;height:28px;border-radius:50%;padding:0;cursor:pointer;flex:none;display:flex;align-items:center;justify-content:center;color:#FFFFFF;background:{{r.radioBg}};border:2px solid {{r.radioBorder}};box-sizing:border-box">
+                <sc-if value="{{r.checked}}" hint-placeholder-val="{{false}}">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ic.check}}"/></svg>
+                </sc-if>
+              </button>
+            </sc-if>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":1250}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { live: false, t: { audio: false, touches: true, control: false }, s: { q: 'auto' } };
+  }
+  renderVals() {
+    const I = {
+      back: 'M15 6l-6 6 6 6',
+      check: 'M5 12l4 4 10-10',
+      play: 'M8 5l11 7-11 7z',
+      stop: 'M7 7h10v10H7z'
+    };
+    const self = this;
+    const live = this.state.live;
+    const t = this.state.t;
+    const s = this.state.s;
+    const raw = [
+      { title: 'Качество', rows: [
+        { kind: 'radio', group: 'q', id: 'auto', title: 'Авто', sub: 'Подстраивается под сеть' },
+        { kind: 'radio', group: 'q', id: 'eco', title: 'Экономия', sub: '720p, 15 кадров в секунду' },
+        { kind: 'radio', group: 'q', id: 'max', title: 'Максимум', sub: 'Родное разрешение, 60 кадров' }
+      ] },
+      { title: 'Параметры', rows: [
+        { kind: 'toggle', id: 'audio', title: 'Передавать звук' },
+        { kind: 'toggle', id: 'touches', title: 'Показывать касания' },
+        { kind: 'toggle', id: 'control', title: 'Управление с другого устройства', sub: 'Нужно подтверждение на телефоне' }
+      ] },
+      { title: 'Способ захвата', rows: [
+        { title: 'Этот телефон', value: 'MediaProjection' },
+        { title: 'Ноутбук Linux', value: 'PipeWire' },
+        { title: 'Резервный ПК Linux', value: 'XShm (X11)' }
+      ] }
+    ];
+    const groups = raw.map(function (g) {
+      return { title: g.title, rows: g.rows.map(function (r, i) {
+        const on = !!t[r.id];
+        const checked = r.group ? s[r.group] === r.id : false;
+        return {
+          title: r.title, sub: r.sub || '', value: r.value || '',
+          isToggle: r.kind === 'toggle', isRadio: r.kind === 'radio',
+          on: on, trackBg: on ? '#2B8CF5' : '#A4A7B2', knobLeft: on ? '22px' : '2px',
+          checked: checked, radioBg: checked ? '#1A6FDB' : 'transparent', radioBorder: checked ? '#1A6FDB' : '#A4A7B2',
+          border: i === 0 ? 'none' : '1px solid #F0F0F3',
+          minH: r.sub ? '66px' : '56px',
+          toggle: function () { const n = Object.assign({}, self.state.t); n[r.id] = !n[r.id]; self.setState({ t: n }); },
+          pick: function () { const n = Object.assign({}, self.state.s); n[r.group] = r.id; self.setState({ s: n }); }
+        };
+      }) };
+    });
+    const stats = live
+      ? [{ value: '48 мс', label: 'Задержка' }, { value: '30', label: 'Кадров в секунду' }, { value: '2,1', label: 'Мбит/с' }]
+      : [{ value: '0 мс', label: 'Задержка' }, { value: '0', label: 'Кадров в секунду' }, { value: '0', label: 'Мбит/с' }];
+    return {
+      ic: I, groups: groups, stats: stats,
+      dot: live ? '#FF5A5A' : '#9A9DA8',
+      liveText: live ? 'Идёт трансляция' : 'Не запущено',
+      btnText: live ? 'Остановить' : 'Начать трансляцию',
+      btnIcon: live ? I.stop : I.play,
+      btnBg: live ? '#FFFFFF' : '#1A6FDB',
+      btnFg: live ? '#C42B2B' : '#FFFFFF',
+      toggleLive: function () { self.setState({ live: !self.state.live }); }
+    };
+  }
+}
+</script>
+</body>
+</html>

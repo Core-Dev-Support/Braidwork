@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Настройки</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{text-decoration:none}
+</style>
+</helmet>
+<div style="width:390px;height:1120px;position:relative;overflow:hidden;box-sizing:border-box;background:linear-gradient(180deg,#E3EAF4 0,#F1F2F6 360px);font-family:Onest,system-ui,sans-serif;color:#121316">
+
+  <div style="padding:60px 24px 0 24px">
+    <h1 style="margin:0;font-size:32px;line-height:38px;font-weight:700;letter-spacing:-0.5px">Настройки</h1>
+  </div>
+
+  <a href="Security.dc.html" style="margin:18px 16px 0 16px;background:#FFFFFF;border-radius:28px;padding:18px 20px;display:flex;align-items:center;gap:16px;color:#121316;box-shadow:0 1px 2px rgba(20,30,50,0.04)">
+    <div style="width:64px;height:64px;border-radius:50%;background:#DCEBFF;color:#1A5CB8;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:600;flex:none">К</div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:20px;line-height:26px;font-weight:600">Костя</div>
+      <div style="font-size:14px;line-height:20px;color:#666A75">Администратор семьи</div>
+      <div style="margin-top:4px;font-size:13px;line-height:18px;color:#666A75">ID устройства: 4F2A…9C1</div>
+    </div>
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#8A8D97" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none"><path d="{{ic.chev}}"/></svg>
+  </a>
+
+  <sc-for list="{{groups}}" as="g" hint-placeholder-count="3">
+    <div style="margin:20px 16px 0 16px">
+      <sc-if value="{{g.title}}" hint-placeholder-val="{{true}}">
+        <div style="padding:0 8px 8px 8px;font-size:13px;line-height:17px;font-weight:500;color:#666A75">{{g.title}}</div>
+      </sc-if>
+      <div style="background:#FFFFFF;border-radius:24px;overflow:hidden">
+        <sc-for list="{{g.rows}}" as="r" hint-placeholder-count="3">
+          <a href="{{r.href}}" style="display:flex;align-items:center;gap:14px;padding:12px 18px;min-height:64px;box-sizing:border-box;border-top:{{r.border}};color:#121316">
+            <div style="width:40px;height:40px;border-radius:12px;background:{{r.bg}};color:{{r.fg}};display:flex;align-items:center;justify-content:center;flex:none">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{r.d}}"/></svg>
+            </div>
+            <div style="flex:1;min-width:0;font-size:16px;line-height:22px;font-weight:500">{{r.title}}</div>
+            <div style="font-size:14px;line-height:20px;color:#666A75">{{r.value}}</div>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8A8D97" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none"><path d="{{ic.chev}}"/></svg>
+          </a>
+        </sc-for>
+      </div>
+    </div>
+  </sc-for>
+
+  <nav aria-label="Основное меню" style="position:absolute;left:0;right:0;bottom:0;height:84px;box-sizing:border-box;padding:8px 6px 22px 6px;display:flex;background:#FFFFFF;border-top:1px solid #E8E9EE">
+    <sc-for list="{{nav}}" as="n" hint-placeholder-count="5">
+      <a href="{{n.href}}" style="flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:{{n.color}};font-size:11px;line-height:14px;font-weight:{{n.w}}">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{n.d}}"/></svg>
+        {{n.label}}
+      </a>
+    </sc-for>
+  </nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":1120}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const I = {
+      chev: 'M9 6l6 6-6 6',
+      wifi: 'M3 9a14 14 0 0 1 18 0M6 12.5a9.5 9.5 0 0 1 12 0M9 16a5 5 0 0 1 6 0M11 19.5a1 1 0 1 0 2 0a1 1 0 1 0-2 0',
+      shield: 'M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6zM9 12l2 2 4-4',
+      power: 'M12 3v9M7 6.5a7.5 7.5 0 1 0 10 0',
+      clipboard: 'M8 4h8a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM9.5 4V3h5v1M9 11h6M9 15h6',
+      folder: 'M4 6a1 1 0 0 1 1-1h5l2 2h7a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z',
+      bell: 'M6 17v-6a6 6 0 1 1 12 0v6l1.5 2h-15zM10 21h4',
+      mirror: 'M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM8 20h8M12 17v3',
+      moon: 'M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z',
+      cpu: 'M8 7h8a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1zM10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4',
+      info: 'M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0M12 11v6M12 7.5v.5',
+      home: 'M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z',
+      devices: 'M3 6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v9H3zM1 19h16M19 9h2a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z',
+      sync: 'M4 8h13l-3-3M20 16H7l3 3',
+      family: 'M6 8a3 3 0 1 0 6 0a3 3 0 1 0-6 0M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M14.7 6.2a2.6 2.6 0 0 1 0 5.2M17 14.2c2.4.6 4 2.6 4 5.3',
+      settings: 'M4 7h9M17 7h3M4 17h3M11 17h9M13 7a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7 17a2 2 0 1 0 4 0a2 2 0 1 0-4 0'
+    };
+    const blue = { bg: '#E4F1FF', fg: '#1A6FDB' };
+    const green = { bg: '#E8F6EE', fg: '#16804A' };
+    const orange = { bg: '#FFF1E6', fg: '#C65D0E' };
+    const purple = { bg: '#EFEAFB', fg: '#6038C9' };
+    const gray = { bg: '#EEEEF1', fg: '#3A3D46' };
+    function row(href, title, value, d, c) { return { href: href, title: title, value: value, d: d, bg: c.bg, fg: c.fg }; }
+    const raw = [
+      { title: '', rows: [
+        row('Network.dc.html', 'Сеть и соединение', 'Авто', I.wifi, blue),
+        row('Security.dc.html', 'Безопасность и ключи', 'Noise XX', I.shield, purple),
+        row('Background.dc.html', 'Фоновая работа', 'Активна', I.power, green)
+      ] },
+      { title: 'Обмен', rows: [
+        row('Clipboard.dc.html', 'Буфер обмена', 'Вкл.', I.clipboard, orange),
+        row('Files.dc.html', 'Файлы и хранилище', '5 ГБ', I.folder, green),
+        row('Notifs.dc.html', 'Уведомления', 'Вкл.', I.bell, purple),
+        row('Mirror.dc.html', 'Зеркало экрана', 'Авто', I.mirror, blue)
+      ] },
+      { title: 'Приложение', rows: [
+        row('Appearance.dc.html', 'Внешний вид и язык', 'Системная', I.moon, gray),
+        row('Core.dc.html', 'Ядро и диагностика', 'Шаг 0', I.cpu, gray),
+        row('About.dc.html', 'О приложении', '', I.info, gray)
+      ] }
+    ];
+    const groups = raw.map(function (g) {
+      return { title: g.title, rows: g.rows.map(function (r, i) { return Object.assign({}, r, { border: i === 0 ? 'none' : '1px solid #F0F0F3' }); }) };
+    });
+    const nav = [
+      { href: 'Main.dc.html', label: 'Главная', d: I.home },
+      { href: 'Devices.dc.html', label: 'Устройства', d: I.devices },
+      { href: 'Share.dc.html', label: 'Обмен', d: I.sync },
+      { href: 'Family.dc.html', label: 'Семья', d: I.family },
+      { href: 'Settings.dc.html', label: 'Настройки', d: I.settings }
+    ].map(function (n, i) { return Object.assign({}, n, { color: i === 4 ? '#1A6FDB' : '#666A75', w: i === 4 ? '600' : '500' }); });
+    return { ic: I, groups: groups, nav: nav };
+  }
+}
+</script>
+</body>
+</html>

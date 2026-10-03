@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Уведомления</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{text-decoration:none}
+button{font-family:inherit}
+</style>
+</helmet>
+<div style="width:390px;height:1280px;position:relative;overflow:hidden;box-sizing:border-box;background:linear-gradient(180deg,#E3EAF4 0,#F1F2F6 360px);font-family:Onest,system-ui,sans-serif;color:#121316">
+
+  <div style="padding:56px 12px 0 12px">
+    <a href="Settings.dc.html" aria-label="Назад" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:#121316">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ic.back}}"/></svg>
+    </a>
+  </div>
+  <h1 style="margin:4px 24px 0 24px;font-size:32px;line-height:38px;font-weight:700;letter-spacing:-0.5px">Уведомления</h1>
+  <div style="margin:4px 24px 0 24px;font-size:16px;line-height:22px;color:#666A75">Показывай их на всех устройствах семьи</div>
+
+  <section style="margin:20px 16px 0 16px;background:#FFFFFF;border-radius:24px;padding:16px 18px;display:flex;align-items:center;gap:14px">
+    <div style="width:44px;height:44px;border-radius:50%;background:#E8F6EE;color:#16804A;display:flex;align-items:center;justify-content:center;flex:none">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ic.check}}"/></svg>
+    </div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:16px;line-height:22px;font-weight:600">Доступ к уведомлениям выдан</div>
+      <div style="font-size:13px;line-height:18px;color:#666A75">Служба читает уведомления этого телефона</div>
+    </div>
+  </section>
+
+  <sc-for list="{{groups}}" as="g" hint-placeholder-count="4">
+    <div style="margin:20px 16px 0 16px">
+      <sc-if value="{{g.title}}" hint-placeholder-val="{{true}}">
+        <div style="padding:0 8px 8px 8px;font-size:13px;line-height:17px;font-weight:500;color:#666A75">{{g.title}}</div>
+      </sc-if>
+      <div style="background:#FFFFFF;border-radius:24px;overflow:hidden">
+        <sc-for list="{{g.rows}}" as="r" hint-placeholder-count="3">
+          <div style="display:flex;align-items:center;gap:14px;padding:12px 18px;min-height:{{r.minH}};box-sizing:border-box;border-top:{{r.border}}">
+            <sc-if value="{{r.hasIcon}}" hint-placeholder-val="{{true}}">
+              <div style="width:40px;height:40px;border-radius:12px;background:{{r.bg}};color:{{r.fg}};display:flex;align-items:center;justify-content:center;flex:none">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{r.d}}"/></svg>
+              </div>
+            </sc-if>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:16px;line-height:22px;font-weight:500;color:{{r.titleColor}}">{{r.title}}</div>
+              <sc-if value="{{r.sub}}" hint-placeholder-val="{{true}}">
+                <div style="margin-top:1px;font-size:13px;line-height:18px;color:#666A75">{{r.sub}}</div>
+              </sc-if>
+            </div>
+            <sc-if value="{{r.value}}" hint-placeholder-val="{{true}}">
+              <div style="font-size:14px;line-height:20px;color:#666A75">{{r.value}}</div>
+            </sc-if>
+            <sc-if value="{{r.nav}}" hint-placeholder-val="{{false}}">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8A8D97" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none"><path d="{{ic.chev}}"/></svg>
+            </sc-if>
+            <sc-if value="{{r.isToggle}}" hint-placeholder-val="{{false}}">
+              <button type="button" role="switch" aria-checked="{{r.on}}" aria-label="{{r.title}}" onClick="{{r.toggle}}" style="width:52px;height:32px;border:0;border-radius:16px;padding:0;position:relative;cursor:pointer;flex:none;background:{{r.trackBg}}"><span style="position:absolute;top:2px;left:{{r.knobLeft}};width:28px;height:28px;border-radius:50%;background:#FFFFFF;box-shadow:0 1px 3px rgba(0,0,0,0.25)"></span></button>
+            </sc-if>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":1280}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { t: { send: true, recv: true, a_chat: true, a_mail: true, a_bank: false, a_cal: true, a_call: true, reply: true, dismiss: true, dnd: true, hidetext: false } };
+  }
+  renderVals() {
+    const I = {
+      back: 'M15 6l-6 6 6 6',
+      chev: 'M9 6l6 6-6 6',
+      check: 'M5 12l4 4 10-10',
+      chat: 'M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-5 4V6a1 1 0 0 1 1-1z',
+      mail: 'M4 6h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1zM3 7l9 7 9-7',
+      card: 'M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM3 10h18M7 15h4',
+      calendar: 'M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM4 10h16M8 3v4M16 3v4',
+      phone: 'M8 3h8a1.5 1.5 0 0 1 1.5 1.5v15A1.5 1.5 0 0 1 16 21H8a1.5 1.5 0 0 1-1.5-1.5v-15A1.5 1.5 0 0 1 8 3zM11 18h2'
+    };
+    const TINTS = {
+      blue: { bg: '#E4F1FF', fg: '#1A6FDB' }, green: { bg: '#E8F6EE', fg: '#16804A' },
+      orange: { bg: '#FFF1E6', fg: '#C65D0E' }, purple: { bg: '#EFEAFB', fg: '#6038C9' }
+    };
+    const raw = [
+      { title: 'Направление', rows: [
+        { kind: 'toggle', id: 'send', title: 'Отправлять на другие устройства', sub: 'С телефона на ноутбуки и ПК' },
+        { kind: 'toggle', id: 'recv', title: 'Принимать с других устройств', sub: 'Показывать как обычные уведомления' }
+      ] },
+      { title: 'Приложения', rows: [
+        { kind: 'toggle', id: 'a_chat', i: 'chat', tint: 'blue', title: 'Мессенджеры' },
+        { kind: 'toggle', id: 'a_mail', i: 'mail', tint: 'orange', title: 'Почта' },
+        { kind: 'toggle', id: 'a_bank', i: 'card', tint: 'green', title: 'Банки' },
+        { kind: 'toggle', id: 'a_cal', i: 'calendar', tint: 'purple', title: 'Календарь' },
+        { kind: 'toggle', id: 'a_call', i: 'phone', tint: 'blue', title: 'Звонки и SMS' }
+      ] },
+      { title: 'Действия', rows: [
+        { kind: 'toggle', id: 'reply', title: 'Отвечать с другого устройства', sub: 'Ответ уйдёт из исходного приложения' },
+        { kind: 'toggle', id: 'dismiss', title: 'Закрывать вместе', sub: 'Смахнул здесь, закрыто везде' },
+        { kind: 'toggle', id: 'dnd', title: 'Учитывать «Не беспокоить»', sub: 'Тихо, если режим включён на телефоне' }
+      ] },
+      { title: 'Приватность', rows: [
+        { kind: 'toggle', id: 'hidetext', title: 'Скрывать текст сообщений', sub: 'Только название приложения' },
+        { nav: true, title: 'Тихие часы', value: 'с 23:00 до 07:00' }
+      ] }
+    ];
+    const self = this;
+    const t = this.state.t;
+    const groups = raw.map(function (g) {
+      return { title: g.title, rows: g.rows.map(function (r, i) {
+        const on = !!t[r.id];
+        const tint = TINTS[r.tint || 'blue'];
+        return {
+          title: r.title, sub: r.sub || '', value: r.value || '', d: r.i ? I[r.i] : '', hasIcon: !!r.i,
+          bg: tint.bg, fg: tint.fg, titleColor: '#121316',
+          isToggle: r.kind === 'toggle', nav: !!r.nav,
+          on: on, trackBg: on ? '#2B8CF5' : '#A4A7B2', knobLeft: on ? '22px' : '2px',
+          border: i === 0 ? 'none' : '1px solid #F0F0F3',
+          minH: r.i ? '64px' : (r.sub ? '66px' : '56px'),
+          toggle: function () { const n = Object.assign({}, self.state.t); n[r.id] = !n[r.id]; self.setState({ t: n }); }
+        };
+      }) };
+    });
+    return { ic: I, groups: groups };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Этапы разработки</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{text-decoration:none}
+</style>
+</helmet>
+<div style="width:390px;height:1190px;position:relative;overflow:hidden;box-sizing:border-box;background:linear-gradient(180deg,#E3EAF4 0,#F1F2F6 360px);font-family:Onest,system-ui,sans-serif;color:#121316">
+
+  <div style="padding:56px 12px 0 12px">
+    <a href="About.dc.html" aria-label="Назад" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:#121316">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ic.back}}"/></svg>
+    </a>
+  </div>
+  <h1 style="margin:4px 24px 0 24px;font-size:32px;line-height:38px;font-weight:700;letter-spacing:-0.5px">Этапы разработки</h1>
+  <div style="margin:4px 24px 0 24px;font-size:16px;line-height:22px;color:#666A75">Сейчас идёт шаг 0 из 10</div>
+
+  <section style="margin:20px 16px 0 16px;background:#FFFFFF;border-radius:24px;padding:20px 18px">
+    <sc-for list="{{steps}}" as="s" hint-placeholder-count="11">
+      <div style="height:84px;display:flex;gap:14px">
+        <div style="width:32px;display:flex;flex-direction:column;align-items:center;flex:none">
+          <div style="width:32px;height:32px;border-radius:50%;box-sizing:border-box;background:{{s.bg}};border:2px solid {{s.border}};color:{{s.fg}};display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700">{{s.n}}</div>
+          <div style="flex:1;width:2px;margin:4px 0;background:{{s.line}}"></div>
+        </div>
+        <div style="flex:1;min-width:0;padding-top:3px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="font-size:16px;line-height:22px;font-weight:600">{{s.title}}</div>
+            <sc-if value="{{s.current}}" hint-placeholder-val="{{false}}">
+              <div style="height:22px;padding:0 8px;border-radius:11px;background:#1A6FDB;color:#FFFFFF;font-size:12px;font-weight:600;display:flex;align-items:center">Сейчас</div>
+            </sc-if>
+          </div>
+          <div style="margin-top:2px;font-size:13px;line-height:18px;color:#666A75">{{s.sub}}</div>
+        </div>
+      </div>
+    </sc-for>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":1190}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const I = { back: 'M15 6l-6 6 6 6' };
+    const raw = [
+      ['Ядро', 'Протокол Protobuf, Noise XX, хэндлы, Rust-ядро'],
+      ['LAN и точка доступа', 'Поиск по mDNS и SoftAP без роутера'],
+      ['Семья как сеть', 'Сопряжение по QR, ключи, Gossip'],
+      ['Клиент Android', 'Kotlin, Watchdog, мастер фоновой работы'],
+      ['Функции основы', 'Буфер, файлы по хэшу, уведомления, зеркало'],
+      ['Клиент Windows', 'WinUI 3, трей, автозапуск'],
+      ['Клиент Linux', 'AppImage, KDE и GNOME, XShm и PipeWire'],
+      ['BLE и звук', 'Быстрое соединение рядом'],
+      ['ICE со STUN', 'Связь через интернет без своих серверов'],
+      ['HarmonyOS NEXT', 'ArkTS и NAPI поверх ядра'],
+      ['Android 5', 'minSdk 21, дешугаризация, обход java.time']
+    ];
+    const steps = raw.map(function (r, i) {
+      const cur = i === 0;
+      return {
+        n: String(i), title: r[0], sub: r[1], current: cur,
+        bg: cur ? '#2B8CF5' : '#FFFFFF', border: cur ? '#2B8CF5' : '#BFC2CB', fg: cur ? '#FFFFFF' : '#4A4D57',
+        line: i === raw.length - 1 ? 'transparent' : '#E4E6EC'
+      };
+    });
+    return { ic: I, steps: steps };
+  }
+}
+</script>
+</body>
+</html>
