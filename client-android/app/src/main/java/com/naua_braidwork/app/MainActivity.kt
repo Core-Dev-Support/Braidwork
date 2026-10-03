@@ -14,6 +14,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.foundation.layout.systemBarsPadding
+import com.naua_braidwork.app.ui.ErrorSurface
 import com.naua_braidwork.app.ui.LinkScreen
 import com.naua_braidwork.app.ui.theme.BraidworkTheme
 
@@ -47,7 +48,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             BraidworkTheme {
                 Surface(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
-                    LinkScreen(onOpenBackgroundSettings = ::openBackgroundSettings)
+                    // Падение при запуске показывается текстом, а не закрытием
+                    // приложения: иначе на телефоне нет ни экрана, ни следа.
+                    ErrorSurface {
+                        LinkScreen(onOpenBackgroundSettings = ::openBackgroundSettings)
+                    }
                 }
             }
         }
