@@ -19,6 +19,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod crypto;
 mod session;
 
+// Мост к JVM нужен только под Android. На десктопе клиент обращается к ядру
+// через C ABI напрямую, и зависимость от `jni` была бы лишней.
+#[cfg(target_os = "android")]
+mod jni_bridge;
+
 pub mod pb {
     #![allow(clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/braidwork.v1.rs"));
@@ -71,10 +76,10 @@ fn guard<F: FnOnce() -> FlStatus>(f: F) -> FlStatus {
 }
 
 /// Длина буфера публичных ключей: signing (32) + static (32) + qr (32).
-const PUBLIC_KEYS_LEN: usize = 96;
+pub const PUBLIC_KEYS_LEN: usize = 96;
 
 /// Максимальная длина `device_id` в байтах.
-const DEVICE_ID_MAX: usize = 32;
+pub const DEVICE_ID_MAX: usize = 32;
 
 // =============================================================================
 // Хэндлы

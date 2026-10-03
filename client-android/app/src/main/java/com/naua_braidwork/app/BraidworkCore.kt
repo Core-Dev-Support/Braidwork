@@ -42,15 +42,11 @@ object BraidworkCore {
         synchronized(this) {
             if (loaded) return
 
-            // Порядок обязателен. Сначала ядро: оно отдаёт символы fl_*.
-            // Затем JNI-прокладка: её символы Java_*_nativeInit ищутся в уже
-            // загруженных библиотеках, поэтому fl_* должны быть видны раньше.
-            //
-            // Если загрузить только ядро, вызов nativeInit упадёт с
-            // UnsatisfiedLinkError: JNI-методы лежат во второй библиотеке,
-            // а имя библиотеки в Kotlin-external не указывается.
+            // Одна библиотека. Раньше мост к JVM жил в отдельной .so, и её
+            // символы не находились: загрузчик открывает библиотеки с
+            // RTLD_LOCAL, поэтому первая оставалась невидимой для второй.
+            // Теперь и ядро, и мост лежат в одном libbraidwork_core.so.
             System.loadLibrary("braidwork_core")
-            System.loadLibrary("braidwork_jni")
             loaded = true
         }
     }

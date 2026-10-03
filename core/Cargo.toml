@@ -29,6 +29,11 @@ prost = "0.13"
 
 thiserror = "1"
 
+# Мост к JVM нужен только Android-клиенту. Отдельная библиотека для него была
+# источником ошибок загрузки: см. комментарий в src/jni_bridge.rs.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
 [dev-dependencies]
 serde_json = "1"
 
