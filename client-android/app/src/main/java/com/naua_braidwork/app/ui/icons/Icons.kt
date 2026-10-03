@@ -1,5 +1,6 @@
 package com.naua_braidwork.app.ui.icons
 
+import androidx.compose.ui.graphics.ExperimentalPathApi
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
@@ -17,7 +18,7 @@ import androidx.compose.ui.unit.dp
  *
  * Цвет внутри вектора чёрный: иначе `tint` не смог бы перекрасить обводку.
  */
-@OptIn(androidx.compose.ui.graphics.ExperimentalPathApi::class)
+@OptIn(ExperimentalPathApi::class)
 private fun bwIcon(
     name: String,
     path: String,
@@ -82,8 +83,6 @@ val IcwFolder: ImageVector by lazy {
 val IcwMirror: ImageVector by lazy {
     bwIcon("mirror", "M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM8 20h8M12 17v3")
 }
-
-val IcwBell: ImageVector by lazy { IcwBell }
 
 val IcwHome: ImageVector by lazy {
     bwIcon("home", "M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z")

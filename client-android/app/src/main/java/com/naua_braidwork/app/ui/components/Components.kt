@@ -19,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
@@ -60,7 +61,7 @@ fun BwCard(
  * так плашки одинаковы на всех экранах.
  */
 @Composable
-fun toneColors(tone: Tone): Pair<androidx.compose.ui.graphics.Color, androidx.compose.ui.graphics.Color> {
+fun toneColors(tone: Tone): Pair<Color, Color> {
     val bw = LocalBwColors.current
     return when (tone) {
         Tone.Blue -> bw.blueSubtle to MaterialTheme.colorScheme.primary
@@ -114,8 +115,8 @@ fun IconTile(
 @Composable
 fun StatusChip(
     text: String,
-    background: androidx.compose.compose.ui.graphics.Color,
-    foreground: androidx.compose.compose.ui.graphics.Color,
+    background: Color,
+    foreground: Color,
     modifier: Modifier = Modifier,
 ) {
     Surface(
