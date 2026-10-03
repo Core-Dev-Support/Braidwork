@@ -11,7 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.naua_braidwork.app.ui.theme.LocalStatusColors
+import com.naua_braidwork.app.ui.theme.LocalBwColors
 
 /**
  * Экран с текстом ошибки.
@@ -24,7 +24,7 @@ import com.naua_braidwork.app.ui.theme.LocalStatusColors
  */
 @Composable
 fun ErrorScreen(message: String) {
-    val status = LocalStatusColors.current
+    val bw = LocalBwColors.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -34,7 +34,7 @@ fun ErrorScreen(message: String) {
         Text(
             text = "Не удалось запустить",
             style = MaterialTheme.typography.headlineMedium,
-            color = status.danger,
+            color = MaterialTheme.colorScheme.error,
         )
         Text(
             text = message,
