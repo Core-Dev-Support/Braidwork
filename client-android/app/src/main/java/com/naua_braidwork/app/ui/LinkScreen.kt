@@ -124,7 +124,21 @@ fun LinkScreen(
                 }
             }
             Spacer(Modifier.height(10.dp))
-            StatusChip(text = "Ядро запущено", background = status.onlineSubtle, foreground = status.online)
+            // Плашка показывает фактическое состояние, а не факт запуска:
+            // раньше здесь стоял «Ядро запущено» даже при ошибке загрузки.
+            if (error != null) {
+                StatusChip(
+                    text = "Ядро недоступно",
+                    background = status.dangerSubtle,
+                    foreground = status.danger,
+                )
+            } else {
+                StatusChip(
+                    text = "Ядро запущено",
+                    background = status.onlineSubtle,
+                    foreground = status.online,
+                )
+            }
         }
 
         // Честное состояние: устройств ноль, потому что транспорта ещё нет.

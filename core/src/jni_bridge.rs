@@ -27,11 +27,19 @@ fn to_signed(bytes: &[u8]) -> Vec<i8> {
 
 /// Генерирует ключи устройства.
 ///
+/// В имени символа подчёркивание пакета `naua_braidwork` заменено на `_1`.
+/// JNI требует именно так: в имени класса подчёркивание означает экранирование
+/// следующего символа, поэтому обычное `naua_braidwork` ищется как
+/// `naua_1braidwork` и не совпадает ни с одним экспортируемым символом.
+///
+/// Экранирование нашло применение на живом устройстве: `UnsatisfiedLinkError`
+/// со списком всех трёх имён, которые JVM перебирал.
+///
 /// Имена методов обязаны совпадать с тем, что объявлено в `BraidworkCore.kt`.
-/// Совпадение проверяется на первом же вызове: если переименовать метод в
-/// Kotlin и забыть здесь, будет `UnsatisfiedLinkError` с непонятным текстом.
+/// При переименовании метода в Kotlin править нужно здесь же, иначе будет
+/// `UnsatisfiedLinkError` с невнятным текстом.
 #[no_mangle]
-pub extern "system" fn Java_com_naua_braidwork_app_BraidworkCore_nativeInit<'local>(
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeInit<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     out_public: JByteArray<'local>,
@@ -62,8 +70,10 @@ pub extern "system" fn Java_com_naua_braidwork_app_BraidworkCore_nativeInit<'loc
 }
 
 /// Вычисляет `device_id` по публичному ключу подписи.
+///
+/// Экранирование подчёркивания объяснено у `nativeInit`.
 #[no_mangle]
-pub extern "system" fn Java_com_naua_braidwork_app_BraidworkCore_nativeDeviceId<'local>(
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeDeviceId<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     signing_public: JByteArray<'local>,
@@ -105,10 +115,12 @@ pub extern "system" fn Java_com_naua_braidwork_app_BraidworkCore_nativeDeviceId<
 
 /// Проверяет подпись рукопожатия.
 ///
+/// Экранирование подчёркивания объяснено у `nativeInit`.
+///
 /// Вызывается на каждом соединении, поэтому кешировать результат нельзя:
-/// кеш означал бы, что подделанное устройство пройдёт один раз.
+/// кеш означал бы, что поддеванное устройство пройдёт один раз.
 #[no_mangle]
-pub extern "system" fn Java_com_naua_braidwork_app_BraidworkCore_nativeVerifySignature<'local>(
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeVerifySignature<'local>(
     env: JNIEnv<'local>,
     _class: JClass<'local>,
     signing_public: JByteArray<'local>,
