@@ -83,6 +83,27 @@ val IcwMirror: ImageVector by lazy {
     bwIcon("mirror", "M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM8 20h8M12 17v3")
 }
 
+val IcwLaptop: ImageVector by lazy {
+    bwIcon("laptop", "M6 5h12a2 2 0 0 1 2 2v9H4V7a2 2 0 0 1 2-2zM2 19h20")
+}
+
+val IcwTablet: ImageVector by lazy {
+    bwIcon("tablet", "M6 3h12a1.5 1.5 0 0 1 1.5 1.5v15A1.5 1.5 0 0 1 18 21H6a1.5 1.5 0 0 1-1.5-1.5v-15A1.5 1.5 0 0 1 6 3zM11 18h2", 1.6f)
+}
+
+val IcwQr: ImageVector by lazy {
+    bwIcon("qr", "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h3v3M20 14v2M14 20h3M20 20v0")
+}
+
+val IcwLock: ImageVector by lazy {
+    bwIcon("lock", "M7 11h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2zM8 11V8a4 4 0 0 1 8 0v3")
+}
+
+/** Три точки. Обводка толще остальных — так в спецификации. */
+val IcwMore: ImageVector by lazy {
+    bwIcon("more", "M5 12h.01M12 12h.01M19 12h.01", 3f)
+}
+
 val IcwHome: ImageVector by lazy {
     bwIcon("home", "M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z")
 }

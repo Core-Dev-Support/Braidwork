@@ -10,7 +10,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -31,16 +34,19 @@ import com.naua_braidwork.app.ui.icons.IcwDevices
 import com.naua_braidwork.app.ui.icons.IcwFamily
 import com.naua_braidwork.app.ui.icons.IcwHome
 import com.naua_braidwork.app.ui.icons.IcwSettings
+import com.naua_braidwork.app.ui.screens.DevicesScreen
 import com.naua_braidwork.app.ui.screens.MainScreen
+import com.naua_braidwork.app.ui.screens.WelcomeScreen
 import com.naua_braidwork.app.ui.state.Sample
 
 /**
- * Пять разделов нижнего меню из спецификации.
+ * Разделы приложения.
  *
  * Перечисление, а не набор строк в разметке: раздел — это ещё и маршрут,
  * и подпись, и иконка. Списком таких строк они разъезжаются уже на третьем.
  */
 enum class Tab(val route: String, val label: String, val icon: ImageVector) {
+    Welcome("welcome", "Приветствие", IcwHome),
     Home("home", "Главная", IcwHome),
     Devices("devices", "Устройства", IcwDevices),
     Share("share", "Обмен", IcwFamily),
@@ -56,17 +62,37 @@ enum class Tab(val route: String, val label: String, val icon: ImageVector) {
  */
 @Composable
 fun BraidworkApp(deviceId: String, deviceName: String) {
-    var tab by remember { mutableStateOf(Tab.Home) }
-
     val state = remember(deviceId) { Sample.mainState(deviceId, deviceName) }
 
+    // Приветствие показывается один раз за сеанс: после перезапуска появится
+    // снова, пока нет постоянного хранилища настроек.
+    val startTab = remember {
+        if (Sample.seenWelcome()) Tab.Home else Tab.Welcome
+    }
+    var tab by remember { mutableStateOf(startTab) }
+
+    // Полноэкранный режим: фон рисуется под статус-бар и под системную
+    // навигацию, а отступы берутся из окна. Иначе сверху остаётся полоса
+    // чужого цвета и экран выглядит обрезанным.
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            .background(MaterialTheme.colorScheme.background)
+            .windowInsetsPadding(WindowInsets.systemBars),
     ) {
         Box(modifier = Modifier.weight(1f)) {
             when (tab) {
+                Tab.Welcome -> WelcomeScreen(
+                    onCreateFamily = {
+                        Sample.markWelcomeSeen()
+                        tab = Tab.Home
+                    },
+                    onJoinByQr = {
+                        Sample.markWelcomeSeen()
+                        tab = Tab.Devices
+                    },
+                )
+
                 Tab.Home -> MainScreen(
                     state = state,
                     onPairClick = { tab = Tab.Devices },
@@ -77,11 +103,20 @@ fun BraidworkApp(deviceId: String, deviceName: String) {
                     onSoftApClick = { tab = Tab.Settings },
                 )
 
+                Tab.Devices -> DevicesScreen(
+                    state = Sample.devicesState(),
+                    onFilter = { tab = Tab.Devices },
+                    onAdd = { tab = Tab.Devices },
+                    onDevice = { },
+                )
+
                 else -> PlaceholderScreen(tab)
             }
         }
 
-        BottomBar(current = tab, onSelect = { tab = it })
+        if (tab != Tab.Welcome) {
+            BottomBar(current = tab, onSelect = { tab = it })
+        }
     }
 }
 

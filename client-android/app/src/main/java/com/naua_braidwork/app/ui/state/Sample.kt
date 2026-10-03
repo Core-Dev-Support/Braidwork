@@ -11,6 +11,21 @@ import com.naua_braidwork.app.BraidworkCore
  */
 object Sample {
 
+    /**
+     * Показывалось ли приветствие.
+     *
+     * Пока хранится только в памяти процесса: отдельное постоянное хранилище
+     * появится вместе с настройками. После перезапуска приложения приветствие
+     * появится снова — это заметно, но не ломает работу на этапе проверки.
+     */
+    private var welcomeSeen = false
+
+    fun seenWelcome(): Boolean = welcomeSeen
+
+    fun markWelcomeSeen() {
+        welcomeSeen = true
+    }
+
     /** Идентификатор берётся из ядра; до его получения показываем заглушку. */
     fun thisDeviceId(): String = runCatching {
         BraidworkCore.deviceId(BraidworkCore.generateKeys().signing)

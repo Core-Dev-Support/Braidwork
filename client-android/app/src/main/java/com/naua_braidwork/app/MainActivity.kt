@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.core.view.WindowCompat
 import com.naua_braidwork.app.ui.BraidworkApp
 import com.naua_braidwork.app.ui.ErrorScreen
 import com.naua_braidwork.app.ui.describe
@@ -40,6 +40,11 @@ class MainActivity : ComponentActivity() {
         val previousCrash = CrashLog.read(this)
         if (previousCrash != null) CrashLog.clear(this)
 
+        // Полноэкранный режим: окно растягивается под статус-бар и под системную
+        // навигацию, а цвета обеих панелей становятся прозрачными. Отступы
+        // внутри приложения берутся из окна, поэтому интерфейс рисуется под
+        // ними, а не начинается под ними.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
 
@@ -54,7 +59,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             BraidworkTheme {
-                Surface(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
+                Surface(modifier = Modifier.fillMaxSize()) {
                     // Загрузка библиотек проверяется до первого кадра: если ядро
                     // не поднялось, показываем текст ошибки вместо закрытия.
                     // Проверка здесь, а не внутри экрана, потому что вызов
