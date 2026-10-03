@@ -34,6 +34,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Ставится до всего остального: если падение случится при запуске,
+        // перехватчик уже должен работать.
+        CrashLog.install(this)
+        val previousCrash = CrashLog.read(this)
+        if (previousCrash != null) CrashLog.clear(this)
+
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
 
@@ -56,7 +62,11 @@ class MainActivity : ComponentActivity() {
                     val loadError = remember { runCatching { BraidworkCore.checkLoaded() } }
                     val problem = loadError.exceptionOrNull()
 
-                    if (problem != null) {
+                    if (previousCrash != null) {
+                        // Падение прошлого запуска важнее текущего состояния:
+                        // сначала чиним то, что уже упало.
+                        ErrorScreen(previousCrash)
+                    } else if (problem != null) {
                         ErrorScreen(describe(problem))
                     } else {
                         LinkScreen(onOpenBackgroundSettings = ::openBackgroundSettings)
