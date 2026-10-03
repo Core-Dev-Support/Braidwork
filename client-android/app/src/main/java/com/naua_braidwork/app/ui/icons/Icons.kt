@@ -1,6 +1,5 @@
 package com.naua_braidwork.app.ui.icons
 
-import androidx.compose.ui.graphics.ExperimentalPathApi
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
@@ -18,7 +17,7 @@ import androidx.compose.ui.unit.dp
  *
  * Цвет внутри вектора чёрный: иначе `tint` не смог бы перекрасить обводку.
  */
-@OptIn(ExperimentalPathApi::class)
+// PathParser в этой версии Compose стабильный и OptIn не требует.
 private fun bwIcon(
     name: String,
     path: String,

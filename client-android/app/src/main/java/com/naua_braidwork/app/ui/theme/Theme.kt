@@ -17,7 +17,6 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
@@ -130,7 +129,7 @@ val LocalAppGradient = staticCompositionLocalOf<Brush> {
 private val BwTypography = Typography(
     displaySmall = TextStyle(
         fontSize = 32.sp, lineHeight = 38.sp, fontWeight = FontWeight.Bold,
-        letterSpacing = (-0.5).sp, lineHeightStyle = LineHeightStyle.Trim.None,
+        letterSpacing = (-0.5).sp,
     ),
     headlineMedium = TextStyle(
         fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold,
