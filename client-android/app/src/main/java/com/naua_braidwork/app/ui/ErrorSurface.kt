@@ -7,10 +7,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -18,44 +14,34 @@ import androidx.compose.ui.unit.sp
 import com.naua_braidwork.app.ui.theme.LocalStatusColors
 
 /**
- * Ловит падение при запуске и показывает его текстом.
+ * Экран с текстом ошибки.
  *
- * Пока нет канала диагностики на устройстве, это единственный способ узнать
- * причину: экран с ошибкой можно просто переписать или прислать скриншотом.
- * Ошибки внутри самого экрана этим не ловятся — только то, что происходит до
- * первого кадра.
+ * Отдельная composable-функция, а не `try` вокруг вызова другой: Kotlin это
+ * прямо запрещает, потому что компоновка должна идти по известному пути.
+ *
+ * Ошибку сюда передаёт та точка, где исключение действительно возникает, —
+ * сейчас это загрузка библиотек в [com.naua_braidwork.app.BraidworkCore].
  */
 @Composable
-fun ErrorSurface(content: @Composable () -> Unit) {
+fun ErrorScreen(message: String) {
     val status = LocalStatusColors.current
-    var failure by remember { mutableStateOf<String?>(null) }
-
-    if (failure != null) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(
-                text = "Не удалось запустить",
-                style = MaterialTheme.typography.headlineMedium,
-                color = status.danger,
-            )
-            Text(
-                text = failure.orEmpty(),
-                fontSize = 13.sp,
-                fontFamily = FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-        }
-        return
-    }
-
-    try {
-        content()
-    } catch (t: Throwable) {
-        failure = describe(t)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            text = "Не удалось запустить",
+            style = MaterialTheme.typography.headlineMedium,
+            color = status.danger,
+        )
+        Text(
+            text = message,
+            fontSize = 13.sp,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
     }
 }
 
@@ -65,7 +51,7 @@ fun ErrorSurface(content: @Composable () -> Unit) {
  * Одной верхней строки мало: в Java причиной падения бывает ошибка ниже по
  * стеку, и именно она объясняет, что пошло не так.
  */
-private fun describe(t: Throwable): String {
+fun describe(t: Throwable): String {
     val parts = StringBuilder()
     var current: Throwable? = t
     var depth = 0
