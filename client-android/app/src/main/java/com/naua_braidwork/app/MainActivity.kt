@@ -68,7 +68,17 @@ class MainActivity : ComponentActivity() {
     private fun startLinkService() {
         val intent = Intent(this, LinkService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
+            // Сервис может не запуститься с первого раза, если система ещё
+            // считает приложение только что запущенным. Повторная попытка
+            // через пару секунд дешевле, чем падение на белом экране.
+            try {
+                startForegroundService(intent)
+            } catch (e: IllegalStateException) {
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                    { runCatching { startForegroundService(intent) } },
+                    2000,
+                )
+            }
         } else {
             startService(intent)
         }
