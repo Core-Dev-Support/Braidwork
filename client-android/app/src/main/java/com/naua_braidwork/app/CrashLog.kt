@@ -53,7 +53,14 @@ object CrashLog {
 
     private fun describe(thread: Thread, error: Throwable): String {
         val out = StringBuilder()
-        out.append("Поток: ").append(thread.name).append("\n\n")
+
+        // Причина падения идёт первой и крупным текстом: без неё стек
+        // показывает только место, а не что именно сломалось. Раньше она
+        // терялась, и пришлось гадать по кадрам.
+        out.append(error::class.java.name)
+        error.message?.let { out.append("\n\n").append(it) }
+        out.append("\n\nПоток: ").append(thread.name).append("\n\n")
+
         error.stackTrace.forEach { out.append("    at ").append(it).append('\n') }
 
         var current = error.cause

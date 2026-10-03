@@ -58,8 +58,11 @@ fun LinkScreen(
         try {
             val keys = BraidworkCore.generateKeys()
             deviceId = BraidworkCore.deviceId(keys.signing)
-        } catch (e: BraidworkException) {
-            error = e.message
+        } catch (t: Throwable) {
+            // Ловится Throwable, а не только BraidworkException: ошибка загрузки
+            // библиотеки приходит как UnsatisfiedLinkError, и при перехвате
+            // одного типа она просто убивала приложение с белым экраном.
+            error = "${t::class.java.simpleName}: ${t.message ?: "без сообщения"}"
         }
     }
 
