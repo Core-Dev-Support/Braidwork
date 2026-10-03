@@ -12,5 +12,9 @@ add_library(braidwork_jni SHARED braidwork_jni.c)
 target_compile_options(braidwork_jni PRIVATE -Wall -Wextra -fvisibility=hidden)
 
 # Прямая линковка с ядром не нужна и вредна: символы ядра экспортируются
-# динамически, а статическая линковка в отдельную .so продублировала бы их.
-# Поэтому загрузка идёт по имени через System.loadLibrary.
+# динамически и подставляются в рантайме из libbraidwork_core.so.
+# Без флага ниже линкер считает их неопределёнными и рвёт сборку.
+target_link_options(braidwork_jni PRIVATE
+    -Wl,--unresolved-symbols=ignore-all
+    -Wl,--allow-shlib-undefined
+)
