@@ -110,10 +110,18 @@ jobs:
           export CARGO_TARGET_I686_LINUX_ANDROID_LINKER="$CC_i686_linux_android"
           export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$CC_x86_64_linux_android"
 
-          cargo build --release --target aarch64-linux-android
-          cargo build --release --target armv7-linux-androideabi
-          cargo build --release --target i686-linux-android
-          cargo build --release --target x86_64-linux-android
+          # transport-ice выключен: он тянет `stun`, а тот — `nix`,
+          # который под Android не собирается. На десктопных клиентах ICE
+          # остаётся включённым по умолчанию.
+          features=transport-lan,transport-ble,transport-usb,transport-softap
+          for target in \
+            aarch64-linux-android \
+            armv7-linux-androideabi \
+            i686-linux-android \
+            x86_64-linux-android; do
+            cargo build --release --target "$target" \
+              --no-default-features --features "$features"
+          done
 
           out="../client-android/app/src/main/jniLibs"
           mkdir -p "$out"
