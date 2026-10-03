@@ -2,64 +2,52 @@ package com.naua_braidwork.app
 
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.launch
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.foundation.layout.systemBarsPadding
+import com.naua_braidwork.app.ui.LinkScreen
+import com.naua_braidwork.app.ui.theme.BraidworkTheme
 
 /**
  * Единственный экран приложения.
  *
- * Намеренно простой: показываем идентификатор устройства для сверки при
- * сопряжении и состояние ядра. Всё остальное появится вместе с транспортом.
+ * Пока показывает состояние ядра и честный ноль устройств. Разметка и цвета
+ * берутся из общей системы токенов, поэтому тот же экран на десктопе выглядит
+ * так же.
  */
 class MainActivity : ComponentActivity() {
 
-    private val core by lazy { BraidworkCore }
-
     private val notificationPermission =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            lastNotificationPermission = granted
-        }
-
-    private var lastNotificationPermission: Boolean? = null
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+
         ForegroundNotification.ensureChannel(this)
         startLinkService()
 
-        // На Android 13+ уведомления не показываются без разрешения, а без них
-        // клиент молча не работает. Просим сразу и объясняем, зачем.
+        // На Android 13+ без этого уведомления не показываются, а без него
+        // система убьёт приложение вместе со всей связью.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
         setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxWidth()) {
-                    DeviceIdentityPanel()
+            BraidworkTheme {
+                Surface(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
+                    LinkScreen(onOpenBackgroundSettings = ::openBackgroundSettings)
                 }
             }
         }
@@ -84,62 +72,17 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    @androidx.compose.runtime.Composable
-    private fun DeviceIdentityPanel() {
-        val context = LocalContext.current
-        var deviceId by remember { mutableStateOf("вычисляется...") }
-        var error by remember { mutableStateOf<String?>(null) }
-
-        androidx.compose.runtime.LaunchedEffect(Unit) {
-            try {
-                // Ключи создаются один раз при первом запуске и хранятся локально.
-                val keys = core.generateKeys()
-                deviceId = core.deviceId(keys.signing)
-            } catch (e: BraidworkException) {
-                error = e.message
-            }
-        }
-
-        Column(
-            modifier = Modifier.padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Text("Braidwork", fontSize = 28.sp, style = MaterialTheme.typography.headlineMedium)
-            Text(
-                "Устройство связано с семьёй по локальной сети. " +
-                    "Аккаунт не нужен, данные никуда не отправляются.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-
-            Text("Идентификатор устройства", style = MaterialTheme.typography.labelLarge)
-            Text(
-                deviceId,
-                fontSize = 16.sp,
-                style = MaterialTheme.typography.bodyLarge,
-            )
-
-            error?.let {
-                Text("Ошибка: $it", color = MaterialTheme.colorScheme.error)
-            }
-
-            Text(
-                "Пока реализована только идентичность устройства. " +
-                    "Связь с другими устройствами появится в следующих сборках.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-
-            Button(onClick = { openBackgroundSettings(context) }) {
-                Text("Разрешить работу в фоне")
-            }
-        }
-    }
-
-    private fun openBackgroundSettings(context: android.content.Context) {
-        // На Xiaomi, Oppo, Vivo и Huawei фоновую работу включает конкретный
-        // экран настроек, и без него клиент будет убиваться системой.
+    /**
+     * Открывает настройки приложения.
+     *
+     * Отдельного экрана для автозапуска у Xiaomi и Oppo через публичный API
+     * нет: доступ к нему есть только у самого производителя. Поэтому ведём
+     * в общие настройки приложения и объясняем в интерфейсе, что искать.
+     */
+    private fun openBackgroundSettings() {
         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-            data = android.net.Uri.fromParts("package", packageName, null)
+            data = Uri.fromParts("package", packageName, null)
         }
-        runCatching { context.startActivity(intent) }
+        runCatching { startActivity(intent) }
     }
 }

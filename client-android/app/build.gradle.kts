@@ -76,6 +76,9 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)
+    // Нужен для WindowCompat: системные цвета задаются вместе с темой,
+    // иначе статус-бар остаётся светлым на тёмном экране.
+    implementation(libs.androidx.core.ktx)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
