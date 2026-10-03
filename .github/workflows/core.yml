@@ -75,6 +75,18 @@ jobs:
         with:
           version: '29'
 
+      # Android NDK нужен для линкеров: без него кросс-сборка падает на поиске
+      # aarch64-linux-android-clang.
+      - name: Установка NDK
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/ndk.zip \
+            https://dl.google.com/android/repository/android-ndk-r27c-linux.zip
+          unzip -q /tmp/ndk.zip -d /tmp
+          mkdir -p "${ANDROID_NDK_ROOT}"
+          mv /tmp/android-ndk-r27c "${ANDROID_NDK_ROOT}/27.3.13750724"
+          echo "ANDROID_NDK_HOME=${ANDROID_NDK_ROOT}/27.3.13750724" >> "$GITHUB_ENV"
+
       # Ядро собирается под четыре ABI: клиент отдаётся универсальным APK.
       #
       # transport-ice здесь выключен намеренно: он тянет `stun`, а тот —
@@ -83,6 +95,17 @@ jobs:
       # плане, а не спрятано отключением проверки.
       - name: Проверка всех ABI
         run: |
+          set -euo pipefail
+          bin="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$bin/aarch64-linux-android21-clang"
+          export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="$bin/armv7a-linux-androideabi21-clang"
+          export CARGO_TARGET_I686_LINUX_ANDROID_LINKER="$bin/i686-linux-android21-clang"
+          export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$bin/x86_64-linux-android21-clang"
+          export CC_aarch64_linux_android="$bin/aarch64-linux-android21-clang"
+          export CC_armv7_linux_androideabi="$bin/armv7a-linux-androideabi21-clang"
+          export CC_i686_linux_android="$bin/i686-linux-android21-clang"
+          export CC_x86_64_linux_android="$bin/x86_64-linux-android21-clang"
+
           features=transport-lan,transport-ble,transport-usb,transport-softap
           for target in \
             aarch64-linux-android \
