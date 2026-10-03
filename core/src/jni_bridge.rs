@@ -93,7 +93,10 @@ pub extern "system" fn Java_com_naua_braidwork_app_BraidworkCore_nativeDeviceId<
     {
         return crate::FL_ERR_INTERNAL;
     }
-    if env.set_int_array_region(&out_len, 0, &[len as jint]).is_err() {
+    if env
+        .set_int_array_region(&out_len, 0, &[len as jint])
+        .is_err()
+    {
         return crate::FL_ERR_INTERNAL;
     }
 
