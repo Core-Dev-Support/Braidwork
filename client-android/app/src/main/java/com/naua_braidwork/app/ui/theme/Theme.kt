@@ -1,8 +1,6 @@
 package com.naua_braidwork.app.ui.theme
 
 import android.app.Activity
-import android.content.Context
-import android.content.res.Configuration
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
@@ -12,159 +10,157 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
-import com.naua_braidwork.app.R
 
 /**
- * Цвета из `design/tokens.json`.
- *
- * Значения не подбираются здесь: они перенесены из общего файла токенов, чтобы
- * Android и десктопный клиент выглядели одинаково. Менять палитру нужно там,
- * а не здесь.
+ * Палитра и размеры из `design/tokens.json`, а тот в свою очередь взят из
+ * спецификации дизайна. Здесь значения не придумываются: меняется файл токенов,
+ * а не этот код.
  */
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF3B6FF6),
+    primary = Color(0xFF1A6FDB),
     onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFE4EBFD),
-    onPrimaryContainer = Color(0xFF12151C),
-    secondary = Color(0xFF565E70),
-    onSecondary = Color(0xFFFFFFFF),
-    background = Color(0xFFF4F5F8),
-    onBackground = Color(0xFF12151C),
+    primaryContainer = Color(0xFFE4F1FF),
+    onPrimaryContainer = Color(0xFF121316),
+    background = Color(0xFFF1F2F6),
+    onBackground = Color(0xFF121316),
     surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF12151C),
-    surfaceVariant = Color(0xFFEDEFF3),
-    onSurfaceVariant = Color(0xFF565E70),
-    outline = Color(0xFFDFE3EB),
-    outlineVariant = Color(0xFFE4E7EE),
-    error = Color(0xFFD03B3B),
+    onSurface = Color(0xFF121316),
+    surfaceVariant = Color(0xFFEEEEF1),
+    onSurfaceVariant = Color(0xFF666A75),
+    outline = Color(0xFFF0F0F3),
+    outlineVariant = Color(0xFFE8E9EE),
+    error = Color(0xFFC42B2B),
     onError = Color(0xFFFFFFFF),
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFF5B87F8),
-    onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFF1E2A47),
+    primary = Color(0xFF5B9BF5),
+    onPrimary = Color(0xFF0B0E13),
+    primaryContainer = Color(0xFF1B2C45),
     onPrimaryContainer = Color(0xFFEDEFF5),
-    secondary = Color(0xFFA6ADBD),
-    onSecondary = Color(0xFF12141A),
-    background = Color(0xFF12141A),
+    background = Color(0xFF1B1716),
     onBackground = Color(0xFFEDEFF5),
-    surface = Color(0xFF1B1E26),
+    surface = Color(0xFF252A33),
     onSurface = Color(0xFFEDEFF5),
-    surfaceVariant = Color(0xFF232733),
-    onSurfaceVariant = Color(0xFFA6ADBD),
-    outline = Color(0xFF2E3340),
-    outlineVariant = Color(0xFF21252E),
+    surfaceVariant = Color(0xFF313743),
+    onSurfaceVariant = Color(0xFFA8AEBC),
+    outline = Color(0xFF3A4049),
+    outlineVariant = Color(0xFF2E3340),
     error = Color(0xFFF0625E),
-    onError = Color(0xFF12141A),
+    onError = Color(0xFF0B0E13),
 )
 
 /**
- * Состояния системы.
+ * Цвета состояний и цветные плашки.
  *
- * Отдельная сущность от палитры Material: здесь нет «успеха», есть
- * «устройство на связи», «нужно проверить» и «недоступно на этом устройстве».
+ * Отдельная сущность от палитры Material: здесь нет «успеха», есть конкретные
+ * состояния устройства и четыре пары плашек из спецификации.
  */
-data class StatusColors(
+data class BwColors(
+    val appTop: Color,
+    val appBottom: Color,
     val online: Color,
     val onlineSubtle: Color,
     val warning: Color,
     val warningSubtle: Color,
-    val danger: Color,
-    val dangerSubtle: Color,
-    val idle: Color,
-    val idleSubtle: Color,
-    val info: Color,
-    val infoSubtle: Color,
-    /** Плашка, тёмная в обеих темах: обозначает действие или проверку. */
+    val orangeSubtle: Color,
+    val greenSubtle: Color,
+    val purpleSubtle: Color,
+    val blueSubtle: Color,
     val chip: Color,
     val onChip: Color,
+    /** Фон кнопки-режима в невыбранном состоянии. */
+    val modeIdle: Color,
+    val active: Color,
 )
 
-private val LightStatus = StatusColors(
-    online = Color(0xFF1F9D55),
-    onlineSubtle = Color(0xFFE2F4EA),
-    warning = Color(0xFFC77700),
-    warningSubtle = Color(0xFFFCF0DC),
-    danger = Color(0xFFD03B3B),
-    dangerSubtle = Color(0xFFFCE8E8),
-    idle = Color(0xFF858DA0),
-    idleSubtle = Color(0xFFEDEFF3),
-    info = Color(0xFF3B6FF6),
-    infoSubtle = Color(0xFFE4EBFD),
-    chip = Color(0xFF22262F),
+private val LightBw = BwColors(
+    appTop = Color(0xFFE3EAF4),
+    appBottom = Color(0xFFF1F2F6),
+    online = Color(0xFF16804A),
+    onlineSubtle = Color(0xFFE8F6EE),
+    warning = Color(0xFFC65D0E),
+    warningSubtle = Color(0xFFFFF1E6),
+    orangeSubtle = Color(0xFFFFF1E6),
+    greenSubtle = Color(0xFFE8F6EE),
+    purpleSubtle = Color(0xFFEFEAFB),
+    blueSubtle = Color(0xFFE4F1FF),
+    chip = Color(0xFF23262D),
     onChip = Color(0xFFFFFFFF),
+    modeIdle = Color(0xFFEDEDF0),
+    active = Color(0xFF2B8CF5),
 )
 
-private val DarkStatus = StatusColors(
+private val DarkBw = BwColors(
+    appTop = Color(0xFF3B4252),
+    appBottom = Color(0xFF1B1716),
     online = Color(0xFF3DD68C),
     onlineSubtle = Color(0xFF13291F),
     warning = Color(0xFFE3A43A),
     warningSubtle = Color(0xFF2E2415),
-    danger = Color(0xFFF0625E),
-    dangerSubtle = Color(0xFF2F1919),
-    idle = Color(0xFF727A8B),
-    idleSubtle = Color(0xFF21252E),
-    info = Color(0xFF5B87F8),
-    infoSubtle = Color(0xFF1A2440),
-    chip = Color(0xFF2A2F3B),
+    orangeSubtle = Color(0xFF33230F),
+    greenSubtle = Color(0xFF14261B),
+    purpleSubtle = Color(0xFF241E3A),
+    blueSubtle = Color(0xFF16243A),
+    chip = Color(0xFF313743),
     onChip = Color(0xFFEDEFF5),
+    modeIdle = Color(0xFF2E3340),
+    active = Color(0xFF5B9BF5),
 )
 
-val LocalStatusColors = staticCompositionLocalOf { LightStatus }
+val LocalBwColors = staticCompositionLocalOf { LightBw }
 
-/** Типографика из токенов: одиннадцать размеров с заданной высотой строки. */
-private val BraidTypography = Typography(
+/** Градиент фона приложения: в каждой теме свой, в тёмной он сильно темнее. */
+val LocalAppGradient = staticCompositionLocalOf<Brush> {
+    Brush.verticalGradient(listOf(LightBw.appTop, LightBw.appBottom))
+}
+
+/** Типографика из спецификации. Высота строки задана явно. */
+private val BwTypography = Typography(
     displaySmall = TextStyle(
-        fontSize = 30.sp, lineHeight = 38.sp, fontWeight = FontWeight.Bold,
-    ),
-    headlineLarge = TextStyle(
-        fontSize = 24.sp, lineHeight = 32.sp, fontWeight = FontWeight.Bold,
+        fontSize = 32.sp, lineHeight = 38.sp, fontWeight = FontWeight.Bold,
+        letterSpacing = (-0.5).sp, lineHeightStyle = LineHeightStyle.Trim.None,
     ),
     headlineMedium = TextStyle(
-        fontSize = 20.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold,
+        fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold,
     ),
     titleLarge = TextStyle(
-        fontSize = 18.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold,
+        fontSize = 18.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold,
     ),
     titleMedium = TextStyle(
-        fontSize = 16.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold,
+        fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium,
     ),
     bodyLarge = TextStyle(
-        fontSize = 16.sp, lineHeight = 24.sp, fontWeight = FontWeight.Normal,
+        fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium,
     ),
     bodyMedium = TextStyle(
-        fontSize = 14.sp, lineHeight = 21.sp, fontWeight = FontWeight.Normal,
+        fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Normal,
     ),
     bodySmall = TextStyle(
-        fontSize = 13.sp, lineHeight = 19.sp, fontWeight = FontWeight.Normal,
-    ),
-    labelLarge = TextStyle(
-        fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold,
+        fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.Normal,
     ),
     labelMedium = TextStyle(
-        fontSize = 12.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold,
-    ),
-    labelSmall = TextStyle(
-        fontSize = 11.sp, lineHeight = 15.sp, fontWeight = FontWeight.Medium,
+        fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.SemiBold,
     ),
 )
 
 /**
  * Тема приложения.
  *
- * По умолчанию следует за системой, но пользователь может зафиксировать схему.
- * Системная тема читается здесь, а не в разных экранах, иначе на части
- * устройств фон и текст разойдутся при первом же изменении настроек.
+ * Следует за системой по умолчанию. Пользователь сможет зафиксировать схему
+ * на экране «Внешний вид», поэтому чтение темы живёт здесь, а не на каждом
+ * экране отдельно: иначе при смене настройки фон и текст разойдутся.
  */
 @Composable
 fun BraidworkTheme(
@@ -172,7 +168,8 @@ fun BraidworkTheme(
     content: @Composable () -> Unit,
 ) {
     val colors = if (darkTheme) DarkColors else LightColors
-    val status = if (darkTheme) DarkStatus else LightStatus
+    val bw = if (darkTheme) DarkBw else LightBw
+    val gradient = Brush.verticalGradient(listOf(bw.appTop, bw.appBottom))
 
     val view = LocalView.current
     if (!view.isInEditMode) {
@@ -185,10 +182,13 @@ fun BraidworkTheme(
         }
     }
 
-    CompositionLocalProvider(LocalStatusColors provides status) {
+    CompositionLocalProvider(
+        LocalBwColors provides bw,
+        LocalAppGradient provides gradient,
+    ) {
         MaterialTheme(
             colorScheme = colors,
-            typography = BraidTypography,
+            typography = BwTypography,
             content = content,
         )
     }

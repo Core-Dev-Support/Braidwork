@@ -14,8 +14,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.systemBarsPadding
+import com.naua_braidwork.app.ui.BraidworkApp
 import com.naua_braidwork.app.ui.ErrorScreen
-import com.naua_braidwork.app.ui.LinkScreen
 import com.naua_braidwork.app.ui.describe
 import com.naua_braidwork.app.ui.theme.BraidworkTheme
 
@@ -69,7 +69,13 @@ class MainActivity : ComponentActivity() {
                     } else if (problem != null) {
                         ErrorScreen(describe(problem))
                     } else {
-                        LinkScreen(onOpenBackgroundSettings = ::openBackgroundSettings)
+                        val identity = remember {
+                            runCatching {
+                                val keys = BraidworkCore.generateKeys()
+                                BraidworkCore.deviceId(keys.signing)
+                            }.getOrElse { "идентификатор вычисляется" }
+                        }
+                        BraidworkApp(deviceId = identity, deviceName = "Телефон")
                     }
                 }
             }
