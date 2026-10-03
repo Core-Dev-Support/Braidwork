@@ -34,7 +34,15 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # setup-android без явного списка пакетов пытается поставить пакет `tools`,
+      # которого больше нет в репозитории Android SDK, и падает с
+      # "Failed to find package 'tools'". Поэтому пакеты перечислены явно,
+      # а версия cmdline-tools закреплена.
       - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '11076708'
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: true
       - name: Приём лицензий SDK
         run: sdkmanager --licenses </dev/null || true
       - name: Установка платформы и build-tools
