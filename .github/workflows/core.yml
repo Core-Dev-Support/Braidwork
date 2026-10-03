@@ -76,15 +76,21 @@ jobs:
           version: '29'
 
       # Ядро собирается под четыре ABI: клиент отдаётся универсальным APK.
+      #
+      # transport-ice здесь выключен намеренно: он тянет `stun`, а тот —
+      # `nix`, который не собирается под Android. Для связи через интернет на
+      # телефоне нужен другой клиент STUN; это отмечено в STATUS.md и в
+      # плане, а не спрятано отключением проверки.
       - name: Проверка всех ABI
         run: |
+          features=transport-lan,transport-ble,transport-usb,transport-softap
           for target in \
             aarch64-linux-android \
             armv7-linux-androideabi \
             i686-linux-android \
             x86_64-linux-android; do
             echo "=== $target ==="
-            cargo build --target "$target"
+            cargo build --target "$target" --no-default-features --features "$features"
           done
 
       - uses: Swatinem/rust-cache@v2
