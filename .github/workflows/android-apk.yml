@@ -100,15 +100,20 @@ jobs:
           export NDK="$ndk_dir"
 
           bin="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          ar="$bin/llvm-ar"
           export CC_aarch64_linux_android="$bin/aarch64-linux-android21-clang"
           export CC_armv7_linux_androideabi="$bin/armv7a-linux-androideabi21-clang"
           export CC_i686_linux_android="$bin/i686-linux-android21-clang"
           export CC_x86_64_linux_android="$bin/x86_64-linux-android21-clang"
-          export AR="$bin/llvm-ar"
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CC_aarch64_linux_android"
           export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="$CC_armv7_linux_androideabi"
           export CARGO_TARGET_I686_LINUX_ANDROID_LINKER="$CC_i686_linux_android"
           export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$CC_x86_64_linux_android"
+          # cc-rs смотрит переменные вида AR_<цель>, а не общую AR.
+          export AR_aarch64_linux_android="$ar"
+          export AR_armv7_linux_androideabi="$ar"
+          export AR_i686_linux_android="$ar"
+          export AR_x86_64_linux_android="$ar"
 
           # transport-ice выключен: он тянет `stun`, а тот — `nix`,
           # который под Android не собирается. На десктопных клиентах ICE
@@ -138,7 +143,11 @@ jobs:
 
       - name: Сборка APK
         working-directory: client-android
-        run: ./gradlew --no-daemon :app:assembleDebug
+        run: |
+          # gradlew приходит из репозитория без исполняющего бита: на Windows
+          # он и не нужен, а на раннере это Permission denied.
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:assembleDebug
 
       - name: Загрузка артефакта сборки
         uses: actions/upload-artifact@v4

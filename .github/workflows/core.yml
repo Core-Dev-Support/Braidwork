@@ -97,6 +97,7 @@ jobs:
         run: |
           set -euo pipefail
           bin="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          ar="$bin/llvm-ar"
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$bin/aarch64-linux-android21-clang"
           export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="$bin/armv7a-linux-androideabi21-clang"
           export CARGO_TARGET_I686_LINUX_ANDROID_LINKER="$bin/i686-linux-android21-clang"
@@ -105,6 +106,11 @@ jobs:
           export CC_armv7_linux_androideabi="$bin/armv7a-linux-androideabi21-clang"
           export CC_i686_linux_android="$bin/i686-linux-android21-clang"
           export CC_x86_64_linux_android="$bin/x86_64-linux-android21-clang"
+          # cc-rs смотрит переменные вида AR_<цель>, а не общую AR.
+          export AR_aarch64_linux_android="$ar"
+          export AR_armv7_linux_androideabi="$ar"
+          export AR_i686_linux_android="$ar"
+          export AR_x86_64_linux_android="$ar"
 
           features=transport-lan,transport-ble,transport-usb,transport-softap
           for target in \
