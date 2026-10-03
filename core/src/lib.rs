@@ -90,38 +90,50 @@ const DEVICE_ID_MAX: usize = 32;
 #[repr(transparent)]
 pub struct FlHandle(pub u64);
 
-const HANDLE_INVALID: FlHandle = FlHandle(0);
-
-/// Счётчик слотов. Начинается с 1, потому что слот 0 зарезервирован.
-static NEXT_SLOT: AtomicU64 = AtomicU64::new(1);
-
-/// Начальное поколение. Ноль зарезервирован под «слот не выдавался».
-const GENERATION_START: u64 = 1;
-
-/// Выдаёт хэндл для нового объекта ядра.
+/// Хэндлы пока не выдаются наружу: сессии ещё не выведены в C ABI.
 ///
-/// Ноль не может получиться: слот начинается с 1, а поколение с 1, значит
-/// младшие 32 бита ненулевые и весь хэндл тоже ненулевой. Клиент
-/// использует `HANDLE_INVALID` как признак «объекта нет», поэтому
-/// выдача нуля означала бы, что несуществующий объект выглядит как
-/// освобождённый.
-fn alloc_handle(generation: u64) -> FlHandle {
-    let slot = NEXT_SLOT.fetch_add(1, Ordering::Relaxed);
-    debug_assert!(slot > 0 && slot <= u32::MAX as u64, "слот исчерпан");
-    debug_assert!(generation > 0 && generation <= u32::MAX as u64, "поколение вне диапазона");
-    FlHandle((slot << 32) | (generation & 0xffff_ffff))
-}
+/// Механизм готов и покрыт тестами, поэтому код не удаляем — он понадобится
+/// сразу, как только сессии станут доступны клиентам.
+#[allow(dead_code)]
+mod handles {
+    use super::*;
 
-/// Разбирает хэндл на слот и поколение.
-fn split_handle(handle: FlHandle) -> (usize, u64) {
-    let raw = handle.0;
-    ((raw >> 32) as usize, raw & 0xffff_ffff)
-}
+    pub(super) const HANDLE_INVALID: FlHandle = FlHandle(0);
 
-impl FlHandle {
-    /// Хэндл не ссылается ни на один объект.
-    pub fn is_valid(&self) -> bool {
-        *self != HANDLE_INVALID
+    /// Счётчик слотов. Начинается с 1, потому что слот 0 зарезервирован.
+    static NEXT_SLOT: AtomicU64 = AtomicU64::new(1);
+
+    /// Начальное поколение. Ноль зарезервирован под «слот не выдавался».
+    pub(super) const GENERATION_START: u64 = 1;
+
+    /// Выдаёт хэндл для нового объекта ядра.
+    ///
+    /// Ноль не может получиться: слот начинается с 1, а поколение с 1, значит
+    /// младшие 32 бита ненулевые и весь хэндл тоже ненулевой. Клиент
+    /// использует `HANDLE_INVALID` как признак «объекта нет», поэтому
+    /// выдача нуля означала бы, что несуществующий объект выглядит как
+    /// освобождённый.
+    pub(super) fn alloc_handle(generation: u64) -> FlHandle {
+        let slot = NEXT_SLOT.fetch_add(1, Ordering::Relaxed);
+        debug_assert!(slot > 0 && slot <= u32::MAX as u64, "слот исчерпан");
+        debug_assert!(
+            generation > 0 && generation <= u32::MAX as u64,
+            "поколение вне диапазона"
+        );
+        FlHandle((slot << 32) | (generation & 0xffff_ffff))
+    }
+
+    /// Разбирает хэндл на слот и поколение.
+    pub(super) fn split_handle(handle: FlHandle) -> (usize, u64) {
+        let raw = handle.0;
+        ((raw >> 32) as usize, raw & 0xffff_ffff)
+    }
+
+    impl FlHandle {
+        /// Хэндл не ссылается ни на один объект.
+        pub fn is_valid(&self) -> bool {
+            *self != HANDLE_INVALID
+        }
     }
 }
 
@@ -135,8 +147,9 @@ impl FlHandle {
 /// `out_public` — 96 байт: signing (32) затем static (32) затем qr (32).
 /// Память подqr_ключ освобождается вызовом `fl_free`.
 ///
-/// # Безопасность
-/// `out_public` должен указывать на буфер не менее 96 байт.
+/// # Safety
+/// `out_public` должен указывать на буфер не менее 96 байт, `out_len` — на
+/// `usize`. Оба указателя валидны и не пересекаются.
 #[no_mangle]
 pub unsafe extern "C" fn fl_init(out_public: *mut u8, out_len: *mut usize) -> FlStatus {
     guard(|| {
@@ -165,8 +178,9 @@ pub unsafe extern "C" fn fl_init(out_public: *mut u8, out_len: *mut usize) -> Fl
 
 /// Вычисляет `device_id` из публичного signing-ключа.
 ///
-/// # Безопасность
-/// `signing_public` — ровно 32 байта, `out_id` — буфер не менее 32 байт.
+/// # Safety
+/// `signing_public` должен указывать на 32 байта, `out_id` — на буфер не
+/// менее `DEVICE_ID_MAX` байт, `out_len` — на `usize`. Указатели валидны.
 #[no_mangle]
 pub unsafe extern "C" fn fl_device_id(
     signing_public: *const u8,
@@ -209,8 +223,9 @@ fn device_id_from_signing(signing_public: &[u8; 32]) -> Result<DeviceId, CryptoE
 
 /// Проверяет подпись рукопожатия.
 ///
-/// # Безопасность
-/// `signing_public` — 32 байта, `tape`/`signature` — буферы указанной длины.
+/// # Safety
+/// `signing_public` указывает на 32 байта, `signature` — на 64 байта,
+/// `tape` — на `tape_len` байт. Все указатели валидны и читаемы.
 #[no_mangle]
 pub unsafe extern "C" fn fl_verify_signature(
     signing_public: *const u8,
@@ -247,6 +262,10 @@ pub unsafe extern "C" fn fl_verify_signature(
 ///
 /// Единственная допустимая точка освобождения. Вызов с другим аллокатором или
 /// дважды — поведение не определено, поэтому клиент обязан звать ровно один раз.
+///
+/// # Safety
+/// `ptr` должен быть получен из ядра, а `len` — совпадать с длиной, с которой
+/// ядро этот буфер отдало. Нулевые значения допустимы и ничего не делают.
 #[no_mangle]
 pub unsafe extern "C" fn fl_free(ptr: *mut u8, len: usize) {
     if ptr.is_null() || len == 0 {
@@ -265,6 +284,7 @@ pub extern "C" fn fl_abi_version() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use handles::{alloc_handle, split_handle, GENERATION_START, HANDLE_INVALID};
 
     #[test]
     fn статус_паники_не_пропускает_наружу() {
@@ -300,7 +320,8 @@ mod tests {
         assert_eq!(a, b);
         // Идентификатор — текст, а не сырые байты хэша.
         assert!(!a.as_str().is_empty());
-        assert_eq!(a.as_bytes().len(), 16);
+        // 16 байт хэша в base32 дают 26 символов.
+        assert_eq!(a.as_bytes().len(), 26);
     }
 
     #[test]

@@ -175,16 +175,18 @@ impl DeviceId {
     }
 
     /// Короткий отпечаток для сверки человеком: четыре группы по четыре символа.
+    ///
+    /// Берутся первые 16 символов идентификатора — это 80 бит, достаточно для
+    /// визуальной сверки и достаточно мало, чтобы прочитать вслух.
+    /// Показывается сам base32, а не hex: символы получаются прописными и
+    /// разделимыми, в отличие от сплошной шестнадцатеричной строки.
     pub fn fingerprint(&self) -> String {
         let mut out = String::with_capacity(19);
-        for (i, b) in self.0.as_bytes().iter().enumerate() {
-            if i == 16 {
-                break;
-            }
+        for (i, b) in self.0.as_bytes().iter().take(16).enumerate() {
             if i > 0 && i % 4 == 0 {
                 out.push(' ');
             }
-            out.push_str(&format!("{:02x}", b));
+            out.push(*b as char);
         }
         out
     }
@@ -293,7 +295,8 @@ mod tests {
     fn идентификатор_стабилен_между_вызовами() {
         let a = DeviceKeys::generate();
         assert_eq!(a.device_id(), a.device_id());
-        assert_eq!(a.device_id().as_bytes().len(), 16);
+        // 16 байт хэша в base32 дают 26 символов: 128 бит, по 5 бит на символ.
+        assert_eq!(a.device_id().as_bytes().len(), 26);
     }
 
     #[test]
@@ -365,8 +368,19 @@ mod tests {
     #[test]
     fn отпечаток_читаемый() {
         let a = DeviceKeys::generate();
-        let fp = a.device_id().fingerprint();
-        assert_eq!(fp.len(), 19, "четыре группы по четыре символа через пробел");
+        let id = a.device_id();
+        let fp = id.fingerprint();
+
+        // Четыре группы по четыре символа через пробел.
+        assert_eq!(fp.len(), 19);
         assert_eq!(fp.matches(' ').count(), 3);
+
+        // Отпечаток — начало идентификатора, а не что-то похожее.
+        let ожидается: String = id.as_bytes().iter().take(16).map(|b| *b as char).collect();
+        assert_eq!(fp.replace(' ', ""), ожидается);
+
+        // У разных устройств отпечаток разный.
+        let b = DeviceKeys::generate();
+        assert_ne!(a.device_id().fingerprint(), b.device_id().fingerprint());
     }
 }

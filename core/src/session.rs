@@ -225,16 +225,10 @@ pub fn build_hello(
 /// Проверяется и соответствие, и подпись: ключ в сообщении обязан совпасть с
 /// тем, что устройство объявило при обнаружении. Иначе устройство подписало бы
 /// чужим ключом и прошло верификацию.
-pub fn parse_and_verify_hello(
-    body: &[u8],
-    expected: &DeviceKeys,
-) -> Result<Hello, SessionError> {
+pub fn parse_and_verify_hello(body: &[u8], expected: &DeviceKeys) -> Result<Hello, SessionError> {
     let hello = Hello::decode(body).map_err(|_| SessionError::Malformed)?;
 
-    let identity = hello
-        .identity
-        .as_ref()
-        .ok_or(SessionError::Malformed)?;
+    let identity = hello.identity.as_ref().ok_or(SessionError::Malformed)?;
 
     let claimed: [u8; 32] = identity
         .signing
@@ -324,28 +318,48 @@ mod tests {
     }
 
     /// Прогоняет рукопожатие целиком в памяти.
+    ///
+    /// Noise XX — это **три** сообщения, а не два:
+    /// `-> e, s`, `<- e, ee`, `-> s, se`. Третье сообщение инициатора несёт его
+    /// статический ключ, поэтому без него рукопожатие не закрывается.
+    ///
+    /// Ответчик после чтения сразу пишет своё: отдельного шага «прочитал» нет.
     fn handshake_pair(a: &DeviceKeys, b: &DeviceKeys) -> (Session, Session) {
         let mut init = Handshake::initiate(a).expect("инициатор");
         let mut resp = Handshake::accept(b).expect("ответчик");
 
-        // 1. Инициатор пишет первым.
-        let msg1 = match init.step(&[]).expect("шаг 1") {
-            HandshakeStep::Send(bytes) => bytes,
-            other => panic!("ожидалось Send, получено {other:?}"),
-        };
-        assert_eq!(resp.step(&msg1).expect("шаг 2"), HandshakeStep::WaitForInput);
+        // 1. Инициатор: своё эфемерное и статическое ключи.
+        let msg1 = expect_send(init.step(&[]).expect("шаг 1"));
 
-        // 2. Ответчик отвечает, инициатор завершает рукопожатие.
-        let msg2 = match resp.step(&[]).expect("шаг 3") {
-            HandshakeStep::Send(bytes) => bytes,
-            other => panic!("ожидалось Send, получено {other:?}"),
-        };
-        assert_eq!(init.step(&msg2).expect("шаг 4"), HandshakeStep::Complete);
+        // 2. Ответчик: эфемерное и общий секрет.
+        let msg2 = expect_send(resp.step(&msg1).expect("шаг 2"));
+
+        // 3. Инициатор: свой статический ключ под общим секретом.
+        let msg3 = expect_send(init.step(&msg2).expect("шаг 3"));
+
+        // 4. Ответчик читает последнее сообщение и закрывает рукопожатие.
+        assert_eq!(
+            resp.step(&msg3).expect("шаг 4"),
+            HandshakeStep::Complete,
+            "ответчик закрывает рукопожатие"
+        );
+
+        assert!(
+            init.is_finished(),
+            "инициатор должен считать рукопожатие завершённым"
+        );
 
         (
             init.into_session().expect("сессия инициатора"),
             resp.into_session().expect("сессия ответчика"),
         )
+    }
+
+    fn expect_send(step: HandshakeStep) -> Vec<u8> {
+        match step {
+            HandshakeStep::Send(bytes) => bytes,
+            other => panic!("ожидалось Send, получено {other:?}"),
+        }
     }
 
     #[test]
@@ -414,7 +428,7 @@ mod tests {
     #[test]
     fn незавершённое_рукопожатие_не_даёт_сессию() {
         let a = DeviceKeys::generate();
-        let mut init = Handshake::initiate(&a).expect("инициатор");
+        let init = Handshake::initiate(&a).expect("инициатор");
         assert!(!init.is_finished());
         assert_eq!(
             init.into_session().err(),
@@ -549,7 +563,8 @@ mod tests {
         if let Some(identity) = hello.identity.as_mut() {
             identity.display_name = "чужое имя".into();
         }
-        let checked = parse_and_verify_hello(hello.encode_to_vec().as_slice(), &a).expect("проверка");
+        let checked =
+            parse_and_verify_hello(hello.encode_to_vec().as_slice(), &a).expect("проверка");
         assert_eq!(
             checked.identity.expect("идентичность").display_name,
             "чужое имя"

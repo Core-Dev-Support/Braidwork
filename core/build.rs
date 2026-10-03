@@ -75,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut files: Vec<PathBuf> = walk_protos(&staging)?.into_iter().collect();
     files.sort();
 
-    let result = config.compile_protos(&files, &[staging.clone()]);
+    let result = config.compile_protos(&files, std::slice::from_ref(&staging));
 
     // Промежуточная копия не нужна после сборки. Убираем даже при ошибке:
     // иначе в %TEMP% копится мусор на каждом неудачном билде.
