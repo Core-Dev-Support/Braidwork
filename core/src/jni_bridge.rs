@@ -40,7 +40,7 @@ fn to_signed(bytes: &[u8]) -> Vec<i8> {
 /// `UnsatisfiedLinkError` с невнятным текстом.
 #[no_mangle]
 pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeInit<'local>(
-    mut env: JNIEnv<'local>,
+    env: JNIEnv<'local>,
     _class: JClass<'local>,
     out_public: JByteArray<'local>,
     out_len: JIntArray<'local>,
@@ -74,7 +74,7 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeInit<'lo
 /// Экранирование подчёркивания объяснено у `nativeInit`.
 #[no_mangle]
 pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeDeviceId<'local>(
-    mut env: JNIEnv<'local>,
+    env: JNIEnv<'local>,
     _class: JClass<'local>,
     signing_public: JByteArray<'local>,
     out_id: JByteArray<'local>,
