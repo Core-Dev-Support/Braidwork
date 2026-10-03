@@ -81,7 +81,21 @@ ICE. Поэтому `transport-ice` выключен при кросс-сбор�
 
 **Для кросс-сборки под Android нужен NDK.** Без него cargo ищет
 `aarch64-linux-android-clang` и не находит. Ставится архивом r27c, линкеры
-прописываются через `CARGO_TARGET_*_LINKER`.
+прописываются через `CARGO_TARGET_*_LINKER`. `cc-rs` смотрит переменные вида
+`AR_<цель>`, а не общую `AR`: без них падает `blake3`.
+
+**Kotlin 2.0 требует отдельный плагин компилятора Compose.** Иначе сборка
+падает на конфигурации с требованием подключить
+`org.jetbrains.kotlin.plugin.compose` той же версии, что и kotlin.
+
+**Нужен `android.useAndroidX=true` в `gradle.properties`.** Проверяется на
+`checkDebugAarMetadata`, как только в зависимостях есть AndroidX.
+
+**`gradlew` приходит без исполняющего бита.** На Windows это не важно, на
+Linux-раннере даёт `Permission denied`, нужен `chmod +x`.
+
+**Имена ABI отличаются у Rust и Gradle.** `aarch64-linux-android` в Rust — это
+`arm64-v8a` в Android Studio. Это один и тот же ABI, просто по-разному названный.
 
 ## Среда
 
