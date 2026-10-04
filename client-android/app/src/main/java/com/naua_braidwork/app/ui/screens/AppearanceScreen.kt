@@ -54,7 +54,7 @@ fun AppearanceScreen(
     state: AppearanceState,
     onBack: () -> Unit,
     onTheme: (ThemeChoice) -> Unit,
-    onLang: (Int) -> Unit,
+    onLang: (String) -> Unit,
     onAccent: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -96,9 +96,10 @@ fun AppearanceScreen(
 
         InfoBanner(
             icon = IcwInfo,
-            text = "Тема применяется сразу и держится до перезапуска. " +
-                "Постоянного хранилища настроек ещё нет, поэтому после " +
-                "перезапуска снова будет «Как в системе».",
+            text = "Тема сохраняется и переживает перезапуск. После смены " +
+                "предложим перезагрузить приложение: уведомление и значок " +
+                "службы рисуются вне Compose и до перезапуска держат прежнюю " +
+                "тему.",
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 20.dp),
         )
     }

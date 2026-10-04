@@ -114,8 +114,8 @@ fun WelcomeScreen(
         )
         Spacer(Modifier.height(12.dp))
         Text(
-            text = "Буфер обмена, файлы, уведомления и экран идут напрямую " +
-                "между вашими устройствами.",
+            text = "Буфер обмена, файлы, уведомления и зеркало экрана идут " +
+                "напрямую между вашими устройствами.",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

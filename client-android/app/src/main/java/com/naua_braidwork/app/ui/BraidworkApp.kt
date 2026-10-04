@@ -1,6 +1,9 @@
 package com.naua_braidwork.app.ui
 
-import com.naua_braidwork.app.ui.components.tapNoRipple
+import android.content.Intent
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,7 +31,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toBrush
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.activity.compose.BackHandler
@@ -37,6 +42,10 @@ import com.naua_braidwork.app.ui.icons.IcwFamily
 import com.naua_braidwork.app.ui.icons.IcwHome
 import com.naua_braidwork.app.ui.icons.IcwSettings
 import com.naua_braidwork.app.ui.icons.IcwSync
+import com.naua_braidwork.app.MainActivity
+import com.naua_braidwork.app.SettingsStore
+import com.naua_braidwork.app.ui.components.RestartDialog
+import com.naua_braidwork.app.ui.components.tapNoRipple
 import com.naua_braidwork.app.ui.screens.DevicesScreen
 import com.naua_braidwork.app.ui.screens.FamilyScreen
 import com.naua_braidwork.app.ui.screens.MainScreen
@@ -76,14 +85,13 @@ enum class Tab(val route: String, val label: String, val icon: ImageVector) {
 fun BraidworkApp(
     deviceId: String,
     deviceName: String,
-    themeChoice: ThemeChoice,
-    onThemeChoice: (ThemeChoice) -> Unit,
+    settings: SettingsStore,
 ) {
     val state = remember(deviceId) { Sample.mainState(deviceId, deviceName) }
 
     // Приветствие — разовый экран, а не раздел: пока флаг не выставлен,
     // нижнего меню нет вообще. Это отличает его от обычного экрана приложения.
-    var welcomeDone by remember { mutableStateOf(Sample.seenWelcome()) }
+    var welcomeDone by remember { mutableStateOf(settings.welcomeSeen) }
     var tab by remember { mutableStateOf(Tab.Home) }
 
     // Режим связи общий для главного экрана и «Сети»: держать его в обоих
@@ -91,11 +99,36 @@ fun BraidworkApp(
     // и тот же вопрос.
     var mode by remember { mutableStateOf(state.mode) }
 
+    // Окошко перезапуска после смены темы. Показывается один раз на выбор,
+    // а не висит: решение пользователя — перезапустить сейчас или позже.
+    var restartAsk by remember { mutableStateOf<ThemeChoice?>(null) }
+    val restart = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { restartAsk = null }
+
+    if (restartAsk != null) {
+        RestartDialog(
+            onRestart = {
+                val target = restartAsk
+                restartAsk = null
+                if (target != null) {
+                    restart.launch(
+                        Intent(context, MainActivity::class.java).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                        },
+                    )
+                }
+            },
+            onLater = { restartAsk = null },
+        )
+    }
+
     // Стек открытых подэкранов. Пустой — мы в разделе; непустой — поверх него
     // открыт подэкран, и последний элемент тот, что на экране.
     val stack = remember { mutableStateListOf<String>() }
     val route = stack.lastOrNull()
     val openSystemSettings = rememberSystemSettingsOpener()
+    val context = LocalContext.current
 
     // Системная кнопка «назад» закрывает подэкран, а не выходит из приложения.
     BackHandler(enabled = stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
@@ -103,11 +136,11 @@ fun BraidworkApp(
     if (!welcomeDone) {
         WelcomeScreen(
             onCreateFamily = {
-                Sample.markWelcomeSeen()
+                settings.markWelcomeSeen()
                 welcomeDone = true
             },
             onJoinByQr = {
-                Sample.markWelcomeSeen()
+                settings.markWelcomeSeen()
                 welcomeDone = true
                 tab = Tab.Devices
                 stack.add(Route.PAIR)
@@ -131,8 +164,11 @@ fun BraidworkApp(
         modifier = Modifier
             .fillMaxSize()
             .background(
+                // `background` перегружен: отдельно для цвета и для кисти.
+                // Поэтому чёрный приводится к кисти — иначе ветвление не
+                // разрешится ни в одну из перегрузок.
                 if (route == null && tab == Tab.Share) {
-                    Color.Black
+                    Color.Black.toBrush()
                 } else {
                     LocalAppGradient.current
                 },
@@ -146,8 +182,11 @@ fun BraidworkApp(
                     deviceId = deviceId,
                     mode = mode,
                     onMode = { mode = it },
-                    themeChoice = themeChoice,
-                    onThemeChoice = onThemeChoice,
+                    themeChoice = settings.theme,
+                    onThemeChoice = { choice ->
+                        settings.setTheme(choice)
+                        restartAsk = choice
+                    },
                     onBack = { stack.removeAt(stack.lastIndex) },
                     onRow = { },
                     onRoute = { id -> if (id in OPEN_ROUTES) stack.add(id) },

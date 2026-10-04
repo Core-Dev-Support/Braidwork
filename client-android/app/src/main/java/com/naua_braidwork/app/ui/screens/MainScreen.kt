@@ -198,12 +198,26 @@ fun MainScreen(
     }
 }
 
-private fun deviceCountLabel(count: Int): String = when (count) {
-    0 -> "устройств в сети: 0"
-    1 -> "1 устройство в сети"
-    in 2..4 -> "$count устройства в сети"
-    else -> "$count устройств в сети"
+/**
+ * Число с существительным в нужном падеже.
+ *
+ * Отдельная функция, потому что правило не сводится к «1, 2-4, остальное»:
+ * при одиннадцати и при двадцати одном окончание снова единственное. Ошибка
+ * «21 устройств» бросается в глаза сразу, а «21 устройство» нет.
+ */
+internal fun plural(count: Int, one: String, few: String, many: String): String {
+    val mod100 = count % 100
+    val mod10 = count % 10
+    return when {
+        mod100 in 11..14 -> many
+        mod10 == 1 -> one
+        mod10 in 2..4 -> few
+        else -> many
+    }
 }
+
+private fun deviceCountLabel(count: Int): String =
+    "$count ${plural(count, "устройство", "устройства", "устройств")} в сети"
 
 @Composable
 private fun HeaderIcon(

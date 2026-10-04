@@ -30,20 +30,9 @@ import com.naua_braidwork.app.ui.theme.ThemeChoice
  */
 object Sample {
 
-    /**
-     * Показывалось ли приветствие.
-     *
-     * Пока хранится только в памяти процесса: отдельное постоянное хранилище
-     * появится вместе с настройками. После перезапуска приложения приветствие
-     * появится снова — это заметно, но не ломает работу на этапе проверки.
-     */
-    private var welcomeSeen = false
-
-    fun seenWelcome(): Boolean = welcomeSeen
-
-    fun markWelcomeSeen() {
-        welcomeSeen = true
-    }
+    // Показывалось ли приветствие — теперь живёт в SettingsStore: до него флаг
+    // держался в памяти процесса, и приветствие возвращалось после каждого
+    // запуска приложения.
 
     /** Идентификатор берётся из ядра; до его получения показываем заглушку. */
     fun thisDeviceId(): String = runCatching {
@@ -160,7 +149,7 @@ object Sample {
             SubGroup(
                 title = "Рядом",
                 rows = listOf(
-                    SubRow("ble", "BLE-прогрев", "Быстрое соединение вблизи", RowEnd.Toggle(false)),
+                    SubRow("ble", "BLE-прогрев", "Быстрое соединение рядом", RowEnd.Toggle(false)),
                     SubRow(
                         "acoustic", "Акустический запуск",
                         "Звуковой сигнал для сопряжения",
@@ -454,7 +443,7 @@ object Sample {
                 ),
                 SubRow(
                     "wifi", "Только по Wi-Fi",
-                    "Мобильный интернет не тратится",
+                    "Мобильный трафик не расходуется",
                     RowEnd.Toggle(false, enabled = false),
                 ),
                 SubRow("folder", "Папка загрузки", "", RowEnd.Chevron),

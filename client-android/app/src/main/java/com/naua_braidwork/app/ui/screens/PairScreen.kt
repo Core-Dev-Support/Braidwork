@@ -99,7 +99,7 @@ fun PairScreen(
                             textAlign = TextAlign.Center,
                         )
                         Text(
-                            text = "Показать код пока не из чего: механизма нет",
+                            text = "Механизма сопряжения ещё нет, показать пока нечего",
                             fontSize = 13.sp,
                             lineHeight = 18.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,

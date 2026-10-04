@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -81,6 +82,14 @@ fun Modifier.tapNoRipple(
 }
 
 /**
+ * Ширина, до которой переносится подпись экрана.
+ *
+ * 320 dp — примерно 45 знаков в строке при 16 sp. Длиннее строка становится
+ * нечитаемой: глаз не находит начало следующей строки.
+ */
+private val SubtitleWidth = 320.dp
+
+/**
  * Шапка подэкрана: стрелка назад, заголовок 32 и подзаголовок 16.
  *
  * Отступ сверху 12, а не 56 из макета: в макете 56 — это координата внутри
@@ -102,11 +111,17 @@ fun SubHeader(
             color = MaterialTheme.colorScheme.onBackground,
             modifier = Modifier.padding(start = 24.dp, top = 4.dp),
         )
+        // Подпись ограничена по ширине. Длинная строка на узком отступе от края
+        // читается как случайность, а в две строки — как мысль. Ограничение
+        // задано в dp, а не в процентах: на широком экране одна и та же строка
+        // должна переноситься в том же месте, а не зависеть от ширины.
         Text(
             text = subtitle,
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 24.dp, top = 4.dp),
+            modifier = Modifier
+                .padding(start = 24.dp, top = 4.dp)
+                .widthIn(max = SubtitleWidth),
         )
     }
 }
@@ -540,6 +555,55 @@ fun PillButton(
             )
         }
     }
+}
+
+/**
+ * Окошко «перезагрузить сейчас?».
+ *
+ * Само переключение темы мгновенное, но не всё в приложении рисуется Compose:
+ * постоянное уведомление и значок службы живут вне него и держат старую палитру
+ * до перезапуска. Поэтому предлагаем перезапуск, а «Позже» оставляет как есть.
+ */
+@Composable
+fun RestartDialog(
+    onRestart: () -> Unit,
+    onLater: () -> Unit,
+) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onLater,
+        containerColor = MaterialTheme.colorScheme.surface,
+        title = {
+            Text(
+                text = "Перезагрузить приложение?",
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        },
+        text = {
+            Text(
+                text = "Интерфейс переключится сразу, а уведомление и значок " +
+                    "службы останутся в старой теме до перезапуска.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
+        confirmButton = {
+            Text(
+                text = "Перезагрузить",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.tapNoRipple(onClick = onRestart),
+            )
+        },
+        dismissButton = {
+            Text(
+                text = "Позже",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.tapNoRipple(onClick = onLater),
+            )
+        },
+    )
 }
 
 /**

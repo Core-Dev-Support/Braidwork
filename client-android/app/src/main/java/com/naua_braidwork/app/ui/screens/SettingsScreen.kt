@@ -110,7 +110,10 @@ fun SettingsScreen(
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = "ID устройства: $deviceIdShort",
+                        // На «Безопасности» тот же идентификатор назван
+                        // словом. Два названия одной вещи на двух экранах —
+                        // повод усомниться, правильно ли понял.
+                        text = "Идентификатор устройства: $deviceIdShort",
                         fontSize = 13.sp,
                         lineHeight = 18.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
