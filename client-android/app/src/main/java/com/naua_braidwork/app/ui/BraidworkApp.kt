@@ -31,7 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toBrush
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -102,6 +102,7 @@ fun BraidworkApp(
     // Окошко перезапуска после смены темы. Показывается один раз на выбор,
     // а не висит: решение пользователя — перезапустить сейчас или позже.
     var restartAsk by remember { mutableStateOf<ThemeChoice?>(null) }
+    val context = LocalContext.current
     val restart = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { restartAsk = null }
@@ -109,15 +110,16 @@ fun BraidworkApp(
     if (restartAsk != null) {
         RestartDialog(
             onRestart = {
-                val target = restartAsk
                 restartAsk = null
-                if (target != null) {
-                    restart.launch(
-                        Intent(context, MainActivity::class.java).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                        },
-                    )
-                }
+                restart.launch(
+                    Intent(context, MainActivity::class.java).apply {
+                        // Пересоздание Activity, а не запуск второй копии:
+                        // иначе в стеке останется старая, со старой темой.
+                        addFlags(
+                            Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP,
+                        )
+                    },
+                )
             },
             onLater = { restartAsk = null },
         )
@@ -128,7 +130,6 @@ fun BraidworkApp(
     val stack = remember { mutableStateListOf<String>() }
     val route = stack.lastOrNull()
     val openSystemSettings = rememberSystemSettingsOpener()
-    val context = LocalContext.current
 
     // Системная кнопка «назад» закрывает подэкран, а не выходит из приложения.
     BackHandler(enabled = stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
@@ -165,10 +166,10 @@ fun BraidworkApp(
             .fillMaxSize()
             .background(
                 // `background` перегружен: отдельно для цвета и для кисти.
-                // Поэтому чёрный приводится к кисти — иначе ветвление не
+                // Поэтому чёрный задаётся кистью — иначе ветвление не
                 // разрешится ни в одну из перегрузок.
                 if (route == null && tab == Tab.Share) {
-                    Color.Black.toBrush()
+                    SolidColor(Color.Black)
                 } else {
                     LocalAppGradient.current
                 },

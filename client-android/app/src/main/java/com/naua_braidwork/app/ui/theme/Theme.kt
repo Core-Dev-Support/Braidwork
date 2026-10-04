@@ -159,8 +159,14 @@ enum class ThemeChoice(val title: String) {
     }
 
     companion object {
-        /** Разбор сохранённого значения: неизвестное трактуем как «как в системе». */
-        fun from(title: String): ThemeChoice =
+        /**
+         * Разбор сохранённого значения.
+         *
+         * Принимает `null`: в хранилище может не быть ничего, и это не ошибка,
+         * а обычное состояние первого запуска. Неизвестная строка трактуется
+         * как «как в системе» — безопаснее, чем падение при чтении настроек.
+         */
+        fun from(title: String?): ThemeChoice =
             entries.firstOrNull { it.title == title } ?: System
     }
 }
