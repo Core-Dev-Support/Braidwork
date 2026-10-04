@@ -1,7 +1,7 @@
 package com.naua_braidwork.app.ui
 
+import com.naua_braidwork.app.ui.components.tapNoRipple
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +27,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -45,6 +46,7 @@ import com.naua_braidwork.app.ui.screens.WelcomeScreen
 import com.naua_braidwork.app.ui.state.LinkMode
 import com.naua_braidwork.app.ui.state.Sample
 import com.naua_braidwork.app.ui.theme.LocalAppGradient
+import com.naua_braidwork.app.ui.theme.ThemeChoice
 
 /**
  * Разделы приложения.
@@ -71,7 +73,12 @@ enum class Tab(val route: String, val label: String, val icon: ImageVector) {
  * позже транспорт. Меняется только он, разметка остаётся.
  */
 @Composable
-fun BraidworkApp(deviceId: String, deviceName: String) {
+fun BraidworkApp(
+    deviceId: String,
+    deviceName: String,
+    themeChoice: ThemeChoice,
+    onThemeChoice: (ThemeChoice) -> Unit,
+) {
     val state = remember(deviceId) { Sample.mainState(deviceId, deviceName) }
 
     // Приветствие — разовый экран, а не раздел: пока флаг не выставлен,
@@ -114,12 +121,22 @@ fun BraidworkApp(deviceId: String, deviceName: String) {
     // чужого цвета и экран выглядит обрезанным.
     //
     // Градиент один на всё приложение, а не на каждый экран: в макете он
-    // одинаковый везде, кроме «Обмена» (чёрный), «Устройств» (свой тёмный) и
-    // приветствия. Эти три экрана кладут свой фон поверх и перекрывают его.
+    // одинаковый везде, кроме «Обмена» (чёрный) и «Устройств» (свой тёмный).
+    // Эти два экрана кладут свой фон поверх и перекрывают его.
+    //
+    // Важно: фон задаётся именно здесь, снаружи `windowInsetsPadding`. Если
+    // окрасить только содержимое, под статус-баром останется градиент, а на
+    // чёрном «Обмене» это читается как чужое окно поверх экрана.
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(LocalAppGradient.current)
+            .background(
+                if (route == null && tab == Tab.Share) {
+                    Color.Black
+                } else {
+                    LocalAppGradient.current
+                },
+            )
             .windowInsetsPadding(WindowInsets.systemBars),
     ) {
         Box(modifier = Modifier.weight(1f)) {
@@ -129,6 +146,8 @@ fun BraidworkApp(deviceId: String, deviceName: String) {
                     deviceId = deviceId,
                     mode = mode,
                     onMode = { mode = it },
+                    themeChoice = themeChoice,
+                    onThemeChoice = onThemeChoice,
                     onBack = { stack.removeAt(stack.lastIndex) },
                     onRow = { },
                     onRoute = { id -> if (id in OPEN_ROUTES) stack.add(id) },
@@ -141,7 +160,7 @@ fun BraidworkApp(deviceId: String, deviceName: String) {
                         mode = mode,
                         onMode = { mode = it },
                         onPairClick = { stack.add(Route.PAIR) },
-                        onNotificationsClick = { tab = Tab.Share },
+                        onNotificationsClick = { stack.add(Route.NOTIFS) },
                         // Быстрые действия ведут в свои подэкраны обмена:
                         // так они задуманы, и кнопка не ведёт в пустоту.
                         onQuickAction = { action -> stack.add(quickRoute(action.id)) },
@@ -258,7 +277,7 @@ private fun BottomBar(current: Tab, onSelect: (Tab) -> Unit) {
                     Column(
                         modifier = Modifier
                             .weight(1f)
-                            .clickable { onSelect(item) }
+                            .tapNoRipple { onSelect(item) }
                             .padding(vertical = 4.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {

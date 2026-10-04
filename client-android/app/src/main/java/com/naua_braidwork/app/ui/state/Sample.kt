@@ -19,6 +19,7 @@ import com.naua_braidwork.app.ui.icons.IcwPower
 import com.naua_braidwork.app.ui.icons.IcwShield
 import com.naua_braidwork.app.ui.icons.IcwTablet
 import com.naua_braidwork.app.ui.icons.IcwWifi
+import com.naua_braidwork.app.ui.theme.ThemeChoice
 
 /**
  * Данные для экранов, пока нет транспорта.
@@ -507,11 +508,11 @@ object Sample {
     )
 
     /** Внешний вид: три группы выбора и производительность. */
-    fun appearanceState(theme: String, lang: String, accent: String) = AppearanceState(
+    fun appearanceState(theme: ThemeChoice, lang: String, accent: String) = AppearanceState(
         theme = theme,
         lang = lang,
         accent = accent,
-        themes = listOf("Как в системе", "Светлая", "Тёмная"),
+        themes = ThemeChoice.entries,
         langs = listOf("Русский", "English"),
         accents = listOf(
             AccentSwatch("blue", "Синий", Color(0xFF2B8CF5)),

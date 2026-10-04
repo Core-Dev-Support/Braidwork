@@ -1,7 +1,7 @@
 package com.naua_braidwork.app.ui.screens
 
+import com.naua_braidwork.app.ui.components.tapNoRipple
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -173,7 +173,7 @@ private fun BrandPills(
                         Box(
                             modifier = Modifier
                                 .height(44.dp)
-                                .clickable { onSelect(brand) }
+                                .tapNoRipple { onSelect(brand) }
                                 .padding(horizontal = 18.dp),
                             contentAlignment = Alignment.Center,
                         ) {

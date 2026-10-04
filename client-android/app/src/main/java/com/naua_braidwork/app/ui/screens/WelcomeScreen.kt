@@ -1,8 +1,8 @@
 package com.naua_braidwork.app.ui.screens
 
+import com.naua_braidwork.app.ui.components.tapNoRipple
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -231,7 +231,7 @@ private fun PrimaryButton(text: String, onClick: () -> Unit) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .clickable(onClick = onClick),
+                .tapNoRipple(onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {
             Text(text = text, fontSize = 17.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
@@ -256,7 +256,7 @@ private fun SecondaryButton(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .clickable(onClick = onClick),
+                .tapNoRipple(onClick = onClick),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {

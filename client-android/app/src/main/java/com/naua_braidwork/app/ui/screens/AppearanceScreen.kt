@@ -1,8 +1,8 @@
 package com.naua_braidwork.app.ui.screens
 
+import com.naua_braidwork.app.ui.components.tapNoRipple
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,11 +33,13 @@ import com.naua_braidwork.app.ui.components.BwSwitch
 import com.naua_braidwork.app.ui.components.InfoBanner
 import com.naua_braidwork.app.ui.components.RowDivider
 import com.naua_braidwork.app.ui.components.SubHeader
+import com.naua_braidwork.app.ui.components.tapNoRipple
 import com.naua_braidwork.app.ui.icons.IcwCheck
 import com.naua_braidwork.app.ui.icons.IcwInfo
 import com.naua_braidwork.app.ui.state.AccentSwatch
 import com.naua_braidwork.app.ui.state.AppearanceState
 import com.naua_braidwork.app.ui.state.SubRow
+import com.naua_braidwork.app.ui.theme.ThemeChoice
 
 /**
  * Внешний вид и язык по спецификации `design/spec/SPEC.txt`.
@@ -51,7 +53,7 @@ import com.naua_braidwork.app.ui.state.SubRow
 fun AppearanceScreen(
     state: AppearanceState,
     onBack: () -> Unit,
-    onTheme: (Int) -> Unit,
+    onTheme: (ThemeChoice) -> Unit,
     onLang: (Int) -> Unit,
     onAccent: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -72,6 +74,7 @@ fun AppearanceScreen(
             title = "Тема",
             options = state.themes,
             selected = state.theme,
+            label = { it.title },
             onSelect = onTheme,
         )
 
@@ -85,6 +88,7 @@ fun AppearanceScreen(
             title = "Язык",
             options = state.langs,
             selected = state.lang,
+            label = { it },
             onSelect = onLang,
         )
 
@@ -92,8 +96,9 @@ fun AppearanceScreen(
 
         InfoBanner(
             icon = IcwInfo,
-            text = "Выбор запоминается только до перезапуска. Тема, язык и " +
-                "цвет акцента применятся, когда появится постоянное хранилище настроек.",
+            text = "Тема применяется сразу и держится до перезапуска. " +
+                "Постоянного хранилища настроек ещё нет, поэтому после " +
+                "перезапуска снова будет «Как в системе».",
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 20.dp),
         )
     }
@@ -101,11 +106,12 @@ fun AppearanceScreen(
 
 /** Группа с кружками выбора: тема и язык устроены одинаково. */
 @Composable
-private fun ChoiceGroup(
+private fun <T> ChoiceGroup(
     title: String,
-    options: List<String>,
-    selected: String,
-    onSelect: (Int) -> Unit,
+    options: List<T>,
+    selected: T,
+    label: (T) -> String,
+    onSelect: (T) -> Unit,
 ) {
     GroupLabel(title)
     Surface(
@@ -122,19 +128,19 @@ private fun ChoiceGroup(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(56.dp)
-                        .clickable { onSelect(index) }
+                        .tapNoRipple { onSelect(option) }
                         .padding(horizontal = 18.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = option,
+                        text = label(option),
                         fontSize = 16.sp,
                         lineHeight = 22.sp,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f),
                     )
-                    BwRadio(checked = option == selected, onClick = { onSelect(index) })
+                    BwRadio(checked = option == selected, onClick = { onSelect(option) })
                 }
             }
         }
@@ -170,7 +176,7 @@ private fun AccentRow(
                         .size(48.dp)
                         .background(swatch.color, RoundedCornerShape(24.dp))
                         .border(3.dp, Color.White, RoundedCornerShape(24.dp))
-                        .clickable { onSelect(swatch.id) },
+                        .tapNoRipple { onSelect(swatch.id) },
                     contentAlignment = Alignment.Center,
                 ) {
                     if (on) {

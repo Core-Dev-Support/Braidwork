@@ -1,8 +1,8 @@
 package com.naua_braidwork.app.ui.screens
 
+import com.naua_braidwork.app.ui.components.tapNoRipple
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -87,7 +87,7 @@ fun DevicesScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Устройства семьи",
+                        text = "Устройства",
                         style = MaterialTheme.typography.displaySmall,
                         color = foregroundOn(isDark),
                     )
@@ -146,7 +146,7 @@ private fun HeaderIcon(
     Box(
         modifier = Modifier
             .size(44.dp)
-            .clickable(onClick = onClick),
+            .tapNoRipple(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -186,7 +186,7 @@ private fun FilterRow(current: DeviceFilter, onFilter: (DeviceFilter) -> Unit, i
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier
-                        .clickable { onFilter(filter) }
+                        .tapNoRipple { onFilter(filter) }
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                 )
             }
@@ -209,7 +209,7 @@ private fun DeviceCard(device: DeviceSummary, onClick: () -> Unit) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .clickable(onClick = onClick)
+                .tapNoRipple(onClick = onClick)
                 .padding(16.dp),
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
@@ -324,7 +324,7 @@ private fun DashedAddButton(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .clickable(onClick = onAdd),
+                .tapNoRipple(onClick = onAdd),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {

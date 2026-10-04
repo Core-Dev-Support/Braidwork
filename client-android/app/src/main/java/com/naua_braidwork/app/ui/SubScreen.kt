@@ -42,6 +42,7 @@ import com.naua_braidwork.app.ui.state.SubGroup
 import com.naua_braidwork.app.ui.state.SubRow
 import com.naua_braidwork.app.ui.state.Toggles
 import com.naua_braidwork.app.ui.state.withToggleValues
+import com.naua_braidwork.app.ui.theme.ThemeChoice
 
 /**
  * Маршруты подэкранов.
@@ -78,6 +79,8 @@ fun SubScreen(
     deviceId: String,
     mode: LinkMode,
     onMode: (LinkMode) -> Unit,
+    themeChoice: ThemeChoice,
+    onThemeChoice: (ThemeChoice) -> Unit,
     onBack: () -> Unit,
     onRow: (String) -> Unit,
     onRoute: (String) -> Unit,
@@ -97,7 +100,6 @@ fun SubScreen(
     var pairMode by remember { mutableStateOf(0) }
     var mirrorQuality by remember { mutableStateOf("auto") }
     var mirrorLive by remember { mutableStateOf(false) }
-    var theme by remember { mutableStateOf("Как в системе") }
     var lang by remember { mutableStateOf("Русский") }
     var accent by remember { mutableStateOf("blue") }
     var coreToggles by remember { mutableStateOf(Toggles(emptyMap())) }
@@ -185,17 +187,13 @@ fun SubScreen(
                 onToggle = { id, value -> mirrorToggles = mirrorToggles.with(id, value) },
             )
 
-            Route.APPEARANCE -> {
-                // Список вариантов нужен и для показа, и для разбора нажатия.
-                val options = Sample.appearanceState(theme, lang, accent)
-                AppearanceScreen(
-                    state = options,
-                    onBack = onBack,
-                    onTheme = { theme = options.themes[it] },
-                    onLang = { lang = options.langs[it] },
-                    onAccent = { accent = it },
-                )
-            }
+            Route.APPEARANCE -> AppearanceScreen(
+                state = Sample.appearanceState(themeChoice, lang, accent),
+                onBack = onBack,
+                onTheme = onThemeChoice,
+                onLang = { lang = it },
+                onAccent = { accent = it },
+            )
 
             Route.CORE -> CoreScreen(
                 state = Sample.coreState(if (testsRan) true else null),

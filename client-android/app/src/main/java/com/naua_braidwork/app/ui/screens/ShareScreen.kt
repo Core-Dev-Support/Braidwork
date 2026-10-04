@@ -1,8 +1,8 @@
 package com.naua_braidwork.app.ui.screens
 
+import com.naua_braidwork.app.ui.components.tapNoRipple
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -74,7 +74,7 @@ fun ShareScreen(
                 modifier = Modifier
                     .size(44.dp)
                     .background(Color.Transparent, RoundedCornerShape(22.dp))
-                    .clickable(onClick = onAddDevice),
+                    .tapNoRipple(onClick = onAddDevice),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -145,7 +145,7 @@ fun ShareScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(52.dp)
-                        .clickable { },
+                        .tapNoRipple { },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -221,7 +221,7 @@ private fun StatCell(
     onClick: () -> Unit,
 ) {
     Column(
-        modifier = modifier.clickable(onClick = onClick),
+        modifier = modifier.tapNoRipple(onClick = onClick),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(

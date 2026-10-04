@@ -1,7 +1,7 @@
 package com.naua_braidwork.app.ui.screens
 
+import com.naua_braidwork.app.ui.components.tapNoRipple
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -95,6 +95,9 @@ fun MainScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                // Колокольчик открывает настройку уведомлений, а не раздел
+                // «Обмен»: раздел показывает сводку, а колокольчик зовёт туда,
+                // где их настраивают.
                 HeaderIcon(IcwBell, "Уведомления", onNotificationsClick)
                 Spacer(Modifier.width(2.dp))
                 HeaderIcon(IcwPlus, "Добавить устройство", onPairClick)
@@ -211,7 +214,7 @@ private fun HeaderIcon(
     Box(
         modifier = Modifier
             .size(44.dp)
-            .clickable(onClick = onClick),
+            .tapNoRipple(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -297,7 +300,7 @@ private fun ModeRow(current: LinkMode, onPick: (LinkMode) -> Unit) {
                             },
                             shape = RoundedCornerShape(34.dp),
                         )
-                        .clickable { onPick(mode) },
+                        .tapNoRipple { onPick(mode) },
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
@@ -344,7 +347,7 @@ private fun ChannelButton(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .clickable(enabled = enabled, onClick = onClick),
+                .tapNoRipple(enabled = enabled, onClick = onClick),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -375,7 +378,7 @@ private fun QuickRow(actions: List<QuickAction>, onClick: (QuickAction) -> Unit)
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
                         .weight(1f)
-                        .clickable { onClick(action) }
+                        .tapNoRipple { onClick(action) }
                         .padding(vertical = 2.dp),
                 ) {
                     IconTile(

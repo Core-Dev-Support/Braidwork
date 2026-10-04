@@ -2,6 +2,7 @@ package com.naua_braidwork.app.ui.state
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.naua_braidwork.app.ui.theme.ThemeChoice
 import com.naua_braidwork.app.ui.icons.IcwBell
 import com.naua_braidwork.app.ui.icons.IcwClipboard
 import com.naua_braidwork.app.ui.icons.IcwCpu
@@ -178,10 +179,10 @@ data class AccentSwatch(
 
 /** Состояние «Внешнего вида и языка». */
 data class AppearanceState(
-    val theme: String,
+    val theme: ThemeChoice,
     val lang: String,
     val accent: String,
-    val themes: List<String>,
+    val themes: List<ThemeChoice>,
     val langs: List<String>,
     val accents: List<AccentSwatch>,
     val perf: List<SubRow>,

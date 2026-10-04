@@ -135,6 +135,37 @@ private val DarkBw = BwColors(
 val LocalBwColors = staticCompositionLocalOf { LightBw }
 
 /**
+ * Выбор темы пользователем.
+ *
+ * Отдельное перечисление, а не строка: выбор «Как в системе» не значит ни
+ * светлую, ни тёмную, и записывать это словом «системная» значило бы потом
+ * разбирать, что с ним делать. Здесь три состояния, и каждое отвечает само за
+ * себя.
+ *
+ * Значение живёт в [androidx.compose.runtime.saveable] состоянии, поэтому
+ * переживает поворот экрана. Постоянного хранилища пока нет: после перезапуска
+ * тема снова системная.
+ */
+enum class ThemeChoice(val title: String) {
+    System("Как в системе"),
+    Light("Светлая"),
+    Dark("Тёмная");
+
+    /** Какую схему нарисовать при этом выборе. */
+    fun resolve(systemDark: Boolean): Boolean = when (this) {
+        System -> systemDark
+        Light -> false
+        Dark -> true
+    }
+
+    companion object {
+        /** Разбор сохранённого значения: неизвестное трактуем как «как в системе». */
+        fun from(title: String): ThemeChoice =
+            entries.firstOrNull { it.title == title } ?: System
+    }
+}
+
+/**
  * Градиент фона приложения.
  *
  * Значение по умолчанию нужно только для предпросмотра и на тот случай, если

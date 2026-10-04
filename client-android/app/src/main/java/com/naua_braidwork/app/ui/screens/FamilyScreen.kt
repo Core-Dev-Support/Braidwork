@@ -1,7 +1,7 @@
 package com.naua_braidwork.app.ui.screens
 
+import com.naua_braidwork.app.ui.components.tapNoRipple
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -74,7 +74,7 @@ fun FamilyScreen(
             Box(
                 modifier = Modifier
                     .size(44.dp)
-                    .clickable(onClick = onInvite),
+                    .tapNoRipple(onClick = onInvite),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -210,7 +210,7 @@ private fun InviteButton(onClick: () -> Unit) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .clickable(onClick = onClick),
+                .tapNoRipple(onClick = onClick),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -245,7 +245,7 @@ private fun MemberList(members: List<FamilyMember>) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(72.dp)
-                        .clickable { }
+                        .tapNoRipple { }
                         .padding(horizontal = 18.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {

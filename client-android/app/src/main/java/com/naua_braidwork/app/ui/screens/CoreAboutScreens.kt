@@ -1,7 +1,7 @@
 package com.naua_braidwork.app.ui.screens
 
+import com.naua_braidwork.app.ui.components.tapNoRipple
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -482,7 +482,7 @@ private fun LinkRow(text: String, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .height(56.dp)
-            .clickable(onClick = onClick)
+            .tapNoRipple(onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -535,7 +535,7 @@ fun DeviceDetailScreen(
             Box(
                 modifier = Modifier
                     .size(44.dp)
-                    .clickable(onClick = onMore),
+                    .tapNoRipple(onClick = onMore),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -667,7 +667,7 @@ private fun FeatureDial(
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier.clickable(onClick = onClick),
+        modifier = modifier.tapNoRipple(onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(

@@ -9,15 +9,21 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.view.WindowCompat
 import com.naua_braidwork.app.ui.BraidworkApp
 import com.naua_braidwork.app.ui.ErrorScreen
 import com.naua_braidwork.app.ui.describe
 import com.naua_braidwork.app.ui.theme.BraidworkTheme
+import com.naua_braidwork.app.ui.theme.ThemeChoice
 
 /**
  * Единственный экран приложения.
@@ -58,7 +64,13 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            BraidworkTheme {
+            // Тема выбрана пользователем на экране «Внешний вид», поэтому её
+            // выбор живёт выше темы: иначе экран настройки оказался бы внутри
+            // того, что настраивает, и смена не перерисовала бы приложение.
+            var themeChoice by rememberSaveable { mutableStateOf(ThemeChoice.System) }
+            val dark = themeChoice.resolve(isSystemInDarkTheme())
+
+            BraidworkTheme(darkTheme = dark) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     // Загрузка библиотек проверяется до первого кадра: если ядро
                     // не поднялось, показываем текст ошибки вместо закрытия.
@@ -80,7 +92,12 @@ class MainActivity : ComponentActivity() {
                                 BraidworkCore.deviceId(keys.signing)
                             }.getOrElse { "идентификатор вычисляется" }
                         }
-                        BraidworkApp(deviceId = identity, deviceName = "Телефон")
+                        BraidworkApp(
+                            deviceId = identity,
+                            deviceName = "Телефон",
+                            themeChoice = themeChoice,
+                            onThemeChoice = { themeChoice = it },
+                        )
                     }
                 }
             }

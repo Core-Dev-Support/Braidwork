@@ -1,7 +1,7 @@
 package com.naua_braidwork.app.ui.screens
 
+import com.naua_braidwork.app.ui.components.tapNoRipple
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -76,7 +76,7 @@ fun SettingsScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(onClick = onOpenProfile)
+                    .tapNoRipple(onClick = onOpenProfile)
                     .padding(20.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -179,7 +179,7 @@ private fun SettingsRowView(row: SettingsRow, onOpen: (String) -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .height(64.dp)
-            .clickable { onOpen(row.id) }
+            .tapNoRipple { onOpen(row.id) }
             .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

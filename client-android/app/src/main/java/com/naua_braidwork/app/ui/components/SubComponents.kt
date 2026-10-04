@@ -21,8 +21,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -50,6 +52,33 @@ import com.naua_braidwork.app.ui.theme.LocalBwColors
  * карточки со строками. Общие части собраны здесь, иначе девять экранов
  * разъедутся друг с другом одинаково же и одинаково неверно.
  */
+
+/**
+ * Нажатие без подсветки.
+ *
+ * В макете подсветки нажатия нет ни на одном элементе: состояние показывают
+ * сами элементы — переключатель уезжает ручкой, выбранный кружок заливается.
+ * Системная волна поверх карточки выглядела бы пятном, которого в дизайне нет.
+ *
+ * Отдельная функция вместо правки каждого `clickable`: мест, где нажимается,
+ * больше сорока, и забыть одно из них — значит получить интерфейс, в котором
+ * один элемент подсвечивается, а соседний нет.
+ */
+@Composable
+fun Modifier.tapNoRipple(
+    enabled: Boolean = true,
+    role: Role? = null,
+    onClick: () -> Unit,
+): Modifier {
+    val source = remember { MutableInteractionSource() }
+    return clickable(
+        interactionSource = source,
+        indication = null,
+        enabled = enabled,
+        role = role,
+        onClick = onClick,
+    )
+}
 
 /**
  * Шапка подэкрана: стрелка назад, заголовок 32 и подзаголовок 16.
@@ -89,7 +118,7 @@ fun BackButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
         modifier = modifier
             .padding(start = 12.dp)
             .size(44.dp)
-            .clickable(onClick = onClick),
+            .tapNoRipple(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -106,6 +135,10 @@ fun BackButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
  *
  * Отдельная функция, потому что почти все подэкраны длиннее экрана: без неё
  * пришлось бы повторять одну и ту же цепочку модификаторов девять раз.
+ *
+ * В конце — пустое место на 24 dp. Без него последняя карточка прижимается к
+ * нижнему краю, и на телефоне с узким экраном её обрезает системная
+ * навигация. Это заметно на «Зеркале» и «О приложении», где внизу таблица.
  */
 @Composable
 fun SubBody(content: @Composable () -> Unit) {
@@ -115,6 +148,7 @@ fun SubBody(content: @Composable () -> Unit) {
             .verticalScroll(rememberScrollState()),
     ) {
         content()
+        Spacer(Modifier.height(24.dp))
     }
 }
 
@@ -145,7 +179,7 @@ fun BwSwitch(
             )
             .then(
                 if (enabled) {
-                    Modifier.clickable(role = Role.Switch) { onCheckedChange(!checked) }
+                    Modifier.tapNoRipple(role = Role.Switch) { onCheckedChange(!checked) }
                 } else {
                     Modifier
                 },
@@ -174,7 +208,7 @@ fun BwRadio(
                 color = if (checked) MaterialTheme.colorScheme.primary else Color.Transparent,
                 shape = RoundedCornerShape(14.dp),
             )
-            .clickable(role = Role.RadioButton, onClick = onClick),
+            .tapNoRipple(role = Role.RadioButton, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         if (checked) {
@@ -215,7 +249,7 @@ fun SettingRowView(
                 },
             )
             .then(
-                if (clickable) Modifier.clickable(onClick = onRowClick) else Modifier,
+                if (clickable) Modifier.tapNoRipple(onClick = onRowClick) else Modifier,
             )
             .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -450,7 +484,7 @@ fun PrimaryButton(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onClick),
+                .tapNoRipple(onClick = onClick),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -492,7 +526,7 @@ fun PillButton(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .clickable(onClick = onClick),
+                .tapNoRipple(onClick = onClick),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -539,7 +573,7 @@ fun SegmentedTabs(
                             color = if (on) Color.White else Color.Transparent,
                             shape = RoundedCornerShape(20.dp),
                         )
-                        .clickable { onSelect(index) },
+                        .tapNoRipple { onSelect(index) },
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
