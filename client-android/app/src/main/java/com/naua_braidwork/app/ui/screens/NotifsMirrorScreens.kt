@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.naua_braidwork.app.ui.RowsSubScreen
+import com.naua_braidwork.app.ui.icons.IcwChevron
 import com.naua_braidwork.app.ui.icons.IcwPlay
 import com.naua_braidwork.app.ui.icons.IcwStop
 import com.naua_braidwork.app.ui.state.SubGroup
@@ -48,6 +49,7 @@ fun NotifsScreen(
     onBack: () -> Unit,
     onRow: (SubRow) -> Unit,
     onToggle: (String, Boolean) -> Unit,
+    onOpenListenerSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     RowsSubScreen(
@@ -63,7 +65,8 @@ fun NotifsScreen(
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 20.dp),
+                    .padding(horizontal = 16.dp, vertical = 20.dp)
+                    .tapNoRipple(onClick = onOpenListenerSettings),
                 shape = RoundedCornerShape(24.dp),
                 color = MaterialTheme.colorScheme.surface,
             ) {
@@ -71,7 +74,7 @@ fun NotifsScreen(
                     modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    CheckBubble()
+                    NeedsAttentionBubble()
                     Spacer(Modifier.width(14.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -87,6 +90,12 @@ fun NotifsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    Icon(
+                        imageVector = IcwChevron,
+                        contentDescription = null,
+                        tint = Color(0xFF8A8D97),
+                        modifier = Modifier.size(18.dp),
+                    )
                 }
             }
         },

@@ -1,5 +1,6 @@
 package com.naua_braidwork.app.ui
 
+import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -68,6 +69,18 @@ object Route {
 }
 
 /**
+ * Системные настройки, куда приложение уводит пользователя.
+ *
+ * Отдельный список, потому что адреса у этих экранов разные и зависят от
+ * версии Android: единого публичного адреса для всех из них нет.
+ */
+object SystemScreen {
+    /** Доступ к уведомлениям. На Android 6+ открывается свой экран. */
+    const val NOTIFICATION_LISTENER =
+        "android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"
+}
+
+/**
  * Подэкран поверх раздела.
  *
  * Нижнего меню здесь нет: открытый подэкран занимает весь экран, иначе меню
@@ -85,6 +98,7 @@ fun SubScreen(
     onRow: (String) -> Unit,
     onRoute: (String) -> Unit,
     onOpenSystemSettings: () -> Unit,
+    onOpenListenerSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // Значения переключателей живут здесь, а не в описании экрана: описание
@@ -153,13 +167,14 @@ fun SubScreen(
             )
 
             Route.FILES -> FilesScreen(
-                groups = Sample.filesGroups(),
+                state = Sample.filesState(),
                 toggles = filesToggles,
                 onBack = onBack,
                 onRow = { onRow(it.id) },
                 onToggle = { id, value -> filesToggles = filesToggles.with(id, value) },
                 onSend = { onRow(Route.FILES) },
                 onPickReceiver = { onRow(Route.FILES) },
+                onCancel = { onRow(Route.FILES) },
             )
 
             Route.NOTIFS -> {
@@ -172,6 +187,7 @@ fun SubScreen(
                     onBack = onBack,
                     onRow = { onRow(it.id) },
                     onToggle = { id, value -> notifToggles = notifToggles.with(id, value) },
+                    onOpenListenerSettings = onOpenListenerSettings,
                 )
             }
 
@@ -247,6 +263,26 @@ fun SubScreen(
     }
 }
 
+/**
+ * Открывает доступ к уведомлениям в системных настройках.
+ *
+ * Отдельный адрес, а не общий с настройками приложения: разрешение на чтение
+ * уведомлений выдаёт система, и на Android 6+ это отдельный экран со списком
+ * служб. На старых версиях адреса нет, поэтому при неудаче открываются общие
+ * настройки приложения — туда тоже есть куда идти.
+ */
+@Composable
+fun rememberListenerSettingsOpener(): () -> Unit {
+    val context = LocalContext.current
+    return {
+        val direct = Intent(SystemScreen.NOTIFICATION_LISTENER)
+        val opened = runCatching { context.startActivity(direct) }.isSuccess
+        if (!opened) {
+            runCatching { openAppSettings(context) }
+        }
+    }
+}
+
 /** Экран без содержимого, но с кнопкой возврата: лучше пустоты с выходом. */
 @Composable
 private fun MissingScreen(text: String, onBack: () -> Unit) {
@@ -275,12 +311,17 @@ fun rememberSystemSettingsOpener(): () -> Unit {
         // Точные экраны различаются у Xiaomi, Samsung и Huawei, а общего
         // адреса нет. Показываем настройки приложения: это единственное
         // место, которое есть на любом Android и ведёт туда же.
-        val intent = android.content.Intent(
-            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-            android.net.Uri.fromParts("package", context.packageName, null),
-        )
-        runCatching { context.startActivity(intent) }
+        runCatching { openAppSettings(context) }
     }
+}
+
+/** Общие настройки приложения: есть на любой версии Android. */
+private fun openAppSettings(context: android.content.Context) {
+    val intent = Intent(
+        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+        android.net.Uri.fromParts("package", context.packageName, null),
+    )
+    context.startActivity(intent)
 }
 
 /**

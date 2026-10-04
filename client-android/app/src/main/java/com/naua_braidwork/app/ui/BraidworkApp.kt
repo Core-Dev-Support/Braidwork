@@ -99,6 +99,12 @@ fun BraidworkApp(
     // и тот же вопрос.
     var mode by remember { mutableStateOf(state.mode) }
 
+    // Каналы «рядом» включаются независимо от режима связи, поэтому состояние
+    // у них своё. Держать его в описании экрана нельзя: описание пересоздаётся
+    // на каждой перерисовке, и нажатия бы терялись.
+    var bleOn by remember { mutableStateOf(state.bleOn) }
+    var softApOn by remember { mutableStateOf(state.softApOn) }
+
     // Окошко перезапуска после смены темы. Показывается один раз на выбор,
     // а не висит: решение пользователя — перезапустить сейчас или позже.
     var restartAsk by remember { mutableStateOf<ThemeChoice?>(null) }
@@ -130,6 +136,7 @@ fun BraidworkApp(
     val stack = remember { mutableStateListOf<String>() }
     val route = stack.lastOrNull()
     val openSystemSettings = rememberSystemSettingsOpener()
+    val openListenerSettings = rememberListenerSettingsOpener()
 
     // Системная кнопка «назад» закрывает подэкран, а не выходит из приложения.
     BackHandler(enabled = stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
@@ -192,6 +199,7 @@ fun BraidworkApp(
                     onRow = { },
                     onRoute = { id -> if (id in OPEN_ROUTES) stack.add(id) },
                     onOpenSystemSettings = openSystemSettings,
+                    onOpenListenerSettings = openListenerSettings,
                 )
             } else {
                 when (tab) {
@@ -199,14 +207,18 @@ fun BraidworkApp(
                         state = state,
                         mode = mode,
                         onMode = { mode = it },
+                        bleOn = bleOn,
+                        softApOn = softApOn,
                         onPairClick = { stack.add(Route.PAIR) },
                         onNotificationsClick = { stack.add(Route.NOTIFS) },
-                        // Быстрые действия ведут в свои подэкраны обмена:
-                        // так они задуманы, и кнопка не ведёт в пустоту.
-                        onQuickAction = { action -> stack.add(quickRoute(action.id)) },
-                        onChannelClick = { stack.add(Route.NETWORK) },
-                        onBleClick = { stack.add(Route.NETWORK) },
-                        onSoftApClick = { stack.add(Route.NETWORK) },
+                        // Быстрое действие не должно открывать настройки: нажал
+                        // «Буфер» — получил обмен, а не его настройки. Сводка по
+                        // всем модулям живёт в «Обмене», оттуда и доходит до
+                        // каждого. Когда появится транспорт, эти кнопки станут
+                        // самими действиями.
+                        onQuickAction = { tab = Tab.Share },
+                        onBleClick = { bleOn = it },
+                        onSoftApClick = { softApOn = it },
                     )
 
                     Tab.Devices -> DevicesScreen(

@@ -78,8 +78,9 @@ data class MainState(
     val channelLabel: String,
     val directLinks: Int,
     val mode: LinkMode,
-    val bleAvailable: Boolean,
-    val softApAvailable: Boolean,
+    /** Каналы «рядом» включаются независимо от режима. */
+    val bleOn: Boolean,
+    val softApOn: Boolean,
     val quick: List<QuickAction>,
     val activity: List<ActivityEntry>,
 ) {

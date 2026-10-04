@@ -26,13 +26,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.naua_braidwork.app.ui.RowsSubScreen
 import com.naua_braidwork.app.ui.components.PillButton
+import com.naua_braidwork.app.ui.components.tapNoRipple
 import com.naua_braidwork.app.ui.icons.IcwCheck
 import com.naua_braidwork.app.ui.icons.IcwDevices
 import com.naua_braidwork.app.ui.icons.IcwFolder
 import com.naua_braidwork.app.ui.icons.IcwUpload
+import com.naua_braidwork.app.ui.icons.IcwWarn
+import com.naua_braidwork.app.ui.state.FilesState
 import com.naua_braidwork.app.ui.state.SubGroup
 import com.naua_braidwork.app.ui.state.SubRow
 import com.naua_braidwork.app.ui.state.Toggles
+import com.naua_braidwork.app.ui.state.Transfer
 
 /**
  * Буфер обмена по спецификации `design/spec/SPEC.txt`.
@@ -70,19 +74,20 @@ fun ClipboardScreen(
  */
 @Composable
 fun FilesScreen(
-    groups: List<SubGroup>,
+    state: FilesState,
     toggles: Toggles,
     onBack: () -> Unit,
     onRow: (SubRow) -> Unit,
     onToggle: (String, Boolean) -> Unit,
     onSend: () -> Unit,
     onPickReceiver: () -> Unit,
+    onCancel: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     RowsSubScreen(
         title = "Файлы",
         subtitle = "Передача и хранилище по хэшу",
-        groups = groups,
+        groups = state.groups,
         toggles = toggles,
         onBack = onBack,
         onRow = onRow,
@@ -105,46 +110,168 @@ fun FilesScreen(
                 )
             }
 
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.surface,
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconTileGreen()
-                        Spacer(Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Передач нет",
-                                fontSize = 16.sp,
-                                lineHeight = 22.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                            Text(
-                                text = "Устройство ещё не нашло ни одного получателя",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+            TransferList(transfers = state.transfers, onCancel = onCancel)
+
+            StorageCard(
+                storedText = state.storedText,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            )
+        },
+    )
+}
+
+/**
+ * Список передач с пустым состоянием.
+ *
+ * Список и заглушка — одна функция, а не два экрана. Когда появится первая
+ * передача, подключать транспорт не придётся: список уже нарисован. Отмена
+ * нарисована сразу по той же причине — она понадобится в первом же прогоне, и
+ * дописывать её, когда передача уже идёт, хуже.
+ */
+@Composable
+private fun TransferList(
+    transfers: List<Transfer>,
+    onCancel: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (transfers.isEmpty()) {
+        Surface(
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconTileGreen()
+                    Spacer(Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Передач нет",
+                            fontSize = 16.sp,
+                            lineHeight = 22.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = "Устройство ещё не нашло ни одного получателя",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
-                    Spacer(Modifier.height(14.dp))
-                    // Полоса пустая, но рисуется: так видно, где будет прогресс.
+                }
+                Spacer(Modifier.height(14.dp))
+                // Полоса пустая, но рисуется: так видно, где будет прогресс.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp)
+                        .background(Color(0xFFE6E8EE), RoundedCornerShape(4.dp)),
+                )
+            }
+        }
+        return
+    }
+
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        Column {
+            transfers.forEachIndexed { index, transfer ->
+                if (index > 0) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(8.dp)
-                            .background(Color(0xFFE6E8EE), RoundedCornerShape(4.dp)),
+                            .height(1.dp)
+                            .background(MaterialTheme.colorScheme.outlineVariant),
                     )
                 }
+                TransferRow(transfer = transfer, onCancel = { onCancel(transfer.name) })
             }
+        }
+    }
+}
 
-            StorageCard(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
-        },
-    )
+/** Строка передачи: имя, получатель, доля, скорость и отмена. */
+@Composable
+private fun TransferRow(transfer: Transfer, onCancel: () -> Unit) {
+    Column(modifier = Modifier.padding(18.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconTileGreen()
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = transfer.name,
+                    fontSize = 16.sp,
+                    lineHeight = 22.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                )
+                Text(
+                    text = "На ${transfer.target} · ${transfer.speedMbps} Мбит/с",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+            Text(
+                text = "${(transfer.progress * 100).toInt()}%",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFF1A6FDB),
+            )
+        }
+        Spacer(Modifier.height(14.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(8.dp)
+                .background(Color(0xFFE6E8EE), RoundedCornerShape(4.dp)),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(transfer.progress.coerceIn(0f, 1f))
+                    .height(8.dp)
+                    .background(Color(0xFF2B8CF5), RoundedCornerShape(4.dp)),
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = transfer.sentText,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = transfer.leftText,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    text = "Отменить",
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.tapNoRipple(onClick = onCancel),
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -166,7 +293,7 @@ private fun IconTileGreen() {
 
 /** Хранилище: подпись, полоса из трёх долей и расшифровка. */
 @Composable
-private fun StorageCard(modifier: Modifier = Modifier) {
+private fun StorageCard(storedText: String, modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
@@ -186,7 +313,7 @@ private fun StorageCard(modifier: Modifier = Modifier) {
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    text = "0 Б из 5 ГБ",
+                    text = storedText,
                     fontSize = 14.sp,
                     lineHeight = 20.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -227,19 +354,29 @@ private fun StorageLegend(label: String, dot: Color) {
     }
 }
 
-/** Галочка в кружке: статус разрешения на уведомления. */
+/**
+ * Плашка «нужно действие».
+ *
+ * Раньше здесь была зелёная галочка, и это была ошибка: зелёный цвет с
+ * галочкой читается как «всё работает», а текст под ним говорил, что разрешение
+ * не выдано. Пользователь до текста не доходит.
+ *
+ * Теперь цвет и знак означают то же, что и слова: нужен доступ. А нажатие на
+ * карточку ведёт в системные настройки уведомлений — единственное действие на
+ * этом экране, которое уже можно выполнить по-настоящему.
+ */
 @Composable
-internal fun CheckBubble(modifier: Modifier = Modifier) {
+internal fun NeedsAttentionBubble(modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .size(44.dp)
-            .background(Color(0xFFE8F6EE), RoundedCornerShape(22.dp)),
+            .background(Color(0xFFFFF1E6), RoundedCornerShape(22.dp)),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            imageVector = IcwCheck,
+            imageVector = IcwWarn,
             contentDescription = null,
-            tint = Color(0xFF16804A),
+            tint = Color(0xFFC65D0E),
             modifier = Modifier.size(24.dp),
         )
     }

@@ -177,6 +177,25 @@ data class AccentSwatch(
     val color: Color,
 )
 
+/** Активная передача файла: имя, доля, скорость и остаток времени. */
+data class Transfer(
+    val name: String,
+    val target: String,
+    /** Отправлено, доля от единицы. */
+    val progress: Float,
+    val speedMbps: Double,
+    val leftText: String,
+    val sentText: String,
+)
+
+/** Состояние «Файлов»: активные передачи и группы настроек. */
+data class FilesState(
+    val transfers: List<Transfer>,
+    val storedText: String,
+    val limitText: String,
+    val groups: List<SubGroup>,
+)
+
 /** Состояние «Внешнего вида и языка». */
 data class AppearanceState(
     val theme: ThemeChoice,

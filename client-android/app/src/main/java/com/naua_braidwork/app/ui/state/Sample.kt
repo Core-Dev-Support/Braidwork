@@ -46,8 +46,10 @@ object Sample {
         channelLabel = "Канал не выбран",
         directLinks = 0,
         mode = LinkMode.DEFAULT,
-        bleAvailable = true,
-        softApAvailable = true,
+        // Каналы «рядом» включаются независимо от режима связи, поэтому у них
+        // своё состояние, а не следствие выбранного режима.
+        bleOn = false,
+        softApOn = false,
         quick = MainState.QUICK,
         activity = emptyList(),
     )
@@ -364,8 +366,8 @@ object Sample {
      * системе. Поэтому статус честно говорит «нужно разрешение».
      */
     fun notifStatus(): Pair<String, String> =
-        "Доступ нужно подтвердить в системе" to
-            "Служба чтения уведомлений ждёт разрешения"
+        "Доступ к уведомлениям не выдан" to
+            "Нажмите, чтобы открыть настройки системы"
 
     fun notifGroups(): List<SubGroup> = listOf(
         SubGroup(
@@ -429,37 +431,44 @@ object Sample {
     /**
      * Файлы и хранилище.
      *
-     * Передачи и файлов нет, поэтому вместо прогресса и разбивки хранилища
-     * показывается то же самое с нулями.
+     * Передач нет, поэтому список пуст, а не заполнен примерами. Но компонент
+     * списка уже готов и ждёт данные: иначе подключение транспорта означало бы
+     * ещё и вёрстку, а список передач — самое частое, что меняется на этом
+     * экране.
      */
-    fun filesGroups(): List<SubGroup> = listOf(
-        SubGroup(
-            title = "Приём файлов",
-            rows = listOf(
-                SubRow(
-                    "auto", "Принимать от семьи сразу",
-                    "Без подтверждения от доверенных",
-                    RowEnd.Toggle(false, enabled = false),
+    fun filesState(): FilesState = FilesState(
+        transfers = emptyList(),
+        storedText = "0 Б из 5 ГБ",
+        limitText = "5 ГБ",
+        groups = listOf(
+            SubGroup(
+                title = "Приём файлов",
+                rows = listOf(
+                    SubRow(
+                        "auto", "Принимать от семьи сразу",
+                        "Без подтверждения от доверенных",
+                        RowEnd.Toggle(false, enabled = false),
+                    ),
+                    SubRow(
+                        "wifi", "Только по Wi-Fi",
+                        "Мобильный трафик не расходуется",
+                        RowEnd.Toggle(false, enabled = false),
+                    ),
+                    SubRow("folder", "Папка загрузки", "", RowEnd.Chevron),
                 ),
-                SubRow(
-                    "wifi", "Только по Wi-Fi",
-                    "Мобильный трафик не расходуется",
-                    RowEnd.Toggle(false, enabled = false),
-                ),
-                SubRow("folder", "Папка загрузки", "", RowEnd.Chevron),
             ),
-        ),
-        SubGroup(
-            title = "Хранилище по хэшу",
-            rows = listOf(
-                SubRow(
-                    "dedupe", "Не дублировать одинаковые файлы",
-                    "Файл хранится один раз",
-                    RowEnd.Toggle(false, enabled = false),
+            SubGroup(
+                title = "Хранилище по хэшу",
+                rows = listOf(
+                    SubRow(
+                        "dedupe", "Не дублировать одинаковые файлы",
+                        "Файл хранится один раз",
+                        RowEnd.Toggle(false, enabled = false),
+                    ),
+                    SubRow("limit", "Лимит хранилища", "", RowEnd.Chevron),
+                    SubRow("keep", "Хранить файлы", "", RowEnd.Chevron),
+                    SubRow("clean", "Очистить кэш", "", RowEnd.Chevron, danger = true),
                 ),
-                SubRow("limit", "Лимит хранилища", "", RowEnd.Chevron),
-                SubRow("keep", "Хранить файлы", "", RowEnd.Chevron),
-                SubRow("clean", "Очистить кэш", "", RowEnd.Chevron, danger = true),
             ),
         ),
     )
@@ -488,10 +497,16 @@ object Sample {
         ),
         SubGroup(
             title = "Способ захвата",
+            // На Android доступен только MediaProjection. PipeWire и XShm
+            // относятся к десктопным клиентам, и показывать их на телефоне
+            // значит предлагать то, чего здесь сделать нельзя: выбор всё равно
+            // не влияет на результат. В клиенте Linux список будет свой.
             rows = listOf(
-                SubRow("phone", "Этот телефон", "", RowEnd.Value("MediaProjection")),
-                SubRow("laptop", "Ноутбук Linux", "", RowEnd.Value("PipeWire")),
-                SubRow("backup", "Резервный ПК Linux", "", RowEnd.Value("XShm (X11)")),
+                SubRow(
+                    "phone", "Этот телефон",
+                    "На этом устройстве доступен только MediaProjection",
+                    RowEnd.Value("MediaProjection"),
+                ),
             ),
         ),
     )

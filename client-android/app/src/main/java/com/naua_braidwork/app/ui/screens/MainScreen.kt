@@ -58,12 +58,13 @@ fun MainScreen(
     state: MainState,
     mode: LinkMode,
     onMode: (LinkMode) -> Unit,
+    bleOn: Boolean,
+    softApOn: Boolean,
     onPairClick: () -> Unit,
     onNotificationsClick: () -> Unit,
     onQuickAction: (QuickAction) -> Unit,
-    onChannelClick: () -> Unit,
-    onBleClick: () -> Unit,
-    onSoftApClick: () -> Unit,
+    onBleClick: (Boolean) -> Unit,
+    onSoftApClick: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
 
@@ -146,25 +147,26 @@ fun MainScreen(
                 Gap(22.dp)
                 ModeRow(current = mode, onPick = onMode)
                 Gap(22.dp)
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    ChannelButton(
-                        label = "Рядом (BLE)",
-                        icon = IcwBluetooth,
-                        enabled = state.bleAvailable,
-                        onClick = onBleClick,
-                        modifier = Modifier.weight(1f),
-                    )
-                    ChannelButton(
-                        label = "Точка доступа",
-                        icon = IcwHotspot,
-                        enabled = state.softApAvailable,
-                        onClick = onSoftApClick,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
+                // Каналы «рядом» — не режимы. Режим выбирает, как искать
+                // устрой��ства, а здесь включается сам канал, и оба могут
+                // работать вместе с любым режимом. Поэтому это тумблеры, а не
+                // кружки: раньше они выглядели как режимы, и нажатие на
+                // «Точку доступа» читалось как смена режима.
+                ChannelRow(
+                    label = "Рядом (BLE)",
+                    icon = IcwBluetooth,
+                    checked = bleOn,
+                    onCheckedChange = onBleClick,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(12.dp))
+                ChannelRow(
+                    label = "Точка доступа",
+                    icon = IcwHotspot,
+                    checked = softApOn,
+                    onCheckedChange = onSoftApClick,
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
 
@@ -341,33 +343,49 @@ private fun ModeRow(current: LinkMode, onPick: (LinkMode) -> Unit) {
 
 /** Кнопка резервного канала. Недоступная остаётся видимой, но не нажимается. */
 @Composable
-private fun ChannelButton(
+/**
+ * Канал «рядом»: иконка, подпись и тумблер.
+ *
+ * Отдельная форма вместо кружка режима. Прямоугольная плашка с тумблером читается
+ * как «включить и выключить», круг с заливкой — как «выбрать один из трёх».
+ * Смешивать эти два смысла в одной форме нельзя.
+ */
+@Composable
+private fun ChannelRow(
     label: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
-    enabled: Boolean,
-    onClick: () -> Unit,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
         modifier = modifier.height(56.dp),
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
-        contentColor = if (enabled) {
-            MaterialTheme.colorScheme.onSurface
-        } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
-        },
+        contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .tapNoRipple(enabled = enabled, onClick = onClick),
+                .tapNoRipple { onCheckedChange(!checked) }
+                .padding(start = 14.dp, end = 8.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(22.dp))
+            Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
-            Text(text = label, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(6.dp))
+            BwSwitch(
+                checked = checked,
+                enabled = true,
+                onCheckedChange = onCheckedChange,
+            )
         }
     }
 }
