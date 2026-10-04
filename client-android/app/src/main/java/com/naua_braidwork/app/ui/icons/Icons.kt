@@ -200,6 +200,16 @@ val IcwStop: ImageVector by lazy {
     bwIcon("stop", "M7 7h10v10H7z", 2f)
 }
 
+/** Часы: проверка ещё не запускалась. */
+val IcwClock: ImageVector by lazy {
+    bwIcon("clock", "M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0M12 7v5l3 2")
+}
+
+/** Круговая стрелка: повторный запуск проверки. */
+val IcwRefresh: ImageVector by lazy {
+    bwIcon("refresh", "M20 11a8 8 0 0 0-14-4M4 4v4h4M4 13a8 8 0 0 0 14 4M20 20v-4h-4", 1.9f)
+}
+
 val IcwHome: ImageVector by lazy {
     bwIcon("home", "M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z")
 }

@@ -22,11 +22,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.naua_braidwork.app.ui.RowsSubScreen
+import com.naua_braidwork.app.ui.components.PillButton
 import com.naua_braidwork.app.ui.icons.IcwCheck
 import com.naua_braidwork.app.ui.icons.IcwDevices
 import com.naua_braidwork.app.ui.icons.IcwFolder
@@ -225,46 +225,6 @@ private fun StorageLegend(label: String, dot: Color) {
             lineHeight = 18.sp,
             color = Color(0xFF4A4D57),
         )
-    }
-}
-
-/** Кнопка-таблетка: либо синяя с белым текстом, либо белая с тёмным. */
-@Composable
-private fun PillButton(
-    text: String,
-    icon: ImageVector,
-    filled: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(56.dp),
-        shape = RoundedCornerShape(28.dp),
-        color = if (filled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
-        contentColor = if (filled) {
-            MaterialTheme.colorScheme.onPrimary
-        } else {
-            MaterialTheme.colorScheme.onSurface
-        },
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .clickable(onClick = onClick),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(22.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = text,
-                fontSize = 16.sp,
-                fontWeight = if (filled) FontWeight.SemiBold else FontWeight.Medium,
-                maxLines = 1,
-            )
-        }
     }
 }
 

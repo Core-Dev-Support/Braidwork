@@ -10,12 +10,14 @@ import com.naua_braidwork.app.ui.icons.IcwClipboard
 import com.naua_braidwork.app.ui.icons.IcwCpu
 import com.naua_braidwork.app.ui.icons.IcwFolder
 import com.naua_braidwork.app.ui.icons.IcwInfo
+import com.naua_braidwork.app.ui.icons.IcwLaptop
 import com.naua_braidwork.app.ui.icons.IcwMail
 import com.naua_braidwork.app.ui.icons.IcwMirror
 import com.naua_braidwork.app.ui.icons.IcwMoon
 import com.naua_braidwork.app.ui.icons.IcwPhone
 import com.naua_braidwork.app.ui.icons.IcwPower
 import com.naua_braidwork.app.ui.icons.IcwShield
+import com.naua_braidwork.app.ui.icons.IcwTablet
 import com.naua_braidwork.app.ui.icons.IcwWifi
 
 /**
@@ -528,6 +530,135 @@ object Sample {
                 "tray", "Значок в трее и шторке",
                 "Быстрый доступ к обмену",
                 RowEnd.Toggle(false, enabled = false),
+            ),
+        ),
+    )
+
+    /**
+     * Ядро и диагностика.
+     *
+     * Значения взяты из того, что действительно сделано: версии, формат
+     * сборки и решение по паникам зафиксированы в DECISIONS.md и CI. Проверки
+     * двух устройств ещё не запускались, поэтому у них нет результата — не
+     * «успешно» и не «провал», а пусто.
+     */
+    fun coreState(testsPassed: Boolean?): CoreState = CoreState(
+        step = "Шаг 0",
+        buildGroups = listOf(
+            SubGroup(
+                title = "Сборка",
+                rows = listOf(
+                    SubRow("core_version", "Версия ядра", "", RowEnd.Value("0.1.0-step0")),
+                    SubRow("proto", "Версия протокола", "", RowEnd.Value("v1 (Protobuf)")),
+                    SubRow("format", "Формат сборки", "", RowEnd.Value("cdylib + rlib")),
+                    SubRow("panic", "Обработка паник", "", RowEnd.Value("unwind (D-008)")),
+                ),
+            ),
+            SubGroup(
+                title = "Хэндлы",
+                rows = listOf(
+                    SubRow("active", "Активные хэндлы", "", RowEnd.Value("0")),
+                    SubRow("scheme", "Схема хэндла", "", RowEnd.Value("uint64: слот + поколение")),
+                    SubRow("stale", "Устаревший хэндл", "", RowEnd.Value("Отклоняется")),
+                ),
+            ),
+        ),
+        tests = listOf(
+            CoreTest("Рукопожатие Noise XX", testsPassed),
+            CoreTest("Обмен сообщением", testsPassed),
+            CoreTest("Закрытие хэндлов", testsPassed),
+        ),
+        logGroups = listOf(
+            SubGroup(
+                title = "Журнал",
+                rows = listOf(
+                    SubRow("verbose", "Подробный журнал", "", RowEnd.Toggle(false)),
+                    SubRow("export", "Экспортировать журнал", "", RowEnd.Chevron),
+                    SubRow("reset", "Сбросить хэндлы", "", RowEnd.Chevron, danger = true),
+                ),
+            ),
+        ),
+    )
+
+    /** О приложении: версии, платформы и их шаги по плану. */
+    fun aboutState(): AboutState = AboutState(
+        appVersion = "Версия 0.1.0 · ядро 0.1.0-step0",
+        coreVersion = "0.1.0-step0",
+        platforms = listOf(
+            PlatformEntry(IcwPhone, Tone.Green, "Android 6 и новее", "Kotlin", "Шаг 3"),
+            PlatformEntry(IcwMirror, Tone.Blue, "Windows", "WinUI 3", "Шаг 5"),
+            PlatformEntry(IcwLaptop, Tone.Orange, "Linux", "AppImage, KDE и GNOME", "Шаг 6"),
+            PlatformEntry(IcwTablet, Tone.Purple, "HarmonyOS NEXT", "ArkTS и NAPI", "Шаг 9"),
+            PlatformEntry(IcwPhone, Tone.Green, "Android 5", "minSdk 21", "Шаг 10"),
+        ),
+        links = listOf(
+            "Этапы разработки",
+            "Лицензии",
+            "Политика конфиденциальности",
+        ),
+    )
+
+    /** План из одиннадцати шагов; текущий — первый. */
+    fun roadmap(): List<RoadmapStep> = listOf(
+        "Ядро" to "Протокол Protobuf, Noise XX, хэндлы, Rust-ядро",
+        "LAN и точка доступа" to "Поиск по mDNS и SoftAP без роутера",
+        "Семья как сеть" to "Сопряжение по QR, ключи, Gossip",
+        "Клиент Android" to "Kotlin, Watchdog, мастер фоновой работы",
+        "Функции основы" to "Буфер, файлы по хэшу, уведомления, зеркало",
+        "Клиент Windows" to "WinUI 3, трей, автозапуск",
+        "Клиент Linux" to "AppImage, KDE и GNOME, XShm и PipeWire",
+        "BLE и звук" to "Быстрое соединение рядом",
+        "ICE со STUN" to "Связь через интернет без своих серверов",
+        "HarmonyOS NEXT" to "ArkTS и NAPI поверх ядра",
+        "Android 5" to "minSdk 21, дешугаризация, обход java.time",
+    ).mapIndexed { index, (title, sub) ->
+        RoadmapStep(
+            n = index.toString(),
+            title = title,
+            sub = sub,
+            current = index == 0,
+        )
+    }
+
+    /**
+     * Карточка устройства.
+     *
+     * Устройства в списке нет, поэтому и карточки нет: [DevicesState] пуст.
+     * Экран собран целиком и включается, как только появится хоть одно
+     * устройство — тогда состояние придёт из транспорта, а не отсюда.
+     */
+    fun deviceDetailState(device: DeviceSummary): DeviceDetailState = DeviceDetailState(
+        name = device.name,
+        statusLine = if (device.online) {
+            "В сети · LAN · 12 мс"
+        } else {
+            "Офлайн"
+        },
+        online = device.online,
+        features = listOf(
+            DeviceFeature("clip", "Буфер", IcwClipboard, false),
+            DeviceFeature("files", "Файлы", IcwFolder, false),
+            DeviceFeature("notif", "Уведомления", IcwBell, false),
+            DeviceFeature("mirror", "Зеркало", IcwMirror, false),
+        ),
+        groups = listOf(
+            SubGroup(
+                title = "О устройстве",
+                rows = listOf(
+                    SubRow("platform", "Платформа", "", RowEnd.Value("—")),
+                    SubRow("link", "Подключение", "", RowEnd.Value("—")),
+                    SubRow("core", "Версия ядра", "", RowEnd.Value("—")),
+                    SubRow("fingerprint", "Отпечаток ключа", "", RowEnd.Value("—")),
+                    SubRow("trust", "Доверие", "", RowEnd.Chevron),
+                ),
+            ),
+            SubGroup(
+                title = "Управление",
+                rows = listOf(
+                    SubRow("rename", "Переименовать", "", RowEnd.Chevron),
+                    SubRow("priority", "Приоритет передачи", "", RowEnd.Chevron),
+                    SubRow("forget", "Забыть устройство", "", RowEnd.Chevron, danger = true),
+                ),
             ),
         ),
     )

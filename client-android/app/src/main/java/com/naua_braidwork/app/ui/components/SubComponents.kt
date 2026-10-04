@@ -65,20 +65,7 @@ fun SubHeader(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
-        Box(
-            modifier = Modifier
-                .padding(start = 12.dp)
-                .size(44.dp)
-                .clickable(onClick = onBack),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = IcwBack,
-                contentDescription = "Назад",
-                tint = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.size(26.dp),
-            )
-        }
+        BackButton(onClick = onBack)
         Text(
             text = title,
             style = MaterialTheme.typography.displaySmall,
@@ -90,6 +77,25 @@ fun SubHeader(
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 24.dp, top = 4.dp),
+        )
+    }
+}
+
+/** Стрелка назад: поле 44 с отступом 12 слева. */
+@Composable
+fun BackButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .padding(start = 12.dp)
+            .size(44.dp)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = IcwBack,
+            contentDescription = "Назад",
+            tint = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier.size(26.dp),
         )
     }
 }
@@ -452,6 +458,51 @@ fun PrimaryButton(
                 Spacer(Modifier.width(10.dp))
             }
             Text(text = text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+/**
+ * Кнопка-таблетка во всю ширину строки: высота 56, радиус 28.
+ *
+ * Есть в трёх местах — «Файлы», «Карточка устройства» и подобных. Вес задаёт
+ * вызывающий: в ряду из двух кнопок они должны делить ширину поровну.
+ */
+@Composable
+fun PillButton(
+    text: String,
+    icon: ImageVector,
+    filled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(56.dp),
+        shape = RoundedCornerShape(28.dp),
+        color = if (filled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+        contentColor = if (filled) {
+            MaterialTheme.colorScheme.onPrimary
+        } else {
+            MaterialTheme.colorScheme.onSurface
+        },
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable(onClick = onClick),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = text,
+                fontSize = 16.sp,
+                fontWeight = if (filled) FontWeight.SemiBold else FontWeight.Medium,
+                maxLines = 1,
+            )
         }
     }
 }

@@ -17,6 +17,7 @@ import com.naua_braidwork.app.ui.state.SecurityState
 import com.naua_braidwork.app.ui.state.SubRow
 import com.naua_braidwork.app.ui.state.Toggles
 import com.naua_braidwork.app.ui.state.Tone
+import com.naua_braidwork.app.ui.state.withToggleValues
 
 /**
  * Безопасность и ключи по спецификации `Security.dc.html`.
@@ -72,20 +73,5 @@ fun SecurityScreen(
                 )
             }
         }
-    }
-}
-
-/**
- * Подставляет в строки текущие значения переключателей.
- *
- * Описание строк пересоздаётся заново при каждой перерисовке, поэтому нажатия
- * хранятся отдельно — в [Toggles]. Здесь они сводятся обратно со строками.
- */
-internal fun List<SubRow>.withToggleValues(toggles: Toggles): List<SubRow> = map { row ->
-    val end = row.end
-    if (end is RowEnd.Toggle) {
-        row.copy(end = RowEnd.Toggle(checked = toggles[row.id], enabled = end.enabled))
-    } else {
-        row
     }
 }

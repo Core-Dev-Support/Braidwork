@@ -113,6 +113,21 @@ data class Toggles(val values: Map<String, Boolean>) {
         Toggles(values + (id to value))
 }
 
+/**
+ * Подставляет в строки текущие значения переключателей.
+ *
+ * Описание строк пересоздаётся заново при каждой перерисовке, поэтому нажатия
+ * хранятся отдельно — в [Toggles]. Здесь они сводятся обратно со строками.
+ */
+fun List<SubRow>.withToggleValues(toggles: Toggles): List<SubRow> = map { row ->
+    val end = row.end
+    if (end is RowEnd.Toggle) {
+        row.copy(end = RowEnd.Toggle(checked = toggles[row.id], enabled = end.enabled))
+    } else {
+        row
+    }
+}
+
 /** Один из вариантов, выбираемых кружком. */
 data class RadioOption(
     val id: String,
@@ -170,4 +185,60 @@ data class AppearanceState(
     val langs: List<String>,
     val accents: List<AccentSwatch>,
     val perf: List<SubRow>,
+)
+
+/** Платформа со статусом: Android, Windows, Linux и дальше по плану. */
+data class PlatformEntry(
+    val icon: ImageVector,
+    val tone: Tone,
+    val title: String,
+    val sub: String,
+    val step: String,
+)
+
+/** Состояние «О приложении». */
+data class AboutState(
+    val appVersion: String,
+    val coreVersion: String,
+    val platforms: List<PlatformEntry>,
+    val links: List<String>,
+)
+
+/** Шаг «Ядра и диагностики»: имя и результат проверки. */
+data class CoreTest(
+    val title: String,
+    val passed: Boolean?,
+)
+
+/** Состояние «Ядра и диагностики». */
+data class CoreState(
+    val step: String,
+    val buildGroups: List<SubGroup>,
+    val tests: List<CoreTest>,
+    val logGroups: List<SubGroup>,
+)
+
+/** Шаг плана разработки. */
+data class RoadmapStep(
+    val n: String,
+    val title: String,
+    val sub: String,
+    val current: Boolean,
+)
+
+/** Возможность, включаемая для конкретного устройства. */
+data class DeviceFeature(
+    val id: String,
+    val label: String,
+    val icon: ImageVector,
+    val on: Boolean,
+)
+
+/** Состояние карточки устройства. */
+data class DeviceDetailState(
+    val name: String,
+    val statusLine: String,
+    val online: Boolean,
+    val features: List<DeviceFeature>,
+    val groups: List<SubGroup>,
 )

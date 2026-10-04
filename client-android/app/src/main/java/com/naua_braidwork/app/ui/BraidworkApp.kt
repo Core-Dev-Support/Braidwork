@@ -126,6 +126,7 @@ fun BraidworkApp(deviceId: String, deviceName: String) {
                     onMode = { mode = it },
                     onBack = { stack.removeAt(stack.lastIndex) },
                     onRow = { },
+                    onRoute = { id -> if (id in OPEN_ROUTES) stack.add(id) },
                     onOpenSystemSettings = openSystemSettings,
                 )
             } else {
@@ -204,6 +205,11 @@ private val OPEN_ROUTES = setOf(
     Route.NOTIFS,
     Route.MIRROR,
     Route.APPEARANCE,
+    Route.CORE,
+    Route.ABOUT,
+    Route.ROADMAP,
+    Route.PAIR,
+    Route.DEVICE,
 )
 
 /**

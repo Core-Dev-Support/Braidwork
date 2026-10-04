@@ -16,17 +16,22 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.naua_braidwork.app.ui.components.BackButton
 import com.naua_braidwork.app.ui.components.SubBody
 import com.naua_braidwork.app.ui.components.SubGroupCard
 import com.naua_braidwork.app.ui.components.SubGroupTitle
 import com.naua_braidwork.app.ui.components.SubHeader
+import com.naua_braidwork.app.ui.screens.AboutScreen
 import com.naua_braidwork.app.ui.screens.AppearanceScreen
 import com.naua_braidwork.app.ui.screens.BackgroundScreen
 import com.naua_braidwork.app.ui.screens.ClipboardScreen
+import com.naua_braidwork.app.ui.screens.CoreScreen
+import com.naua_braidwork.app.ui.screens.DeviceDetailScreen
 import com.naua_braidwork.app.ui.screens.FilesScreen
 import com.naua_braidwork.app.ui.screens.MirrorScreen
 import com.naua_braidwork.app.ui.screens.NetworkScreen
 import com.naua_braidwork.app.ui.screens.NotifsScreen
+import com.naua_braidwork.app.ui.screens.RoadmapScreen
 import com.naua_braidwork.app.ui.screens.PairScreen
 import com.naua_braidwork.app.ui.screens.SecurityScreen
 import com.naua_braidwork.app.ui.state.LinkMode
@@ -35,6 +40,7 @@ import com.naua_braidwork.app.ui.state.Sample
 import com.naua_braidwork.app.ui.state.SubGroup
 import com.naua_braidwork.app.ui.state.SubRow
 import com.naua_braidwork.app.ui.state.Toggles
+import com.naua_braidwork.app.ui.state.withToggleValues
 
 /**
  * Маршруты подэкранов.
@@ -53,6 +59,10 @@ object Route {
     const val NOTIFS = "notifs"
     const val MIRROR = "mirror"
     const val APPEARANCE = "appearance"
+    const val CORE = "core"
+    const val ABOUT = "about"
+    const val ROADMAP = "roadmap"
+    const val DEVICE = "device"
 }
 
 /**
@@ -69,6 +79,7 @@ fun SubScreen(
     onMode: (LinkMode) -> Unit,
     onBack: () -> Unit,
     onRow: (String) -> Unit,
+    onRoute: (String) -> Unit,
     onOpenSystemSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -88,6 +99,8 @@ fun SubScreen(
     var theme by remember { mutableStateOf("Как в системе") }
     var lang by remember { mutableStateOf("Русский") }
     var accent by remember { mutableStateOf("blue") }
+    var coreToggles by remember { mutableStateOf(Toggles(emptyMap())) }
+    var testsRan by remember { mutableStateOf(false) }
 
     Box(
         modifier = modifier
@@ -184,18 +197,74 @@ fun SubScreen(
                 )
             }
 
+            Route.CORE -> CoreScreen(
+                state = Sample.coreState(if (testsRan) true else null),
+                toggles = coreToggles,
+                ran = testsRan,
+                onRun = { testsRan = true },
+                onBack = onBack,
+                onRow = { onRow(it.id) },
+                onToggle = { id, value -> coreToggles = coreToggles.with(id, value) },
+            )
+
+            Route.ABOUT -> AboutScreen(
+                state = Sample.aboutState(),
+                onBack = onBack,
+                onLink = { link ->
+                    // Единственная ссылка, которая ведёт внутрь приложения.
+                    // Остальные требуют страниц, которых пока нет.
+                    if (link == "Этапы разработки") onRoute(Route.ROADMAP) else onRow(link)
+                },
+            )
+
+            Route.ROADMAP -> RoadmapScreen(
+                steps = Sample.roadmap(),
+                onBack = onBack,
+            )
+
+            Route.DEVICE -> {
+                // Устройства пока нет, поэтому состояние для карточки тоже
+                // нет. Экран включается вместе с первым найденным устройством.
+                val device = Sample.devicesState().devices.firstOrNull()
+                if (device == null) {
+                    MissingScreen("Устройство не выбрано", onBack)
+                } else {
+                    DeviceDetailScreen(
+                        state = Sample.deviceDetailState(device),
+                        onBack = onBack,
+                        onMore = { onRow(Route.DEVICE) },
+                        onFeature = { onRow(Route.DEVICE) },
+                        onSend = { onRow(Route.FILES) },
+                        onMirror = { onRow(Route.MIRROR) },
+                        onRow = { onRow(it.id) },
+                    )
+                }
+            }
+
             // Неизвестный маршрут означает ошибку в вызывающем коде, а не у
             // пользователя. Показываем пустой экран: так это заметно в
             // разработке и безопасно в сборке, отданной тестерам.
-            else -> Column(
-                modifier = Modifier.padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Text(
-                    text = "Такого экрана нет",
-                    style = MaterialTheme.typography.titleLarge,
-                )
-            }
+            else -> MissingScreen("Такого экрана нет", onBack)
+        }
+    }
+}
+
+/** Экран без содержимого, но с кнопкой возврата: лучше пустоты с выходом. */
+@Composable
+private fun MissingScreen(text: String, onBack: () -> Unit) {
+    Column(modifier = Modifier.padding(top = 12.dp)) {
+        BackButton(onClick = onBack)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
         }
     }
 }
