@@ -185,7 +185,7 @@ fun BraidworkApp(
                     onMode = { mode = it },
                     themeChoice = settings.theme,
                     onThemeChoice = { choice ->
-                        settings.setTheme(choice)
+                        settings.chooseTheme(choice)
                         restartAsk = choice
                     },
                     onBack = { stack.removeAt(stack.lastIndex) },

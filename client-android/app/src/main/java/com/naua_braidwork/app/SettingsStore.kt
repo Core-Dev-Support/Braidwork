@@ -34,7 +34,9 @@ class SettingsStore private constructor(context: Context) {
     var welcomeSeen: Boolean by mutableStateOf(prefs.getBoolean(KEY_WELCOME, false))
         private set
 
-    fun setTheme(value: ThemeChoice) {
+    // Имя не `setTheme`: закрытый сеттер свойства `theme` компилируется в
+    // метод с таким же именем, и Kotlin увидит в файле два одинаковых метода.
+    fun chooseTheme(value: ThemeChoice) {
         theme = value
         prefs.edit().putString(KEY_THEME, value.title).apply()
     }
