@@ -17,6 +17,7 @@ import com.naua_braidwork.app.ui.state.RowEnd
 import com.naua_braidwork.app.ui.state.SubRow
 import com.naua_braidwork.app.ui.state.Toggles
 import com.naua_braidwork.app.ui.state.Tone
+import com.naua_braidwork.app.ui.state.withToggleValues
 
 /**
  * Сеть и соединение по спецификации `Network.dc.html`.
