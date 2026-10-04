@@ -93,13 +93,7 @@ fun ShareScreen(
                 .size(250.dp),
             contentAlignment = Alignment.Center,
         ) {
-            ActivityRings(
-                // Пока транспорта нет, показываем нули. Кольца рисуются
-                // полными, но с минимальной заливкой, чтобы не создавать
-                // впечатления работающего обмена.
-                progress = listOf(0f, 0f, 0f),
-                colors = listOf(orange, green, cyan),
-            )
+            ActivityRings(colors = listOf(orange, green, cyan))
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     text = "Сегодня",
@@ -184,12 +178,12 @@ fun ShareScreen(
 /**
  * Три кольца активности.
  *
- * Радиусы 108, 82 и 56 — из макета. Ширина дуги 22.
- * Каждое кольцо рисуется дважды: подложка с малой прозрачностью и сама дуга.
+ * Радиусы 108, 82 и 56 — из макета. Ширина дуги 22. Пока обмена нет, кольца
+ * нарисованы только подложкой: полная дуга означала бы activity, которого
+ * не было. Сама дуга появится вместе с транспортом.
  */
 @Composable
 private fun ActivityRings(
-    progress: List<Float>,
     colors: List<Color>,
     modifier: Modifier = Modifier,
 ) {
@@ -210,19 +204,6 @@ private fun ActivityRings(
                 size = androidx.compose.ui.geometry.Size(radius * 2, radius * 2),
                 style = Stroke(width = stroke, cap = StrokeCap.Round),
             )
-
-            val fraction = progress.getOrElse(index) { 0f }
-            if (fraction > 0f) {
-                drawArc(
-                    color = color,
-                    startAngle = -90f,
-                    sweepAngle = 360f * fraction,
-                    useCenter = false,
-                    topLeft = Offset(center.x - radius, center.y - radius),
-                    size = androidx.compose.ui.geometry.Size(radius * 2, radius * 2),
-                    style = Stroke(width = stroke, cap = StrokeCap.Round),
-                )
-            }
         }
     }
 }

@@ -46,8 +46,6 @@ fun FamilyScreen(
     onInvite: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val bw = LocalBwColors.current
-
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -108,11 +106,7 @@ fun FamilyScreen(
                         )
                     } else {
                         members.avatars.forEachIndexed { index, letter ->
-                            Avatar(
-                                letter = letter,
-                                tone = index % 4,
-                                modifier = Modifier.padding(start = if (index == 0) 0.dp else 0.dp),
-                            )
+                            Avatar(letter = letter, tone = index)
                         }
                     }
                 }

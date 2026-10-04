@@ -34,7 +34,10 @@ import com.naua_braidwork.app.ui.icons.IcwFamily
 import com.naua_braidwork.app.ui.icons.IcwHome
 import com.naua_braidwork.app.ui.icons.IcwSettings
 import com.naua_braidwork.app.ui.screens.DevicesScreen
+import com.naua_braidwork.app.ui.screens.FamilyScreen
 import com.naua_braidwork.app.ui.screens.MainScreen
+import com.naua_braidwork.app.ui.screens.SettingsScreen
+import com.naua_braidwork.app.ui.screens.ShareScreen
 import com.naua_braidwork.app.ui.screens.WelcomeScreen
 import com.naua_braidwork.app.ui.state.Sample
 
@@ -120,6 +123,7 @@ fun BraidworkApp(deviceId: String, deviceName: String) {
 
                 Tab.Family -> FamilyScreen(
                     members = Sample.familyState(),
+                    onInvite = { tab = Tab.Devices },
                 )
 
                 Tab.Settings -> SettingsScreen(
