@@ -16,12 +16,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.naua_braidwork.app.ui.components.SubBody
+import com.naua_braidwork.app.ui.components.SubGroupCard
+import com.naua_braidwork.app.ui.components.SubGroupTitle
+import com.naua_braidwork.app.ui.components.SubHeader
+import com.naua_braidwork.app.ui.screens.AppearanceScreen
 import com.naua_braidwork.app.ui.screens.BackgroundScreen
+import com.naua_braidwork.app.ui.screens.ClipboardScreen
+import com.naua_braidwork.app.ui.screens.FilesScreen
+import com.naua_braidwork.app.ui.screens.MirrorScreen
 import com.naua_braidwork.app.ui.screens.NetworkScreen
+import com.naua_braidwork.app.ui.screens.NotifsScreen
 import com.naua_braidwork.app.ui.screens.PairScreen
 import com.naua_braidwork.app.ui.screens.SecurityScreen
 import com.naua_braidwork.app.ui.state.LinkMode
+import com.naua_braidwork.app.ui.state.RowEnd
 import com.naua_braidwork.app.ui.state.Sample
+import com.naua_braidwork.app.ui.state.SubGroup
+import com.naua_braidwork.app.ui.state.SubRow
 import com.naua_braidwork.app.ui.state.Toggles
 
 /**
@@ -36,6 +48,11 @@ object Route {
     const val NETWORK = "network"
     const val SECURITY = "security"
     const val BACKGROUND = "background"
+    const val CLIPBOARD = "clipboard"
+    const val FILES = "files"
+    const val NOTIFS = "notifs"
+    const val MIRROR = "mirror"
+    const val APPEARANCE = "appearance"
 }
 
 /**
@@ -60,8 +77,17 @@ fun SubScreen(
     var securityToggles by remember { mutableStateOf(Toggles(emptyMap())) }
     var networkToggles by remember { mutableStateOf(Toggles(emptyMap())) }
     var backgroundToggles by remember { mutableStateOf(Toggles(emptyMap())) }
+    var clipboardToggles by remember { mutableStateOf(Toggles(emptyMap())) }
+    var filesToggles by remember { mutableStateOf(Toggles(emptyMap())) }
+    var notifToggles by remember { mutableStateOf(Toggles(emptyMap())) }
+    var mirrorToggles by remember { mutableStateOf(Toggles(emptyMap())) }
     var brand by remember { mutableStateOf("Xiaomi") }
     var pairMode by remember { mutableStateOf(0) }
+    var mirrorQuality by remember { mutableStateOf("auto") }
+    var mirrorLive by remember { mutableStateOf(false) }
+    var theme by remember { mutableStateOf("Как в системе") }
+    var lang by remember { mutableStateOf("Русский") }
+    var accent by remember { mutableStateOf("blue") }
 
     Box(
         modifier = modifier
@@ -103,6 +129,61 @@ fun SubScreen(
                 onOpenSystemSettings = onOpenSystemSettings,
             )
 
+            Route.CLIPBOARD -> ClipboardScreen(
+                groups = Sample.clipboardGroups(),
+                toggles = clipboardToggles,
+                onBack = onBack,
+                onRow = { onRow(it.id) },
+                onToggle = { id, value -> clipboardToggles = clipboardToggles.with(id, value) },
+            )
+
+            Route.FILES -> FilesScreen(
+                groups = Sample.filesGroups(),
+                toggles = filesToggles,
+                onBack = onBack,
+                onRow = { onRow(it.id) },
+                onToggle = { id, value -> filesToggles = filesToggles.with(id, value) },
+                onSend = { onRow(Route.FILES) },
+                onPickReceiver = { onRow(Route.FILES) },
+            )
+
+            Route.NOTIFS -> {
+                val (title, sub) = Sample.notifStatus()
+                NotifsScreen(
+                    statusTitle = title,
+                    statusSub = sub,
+                    groups = Sample.notifGroups(),
+                    toggles = notifToggles,
+                    onBack = onBack,
+                    onRow = { onRow(it.id) },
+                    onToggle = { id, value -> notifToggles = notifToggles.with(id, value) },
+                )
+            }
+
+            Route.MIRROR -> MirrorScreen(
+                groups = Sample.mirrorGroups(),
+                toggles = mirrorToggles,
+                live = mirrorLive,
+                quality = mirrorQuality,
+                onLive = { mirrorLive = !mirrorLive },
+                onQuality = { mirrorQuality = it },
+                onBack = onBack,
+                onRow = { onRow(it.id) },
+                onToggle = { id, value -> mirrorToggles = mirrorToggles.with(id, value) },
+            )
+
+            Route.APPEARANCE -> {
+                // Список вариантов нужен и для показа, и для разбора нажатия.
+                val options = Sample.appearanceState(theme, lang, accent)
+                AppearanceScreen(
+                    state = options,
+                    onBack = onBack,
+                    onTheme = { theme = options.themes[it] },
+                    onLang = { lang = options.langs[it] },
+                    onAccent = { accent = it },
+                )
+            }
+
             // Неизвестный маршрут означает ошибку в вызывающем коде, а не у
             // пользователя. Показываем пустой экран: так это заметно в
             // разработке и безопасно в сборке, отданной тестерам.
@@ -132,5 +213,65 @@ fun rememberSystemSettingsOpener(): () -> Unit {
             android.net.Uri.fromParts("package", context.packageName, null),
         )
         runCatching { context.startActivity(intent) }
+    }
+}
+
+/**
+ * Подэкран из групп строк: шапка, необязательный блок сверху и сами группы.
+ *
+ * Буфер, уведомления, файлы, зеркало, внешний вид — это один и тот же экран
+ * с разным содержимым. Собирать его пять раз означало бы, что на пятом экране
+ * отступы уже не совпадут с первым.
+ */
+@Composable
+fun RowsSubScreen(
+    title: String,
+    subtitle: String,
+    groups: List<SubGroup>,
+    toggles: Toggles,
+    onBack: () -> Unit,
+    onRow: (SubRow) -> Unit,
+    onToggle: (String, Boolean) -> Unit,
+    selectedRadio: String? = null,
+    onRadio: (String) -> Unit = {},
+    top: (@Composable () -> Unit)? = null,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(top = 12.dp),
+    ) {
+        SubHeader(title = title, subtitle = subtitle, onBack = onBack)
+
+        SubBody {
+            top?.invoke()
+
+            groups.forEach { group ->
+                SubGroupTitle(
+                    title = group.title,
+                    modifier = Modifier.padding(start = 24.dp, top = 20.dp),
+                )
+                SubGroupCard(
+                    rows = group.rows.withToggleValues(toggles).map { row ->
+                        val end = row.end
+                        if (end is RowEnd.Radio && selectedRadio != null) {
+                            row.copy(end = RowEnd.Radio(checked = row.id == selectedRadio))
+                        } else {
+                            row
+                        }
+                    },
+                    onRow = { row ->
+                        val end = row.end
+                        when {
+                            end is RowEnd.Toggle && end.enabled -> onToggle(row.id, !end.checked)
+                            end is RowEnd.Radio -> onRadio(row.id)
+                            else -> onRow(row)
+                        }
+                    },
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
+        }
     }
 }

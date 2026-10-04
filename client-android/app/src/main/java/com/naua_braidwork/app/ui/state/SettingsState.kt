@@ -1,5 +1,6 @@
 package com.naua_braidwork.app.ui.state
 
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.naua_braidwork.app.ui.icons.IcwBell
 import com.naua_braidwork.app.ui.icons.IcwClipboard
@@ -74,7 +75,13 @@ sealed interface RowEnd {
     data class Radio(val checked: Boolean) : RowEnd
 }
 
-/** Строка подэкрана настроек. */
+/**
+ * Строка подэкрана настроек.
+ *
+ * Иконка есть только у части строк — там, где строка обозначает конкретное
+ * приложение или устройство, а не параметр. Такая строка выше остальных (64
+ * против 66 и 56), и это тоже из макета.
+ */
 data class SubRow(
     val id: String,
     val title: String,
@@ -82,6 +89,8 @@ data class SubRow(
     val end: RowEnd = RowEnd.None,
     /** Опасное действие: заголовок красный. */
     val danger: Boolean = false,
+    val icon: ImageVector? = null,
+    val tone: Tone = Tone.Blue,
 )
 
 /** Группа строк подэкрана. Пустой заголовок — группа без подписи. */
@@ -143,4 +152,22 @@ data class BackgroundState(
     val brands: List<String>,
     val steps: List<BrandStep>,
     val groups: List<SubGroup>,
+)
+
+/** Кружок выбора цвета акцента. */
+data class AccentSwatch(
+    val id: String,
+    val name: String,
+    val color: Color,
+)
+
+/** Состояние «Внешнего вида и языка». */
+data class AppearanceState(
+    val theme: String,
+    val lang: String,
+    val accent: String,
+    val themes: List<String>,
+    val langs: List<String>,
+    val accents: List<AccentSwatch>,
+    val perf: List<SubRow>,
 )

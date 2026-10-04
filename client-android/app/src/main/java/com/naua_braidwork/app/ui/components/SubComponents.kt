@@ -200,13 +200,28 @@ fun SettingRowView(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(if (row.sub.isEmpty()) 56.dp else 66.dp)
+            .height(
+                when {
+                    row.icon != null -> 64.dp
+                    row.sub.isEmpty() -> 56.dp
+                    else -> 66.dp
+                },
+            )
             .then(
                 if (clickable) Modifier.clickable(onClick = onRowClick) else Modifier,
             )
             .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (row.icon != null) {
+            IconTile(
+                icon = row.icon,
+                tone = row.tone,
+                size = 40.dp,
+                radius = 12.dp,
+            )
+            Spacer(Modifier.width(14.dp))
+        }
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = row.title,

@@ -136,10 +136,12 @@ fun BraidworkApp(deviceId: String, deviceName: String) {
                         onMode = { mode = it },
                         onPairClick = { stack.add(Route.PAIR) },
                         onNotificationsClick = { tab = Tab.Share },
-                        onQuickAction = { tab = Tab.Home },
-                        onChannelClick = { tab = Tab.Settings; stack.add(Route.NETWORK) },
-                        onBleClick = { tab = Tab.Settings; stack.add(Route.NETWORK) },
-                        onSoftApClick = { tab = Tab.Settings; stack.add(Route.NETWORK) },
+                        // Быстрые действия ведут в свои подэкраны обмена:
+                        // так они задуманы, и кнопка не ведёт в пустоту.
+                        onQuickAction = { action -> stack.add(quickRoute(action.id)) },
+                        onChannelClick = { stack.add(Route.NETWORK) },
+                        onBleClick = { stack.add(Route.NETWORK) },
+                        onSoftApClick = { stack.add(Route.NETWORK) },
                     )
 
                     Tab.Devices -> DevicesScreen(
@@ -150,7 +152,8 @@ fun BraidworkApp(deviceId: String, deviceName: String) {
                     )
 
                     Tab.Share -> ShareScreen(
-                        onQuickAction = { },
+                        // Идентификаторы ячеек совпадают с маршрутами подэкранов.
+                        onQuickAction = { id -> stack.add(quickRoute(id)) },
                         onAddDevice = { stack.add(Route.PAIR) },
                     )
 
@@ -182,8 +185,26 @@ fun BraidworkApp(deviceId: String, deviceName: String) {
     }
 }
 
+/**
+ * Куда ведёт быстрое действие с главного экрана.
+ *
+ * Идентификаторы действий совпадают с маршрутами: список один, иначе пришлось бы
+ * держать вторую таблицу соответствий, которая разъедется с первой.
+ */
+private fun quickRoute(actionId: String): String =
+    if (actionId in OPEN_ROUTES) actionId else Route.SECURITY
+
 /** Подэкраны, которые уже готовы: настройки ведут только в эти строки. */
-private val OPEN_ROUTES = setOf(Route.NETWORK, Route.SECURITY, Route.BACKGROUND)
+private val OPEN_ROUTES = setOf(
+    Route.NETWORK,
+    Route.SECURITY,
+    Route.BACKGROUND,
+    Route.CLIPBOARD,
+    Route.FILES,
+    Route.NOTIFS,
+    Route.MIRROR,
+    Route.APPEARANCE,
+)
 
 /**
  * Короткая запись идентификатора: первые и последние четыре символа.

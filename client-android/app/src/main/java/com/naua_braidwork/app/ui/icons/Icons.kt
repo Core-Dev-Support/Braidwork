@@ -155,6 +155,51 @@ val IcwLockPad: ImageVector by lazy {
     bwIcon("lockpad", "M7 11h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2zM8 11V8a4 4 0 0 1 8 0v3", 1.9f)
 }
 
+/** Текст: буква Т из трёх штрихов. Тип содержимого буфера. */
+val IcwText: ImageVector by lazy {
+    bwIcon("text", "M5 6h14M12 6v13M9 19h6")
+}
+
+/** Ссылка: две скрещённые дуги. Тип содержимого буфера. */
+val IcwLink: ImageVector by lazy {
+    bwIcon("link", "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1")
+}
+
+/** Изображение: рамка, горы и солнце. Тип содержимого буфера. */
+val IcwImage: ImageVector by lazy {
+    bwIcon("image", "M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM3 16l5-5 4 4 3-3 6 6M15 9.5a1 1 0 1 0 2 0a1 1 0 1 0-2 0")
+}
+
+/** Облачко сообщения: мессенджеры. */
+val IcwChat: ImageVector by lazy {
+    bwIcon("chat", "M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-5 4V6a1 1 0 0 1 1-1z")
+}
+
+/** Конверт: почта. */
+val IcwMail: ImageVector by lazy {
+    bwIcon("mail", "M4 6h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1zM3 7l9 7 9-7")
+}
+
+/** Банковская карта: приложения банков. */
+val IcwCard: ImageVector by lazy {
+    bwIcon("card", "M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM3 10h18M7 15h4")
+}
+
+/** Календарь: приложения календаря. */
+val IcwCalendar: ImageVector by lazy {
+    bwIcon("calendar", "M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM4 10h16M8 3v4M16 3v4")
+}
+
+/** Запуск трансляции: треугольник. */
+val IcwPlay: ImageVector by lazy {
+    bwIcon("play", "M8 5l11 7-11 7z", 1.9f)
+}
+
+/** Остановка трансляции: квадрат. Заливка, а не обводка. */
+val IcwStop: ImageVector by lazy {
+    bwIcon("stop", "M7 7h10v10H7z", 2f)
+}
+
 val IcwHome: ImageVector by lazy {
     bwIcon("home", "M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z")
 }

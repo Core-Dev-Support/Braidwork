@@ -1,13 +1,19 @@
 package com.naua_braidwork.app.ui.state
 
 import com.naua_braidwork.app.BraidworkCore
+import androidx.compose.ui.graphics.Color
 import com.naua_braidwork.app.ui.icons.IcwBell
+import com.naua_braidwork.app.ui.icons.IcwCalendar
+import com.naua_braidwork.app.ui.icons.IcwCard
+import com.naua_braidwork.app.ui.icons.IcwChat
 import com.naua_braidwork.app.ui.icons.IcwClipboard
 import com.naua_braidwork.app.ui.icons.IcwCpu
 import com.naua_braidwork.app.ui.icons.IcwFolder
 import com.naua_braidwork.app.ui.icons.IcwInfo
+import com.naua_braidwork.app.ui.icons.IcwMail
 import com.naua_braidwork.app.ui.icons.IcwMirror
 import com.naua_braidwork.app.ui.icons.IcwMoon
+import com.naua_braidwork.app.ui.icons.IcwPhone
 import com.naua_braidwork.app.ui.icons.IcwPower
 import com.naua_braidwork.app.ui.icons.IcwShield
 import com.naua_braidwork.app.ui.icons.IcwWifi
@@ -311,4 +317,218 @@ object Sample {
         val letters = id.filter { it.isLetterOrDigit() }
         return if (letters.length <= 4) id else letters.take(4)
     }
+
+    /**
+     * Буфер обмена.
+     *
+     * Раздел «Принимают буфер» и группа «Недавнее» пустые: ни одного
+     * подключённого устройства и ни одной копии пока нет, а выдумывать
+     * «Список покупок на неделю» на экране тестера нельзя.
+     */
+    fun clipboardGroups(): List<SubGroup> = listOf(
+        SubGroup(
+            title = "Основное",
+            rows = listOf(
+                SubRow(
+                    "cb_on", "Сквозной буфер обмена",
+                    "Копируешь здесь, вставляешь везде",
+                    RowEnd.Toggle(false, enabled = false),
+                ),
+                SubRow(
+                    "cb_ask", "Спрашивать перед отправкой",
+                    "Подтверждение для каждой копии",
+                    RowEnd.Toggle(false, enabled = false),
+                ),
+                SubRow("history", "Хранить историю", "", RowEnd.Chevron),
+            ),
+        ),
+        SubGroup(
+            title = "Что передавать",
+            rows = listOf(
+                SubRow("t_text", "Текст", "", RowEnd.Toggle(false, enabled = false)),
+                SubRow("t_link", "Ссылки", "", RowEnd.Toggle(false, enabled = false)),
+                SubRow("t_img", "Изображения", "", RowEnd.Toggle(false, enabled = false)),
+                SubRow("t_file", "Файлы", "", RowEnd.Toggle(false, enabled = false)),
+            ),
+        ),
+        SubGroup(
+            title = "Приватность",
+            rows = listOf(
+                SubRow(
+                    "pw", "Не передавать пароли",
+                    "Пропускать данные менеджеров паролей",
+                    RowEnd.Toggle(true),
+                ),
+                SubRow("hide", "Скрывать данные в истории", "", RowEnd.Toggle(false, enabled = false)),
+            ),
+        ),
+    )
+
+    /**
+     * Уведомления.
+     *
+     * Служба чтения уведомлений в приложении есть и включена в манифесте, но
+     * читать она станет только после того, как пользователь разрешит доступ в
+     * системе. Поэтому статус честно говорит «нужно разрешение».
+     */
+    fun notifStatus(): Pair<String, String> =
+        "Доступ нужно подтвердить в системе" to
+            "Служба чтения уведомлений ждёт разрешения"
+
+    fun notifGroups(): List<SubGroup> = listOf(
+        SubGroup(
+            title = "Направление",
+            rows = listOf(
+                SubRow(
+                    "send", "Отправлять на другие устройства",
+                    "С телефона на ноутбуки и ПК",
+                    RowEnd.Toggle(false, enabled = false),
+                ),
+                SubRow(
+                    "recv", "Принимать с других устройств",
+                    "Показывать как обычные уведомления",
+                    RowEnd.Toggle(false, enabled = false),
+                ),
+            ),
+        ),
+        SubGroup(
+            title = "Приложения",
+            rows = listOf(
+                SubRow("a_chat", "Мессенджеры", "", RowEnd.Toggle(false), icon = IcwChat, tone = Tone.Blue),
+                SubRow("a_mail", "Почта", "", RowEnd.Toggle(false), icon = IcwMail, tone = Tone.Orange),
+                SubRow("a_bank", "Банки", "", RowEnd.Toggle(false), icon = IcwCard, tone = Tone.Green),
+                SubRow("a_cal", "Календарь", "", RowEnd.Toggle(false), icon = IcwCalendar, tone = Tone.Purple),
+                SubRow("a_call", "Звонки и SMS", "", RowEnd.Toggle(false), icon = IcwPhone, tone = Tone.Blue),
+            ),
+        ),
+        SubGroup(
+            title = "Действия",
+            rows = listOf(
+                SubRow(
+                    "reply", "Отвечать с другого устройства",
+                    "Ответ уйдёт из исходного приложения",
+                    RowEnd.Toggle(false, enabled = false),
+                ),
+                SubRow(
+                    "dismiss", "Закрывать вместе",
+                    "Смахнул здесь, закрыто везде",
+                    RowEnd.Toggle(false, enabled = false),
+                ),
+                SubRow(
+                    "dnd", "Учитывать «Не беспокоить»",
+                    "Тихо, если режим включён на телефоне",
+                    RowEnd.Toggle(false, enabled = false),
+                ),
+            ),
+        ),
+        SubGroup(
+            title = "Приватность",
+            rows = listOf(
+                SubRow(
+                    "hidetext", "Скрывать текст сообщений",
+                    "Только название приложения",
+                    RowEnd.Toggle(false),
+                ),
+                SubRow("quiet", "Тихие часы", "", RowEnd.Chevron),
+            ),
+        ),
+    )
+
+    /**
+     * Файлы и хранилище.
+     *
+     * Передачи и файлов нет, поэтому вместо прогресса и разбивки хранилища
+     * показывается то же самое с нулями.
+     */
+    fun filesGroups(): List<SubGroup> = listOf(
+        SubGroup(
+            title = "Приём файлов",
+            rows = listOf(
+                SubRow(
+                    "auto", "Принимать от семьи сразу",
+                    "Без подтверждения от доверенных",
+                    RowEnd.Toggle(false, enabled = false),
+                ),
+                SubRow(
+                    "wifi", "Только по Wi-Fi",
+                    "Мобильный интернет не тратится",
+                    RowEnd.Toggle(false, enabled = false),
+                ),
+                SubRow("folder", "Папка загрузки", "", RowEnd.Chevron),
+            ),
+        ),
+        SubGroup(
+            title = "Хранилище по хэшу",
+            rows = listOf(
+                SubRow(
+                    "dedupe", "Не дублировать одинаковые файлы",
+                    "Файл хранится один раз",
+                    RowEnd.Toggle(false, enabled = false),
+                ),
+                SubRow("limit", "Лимит хранилища", "", RowEnd.Chevron),
+                SubRow("keep", "Хранить файлы", "", RowEnd.Chevron),
+                SubRow("clean", "Очистить кэш", "", RowEnd.Chevron, danger = true),
+            ),
+        ),
+    )
+
+    /** Зеркало экрана: качество и параметры захвата. */
+    fun mirrorGroups(): List<SubGroup> = listOf(
+        SubGroup(
+            title = "Качество",
+            rows = listOf(
+                SubRow("auto", "Авто", "Подстраивается под сеть", RowEnd.Radio(true)),
+                SubRow("eco", "Экономия", "720p, 15 кадров в секунду", RowEnd.Radio(false)),
+                SubRow("max", "Максимум", "Родное разрешение, 60 кадров", RowEnd.Radio(false)),
+            ),
+        ),
+        SubGroup(
+            title = "Параметры",
+            rows = listOf(
+                SubRow("audio", "Передавать звук", "", RowEnd.Toggle(false, enabled = false)),
+                SubRow("touches", "Показывать касания", "", RowEnd.Toggle(false, enabled = false)),
+                SubRow(
+                    "control", "Управление с другого устройства",
+                    "Нужно подтверждение на телефоне",
+                    RowEnd.Toggle(false, enabled = false),
+                ),
+            ),
+        ),
+        SubGroup(
+            title = "Способ захвата",
+            rows = listOf(
+                SubRow("phone", "Этот телефон", "", RowEnd.Value("MediaProjection")),
+                SubRow("laptop", "Ноутбук Linux", "", RowEnd.Value("PipeWire")),
+                SubRow("backup", "Резервный ПК Linux", "", RowEnd.Value("XShm (X11)")),
+            ),
+        ),
+    )
+
+    /** Внешний вид: три группы выбора и производительность. */
+    fun appearanceState(theme: String, lang: String, accent: String) = AppearanceState(
+        theme = theme,
+        lang = lang,
+        accent = accent,
+        themes = listOf("Как в системе", "Светлая", "Тёмная"),
+        langs = listOf("Русский", "English"),
+        accents = listOf(
+            AccentSwatch("blue", "Синий", Color(0xFF2B8CF5)),
+            AccentSwatch("green", "Зелёный", Color(0xFF1E9E5A)),
+            AccentSwatch("orange", "Оранжевый", Color(0xFFD9660E)),
+            AccentSwatch("purple", "Фиолетовый", Color(0xFF7A4FE0)),
+            AccentSwatch("pink", "Розовый", Color(0xFFD93A7B)),
+        ),
+        perf = listOf(
+            SubRow(
+                "lite", "Упрощённая анимация", "Для слабых устройств",
+                RowEnd.Toggle(false, enabled = false),
+            ),
+            SubRow("big", "Крупный текст", "", RowEnd.Toggle(false, enabled = false)),
+            SubRow(
+                "tray", "Значок в трее и шторке",
+                "Быстрый доступ к обмену",
+                RowEnd.Toggle(false, enabled = false),
+            ),
+        ),
+    )
 }
