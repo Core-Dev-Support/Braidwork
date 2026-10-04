@@ -95,7 +95,7 @@ object Sample {
         SettingsGroup(
             title = "Приложение",
             rows = listOf(
-                SettingsRow("appearance", "Внешний вид и язык", "Системная", IcwMoon, Tone.Neutral),
+                SettingsRow("appearance", "Внешний вид", "Системная", IcwMoon, Tone.Neutral),
                 SettingsRow("core", "Ядро и диагностика", "Шаг 0", IcwCpu, Tone.Neutral),
                 SettingsRow("about", "О приложении", "", IcwInfo, Tone.Neutral),
             ),
@@ -511,13 +511,11 @@ object Sample {
         ),
     )
 
-    /** Внешний вид: три группы выбора и производительность. */
-    fun appearanceState(theme: ThemeChoice, lang: String, accent: String) = AppearanceState(
+    /** Внешний вид: тема, цвет акцента и производительность. */
+    fun appearanceState(theme: ThemeChoice, accent: String) = AppearanceState(
         theme = theme,
-        lang = lang,
         accent = accent,
         themes = ThemeChoice.entries,
-        langs = listOf("Русский", "English"),
         accents = listOf(
             AccentSwatch("blue", "Синий", Color(0xFF2B8CF5)),
             AccentSwatch("green", "Зелёный", Color(0xFF1E9E5A)),

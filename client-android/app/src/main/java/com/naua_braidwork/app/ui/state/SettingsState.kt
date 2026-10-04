@@ -196,13 +196,11 @@ data class FilesState(
     val groups: List<SubGroup>,
 )
 
-/** Состояние «Внешнего вида и языка». */
+/** Состояние «Внешнего вида». */
 data class AppearanceState(
     val theme: ThemeChoice,
-    val lang: String,
     val accent: String,
     val themes: List<ThemeChoice>,
-    val langs: List<String>,
     val accents: List<AccentSwatch>,
     val perf: List<SubRow>,
 )

@@ -42,19 +42,23 @@ import com.naua_braidwork.app.ui.state.SubRow
 import com.naua_braidwork.app.ui.theme.ThemeChoice
 
 /**
- * Внешний вид и язык по спецификации `design/spec/SPEC.txt`.
+ * Внешний вид по спецификации `design/spec/SPEC.txt`.
  *
- * Выбор сохраняется и сразу показывается, но не применяется: тема по-прежнему
- * следует за системной, потому что постоянного хранилища настроек ещё нет.
- * Поэтому под списком стоит пояснение — иначе нажатый кружок выглядел бы как
- * поломка.
+ * Группы «Язык» здесь нет, хотя в макете она есть. Выбор языка без переводов —
+ * это список из двух строк, одна из которых ничего не делает: нажал «English» и
+ * получил русский текст. Пустой переключатель хуже отсутствующего, поэтому
+ * группы нет, а под экраном написано почему. Вернём вместе с переводами.
+ *
+ * Цвет акцента выбирается и показывается, но пока не применяется: палитра
+ * акцента задана в токенах и не переопределяется. Переключатели
+ * производительности не подключены по той же причине — они влияют на анимации
+ * и масштаб текста, а это будет сделано вместе с постоянным хранилищем.
  */
 @Composable
 fun AppearanceScreen(
     state: AppearanceState,
     onBack: () -> Unit,
     onTheme: (ThemeChoice) -> Unit,
-    onLang: (String) -> Unit,
     onAccent: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -65,7 +69,7 @@ fun AppearanceScreen(
             .verticalScroll(rememberScrollState()),
     ) {
         SubHeader(
-            title = "Внешний вид и язык",
+            title = "Внешний вид",
             subtitle = "Тема, цвет и скорость интерфейса",
             onBack = onBack,
         )
@@ -84,14 +88,6 @@ fun AppearanceScreen(
             onSelect = onAccent,
         )
 
-        ChoiceGroup(
-            title = "Язык",
-            options = state.langs,
-            selected = state.lang,
-            label = { it },
-            onSelect = onLang,
-        )
-
         PerfGroup(state.perf)
 
         InfoBanner(
@@ -101,6 +97,13 @@ fun AppearanceScreen(
                 "службы рисуются вне Compose и до перезапуска держат прежнюю " +
                 "тему.",
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 20.dp),
+        )
+
+        InfoBanner(
+            icon = IcwInfo,
+            text = "Выбора языка пока нет: переводы не написаны, а обещать " +
+                "второй язык без него значило бы показывать пустой список.",
+            modifier = Modifier.padding(horizontal = 16.dp),
         )
     }
 }

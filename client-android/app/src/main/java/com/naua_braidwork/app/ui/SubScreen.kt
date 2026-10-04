@@ -114,7 +114,6 @@ fun SubScreen(
     var pairMode by remember { mutableStateOf(0) }
     var mirrorQuality by remember { mutableStateOf("auto") }
     var mirrorLive by remember { mutableStateOf(false) }
-    var lang by remember { mutableStateOf("Русский") }
     var accent by remember { mutableStateOf("blue") }
     var coreToggles by remember { mutableStateOf(Toggles(emptyMap())) }
     var testsRan by remember { mutableStateOf(false) }
@@ -204,10 +203,9 @@ fun SubScreen(
             )
 
             Route.APPEARANCE -> AppearanceScreen(
-                state = Sample.appearanceState(themeChoice, lang, accent),
+                state = Sample.appearanceState(themeChoice, accent),
                 onBack = onBack,
                 onTheme = onThemeChoice,
-                onLang = { lang = it },
                 onAccent = { accent = it },
             )
 
