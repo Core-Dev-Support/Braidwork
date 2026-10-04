@@ -39,6 +39,7 @@ import com.naua_braidwork.app.ui.icons.IcwCheck
 import com.naua_braidwork.app.ui.icons.IcwChevron
 import com.naua_braidwork.app.ui.state.RowEnd
 import com.naua_braidwork.app.ui.state.SubRow
+import com.naua_braidwork.app.ui.state.Tone
 import com.naua_braidwork.app.ui.theme.LocalBwColors
 
 /**
