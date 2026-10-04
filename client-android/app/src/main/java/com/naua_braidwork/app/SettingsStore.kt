@@ -27,7 +27,8 @@ class SettingsStore private constructor(context: Context) {
         .getSharedPreferences("braidwork", Context.MODE_PRIVATE)
 
     /** Выбранная тема. Читается один раз и дальше живёт в состоянии. */
-    var theme: ThemeChoice by mutableStateOf(ThemeChoice.from(prefs.getString(KEY_THEME, null)))        private set
+    var theme: ThemeChoice by mutableStateOf(ThemeChoice.from(prefs.getString(KEY_THEME, null)))
+        private set
 
     /** Показывалось ли приветствие. */
     var welcomeSeen: Boolean by mutableStateOf(prefs.getBoolean(KEY_WELCOME, false))
