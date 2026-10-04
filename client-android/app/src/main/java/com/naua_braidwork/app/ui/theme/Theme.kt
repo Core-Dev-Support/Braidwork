@@ -9,10 +9,12 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -131,9 +133,70 @@ private val DarkBw = BwColors(
 
 val LocalBwColors = staticCompositionLocalOf { LightBw }
 
-/** Градиент фона приложения: в каждой теме свой, в тёмной он сильно темнее. */
+/**
+ * Градиент фона приложения.
+ *
+ * Значение по умолчанию нужно только для предпросмотра и на тот случай, если
+ * кто-то прочитает `LocalAppGradient` вне темы. Настоящий считается в
+ * [BraidworkTheme] и кладётся туда же.
+ */
 val LocalAppGradient = staticCompositionLocalOf<Brush> {
     Brush.verticalGradient(listOf(LightBw.appTop, LightBw.appBottom))
+}
+
+/**
+ * Градиент фона с учётом точки, где переход заканчивается.
+ *
+ * Отдельная функция для экранов с собственным градиентом: у приветствия он
+ * другой и длиннее (420 dp), чем у обычных экранов.
+ *
+ * [stopPx] задаётся в пикселях, потому что длина перехода в макете привязана
+ * к экрану, а не к процентам.
+ */
+private fun appGradient(
+    dark: Boolean,
+    from: Color,
+    to: Color,
+    stopPx: Float,
+): Brush = if (dark) {
+    // В тёмной теме переход идёт на всю высоту: `stopAt` в токенах задан
+    // только для светлой темы.
+    Brush.verticalGradient(listOf(from, to))
+} else {
+    Brush.verticalGradient(
+        0f to from,
+        stopPx to to,
+        // Третья остановка нужна, чтобы ниже точки перехода цвет не менялся.
+        stopPx * 8f to to,
+    )
+}
+
+/** Точка, где в светлой теме заканчивается переход фона. */
+private val GradientStop = 360.dp
+
+/**
+ * Градиент фона для экрана со своими цветами.
+ *
+ * У приветствия своя пара цветов и своя длина перехода, поэтому оно не может
+ * пользоваться общим [LocalAppGradient].
+ */
+@Composable
+fun rememberCustomGradient(
+    lightFrom: Color,
+    lightTo: Color,
+    stopAt: Dp = GradientStop,
+): Brush {
+    val bw = LocalBwColors.current
+    val dark = isSystemInDarkTheme()
+    val stopPx = with(LocalDensity.current) { stopAt.toPx() }
+    return remember(bw, dark, lightFrom, lightTo, stopPx) {
+        appGradient(
+            dark = dark,
+            from = if (dark) bw.appTop else lightFrom,
+            to = if (dark) bw.appBottom else lightTo,
+            stopPx = stopPx,
+        )
+    }
 }
 
 /** Типографика из спецификации. Высота строки задана явно. */
@@ -179,7 +242,10 @@ fun BraidworkTheme(
 ) {
     val colors = if (darkTheme) DarkColors else LightColors
     val bw = if (darkTheme) DarkBw else LightBw
-    val gradient = Brush.verticalGradient(listOf(bw.appTop, bw.appBottom))
+    val stopPx = with(LocalDensity.current) { GradientStop.toPx() }
+    val gradient = remember(darkTheme, stopPx) {
+        appGradient(darkTheme, bw.appTop, bw.appBottom, stopPx)
+    }
 
     val view = LocalView.current
     if (!view.isInEditMode) {
@@ -191,7 +257,6 @@ fun BraidworkTheme(
             }
         }
     }
-
     CompositionLocalProvider(
         LocalBwColors provides bw,
         LocalAppGradient provides gradient,

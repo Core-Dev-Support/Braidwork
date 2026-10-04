@@ -52,10 +52,19 @@ fun WelcomeScreen(
     val bw = com.naua_braidwork.app.ui.theme.LocalBwColors.current
     val isDark = androidx.compose.foundation.isSystemInDarkTheme()
 
+    // У приветствия свой градиент: он голубее и длиннее, чем у остальных
+    // экранов (#DDE8F7 → #F1F2F6 за 420 dp), и это единственный экран, где
+    // приветствие должно выглядеть «свежие» обычного.
+    val gradient = com.naua_braidwork.app.ui.theme.rememberCustomGradient(
+        lightFrom = Color(0xFFDDE8F7),
+        lightTo = Color(0xFFF1F2F6),
+        stopAt = 420.dp,
+    )
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(gradient)
             .padding(horizontal = 24.dp),
     ) {
         Spacer(Modifier.height(12.dp))

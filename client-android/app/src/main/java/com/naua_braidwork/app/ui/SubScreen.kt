@@ -103,11 +103,10 @@ fun SubScreen(
     var coreToggles by remember { mutableStateOf(Toggles(emptyMap())) }
     var testsRan by remember { mutableStateOf(false) }
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-    ) {
+    // Фона у подэкрана нет: его рисует каркас приложения. Иначе каждый экран
+    // клал бы свой цвет поверх общего градиента и переход был бы виден только
+    // на верхних 360 dp.
+    Box(modifier = modifier.fillMaxSize()) {
         when (route) {
             Route.PAIR -> PairScreen(
                 mode = pairMode,

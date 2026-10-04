@@ -44,6 +44,7 @@ import com.naua_braidwork.app.ui.screens.ShareScreen
 import com.naua_braidwork.app.ui.screens.WelcomeScreen
 import com.naua_braidwork.app.ui.state.LinkMode
 import com.naua_braidwork.app.ui.state.Sample
+import com.naua_braidwork.app.ui.theme.LocalAppGradient
 
 /**
  * Разделы приложения.
@@ -111,10 +112,14 @@ fun BraidworkApp(deviceId: String, deviceName: String) {
     // Полноэкранный режим: фон рисуется под статус-бар и под системную
     // навигацию, а отступы берутся из окна. Иначе сверху остаётся полоса
     // чужого цвета и экран выглядит обрезанным.
+    //
+    // Градиент один на всё приложение, а не на каждый экран: в макете он
+    // одинаковый везде, кроме «Обмена» (чёрный), «Устройств» (свой тёмный) и
+    // приветствия. Эти три экрана кладут свой фон поверх и перекрывают его.
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(LocalAppGradient.current)
             .windowInsetsPadding(WindowInsets.systemBars),
     ) {
         Box(modifier = Modifier.weight(1f)) {

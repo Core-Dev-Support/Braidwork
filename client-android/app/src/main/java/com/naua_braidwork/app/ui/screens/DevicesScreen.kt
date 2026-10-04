@@ -44,6 +44,7 @@ import com.naua_braidwork.app.ui.state.DeviceFilter
 import com.naua_braidwork.app.ui.state.DeviceKind
 import com.naua_braidwork.app.ui.state.DeviceSummary
 import com.naua_braidwork.app.ui.state.DevicesState
+import com.naua_braidwork.app.ui.theme.LocalAppGradient
 
 /**
  * Устройства по спецификации `Devices.dc.html`.
@@ -60,12 +61,16 @@ fun DevicesScreen(
     modifier: Modifier = Modifier,
 ) {
     val isDark = isSystemInDarkTheme()
+    // Тёмный фон у «Устройств» особенный: три остановки вместо двух, средняя
+    // на 42 % высоты. В светлой теме он совпадает с общим фоном приложения.
     val background = if (isDark) {
         Brush.verticalGradient(
-            listOf(Color(0xFF3B4252), Color(0xFF2B2624), Color(0xFF1B1716)),
+            0f to Color(0xFF3B4252),
+            0.42f to Color(0xFF2B2624),
+            1f to Color(0xFF1B1716),
         )
     } else {
-        Brush.verticalGradient(listOf(Color(0xFFE3EAF4), Color(0xFFF1F2F6)))
+        LocalAppGradient.current
     }
 
     Column(
