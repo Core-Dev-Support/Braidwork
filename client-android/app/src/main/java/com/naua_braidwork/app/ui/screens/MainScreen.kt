@@ -28,6 +28,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.naua_braidwork.app.ui.components.BwCard
+import com.naua_braidwork.app.ui.components.BwSwitch
 import com.naua_braidwork.app.ui.components.EmptyHint
 import com.naua_braidwork.app.ui.components.Gap
 import com.naua_braidwork.app.ui.components.IconTile
@@ -148,25 +149,29 @@ fun MainScreen(
                 ModeRow(current = mode, onPick = onMode)
                 Gap(22.dp)
                 // Каналы «рядом» — не режимы. Режим выбирает, как искать
-                // устрой��ства, а здесь включается сам канал, и оба могут
+                // устройства, а здесь включается сам канал, и оба могут
                 // работать вместе с любым режимом. Поэтому это тумблеры, а не
                 // кружки: раньше они выглядели как режимы, и нажатие на
                 // «Точку доступа» читалось как смена режима.
-                ChannelRow(
-                    label = "Рядом (BLE)",
-                    icon = IcwBluetooth,
-                    checked = bleOn,
-                    onCheckedChange = onBleClick,
-                    modifier = Modifier.weight(1f),
-                )
-                Spacer(Modifier.width(12.dp))
-                ChannelRow(
-                    label = "Точка доступа",
-                    icon = IcwHotspot,
-                    checked = softApOn,
-                    onCheckedChange = onSoftApClick,
-                    modifier = Modifier.weight(1f),
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    ChannelRow(
+                        label = "Рядом (BLE)",
+                        icon = IcwBluetooth,
+                        checked = bleOn,
+                        onCheckedChange = onBleClick,
+                        modifier = Modifier.weight(1f),
+                    )
+                    ChannelRow(
+                        label = "Точка доступа",
+                        icon = IcwHotspot,
+                        checked = softApOn,
+                        onCheckedChange = onSoftApClick,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
         }
 
@@ -341,8 +346,6 @@ private fun ModeRow(current: LinkMode, onPick: (LinkMode) -> Unit) {
     }
 }
 
-/** Кнопка резервного канала. Недоступная остаётся видимой, но не нажимается. */
-@Composable
 /**
  * Канал «рядом»: иконка, подпись и тумблер.
  *
