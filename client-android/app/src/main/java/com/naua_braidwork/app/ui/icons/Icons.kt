@@ -104,6 +104,34 @@ val IcwMore: ImageVector by lazy {
     bwIcon("more", "M5 12h.01M12 12h.01M19 12h.01", 3f)
 }
 
+val IcwUpload: ImageVector by lazy {
+    bwIcon("upload", "M12 16V5M7 10l5-5 5 5M5 20h14", 2f)
+}
+
+val IcwChevron: ImageVector by lazy {
+    bwIcon("chevron", "M9 6l6 6-6 6", 2f)
+}
+
+val IcwShield: ImageVector by lazy {
+    bwIcon("shield", "M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6zM9 12l2 2 4-4")
+}
+
+val IcwPower: ImageVector by lazy {
+    bwIcon("power", "M12 3v9M7 6.5a7.5 7.5 0 1 0 10 0")
+}
+
+val IcwMoon: ImageVector by lazy {
+    bwIcon("moon", "M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z")
+}
+
+val IcwCpu: ImageVector by lazy {
+    bwIcon("cpu", "M8 7h8a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1zM10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4")
+}
+
+val IcwInfo: ImageVector by lazy {
+    bwIcon("info", "M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0M12 11v6M12 7.5v.5", 2f)
+}
+
 val IcwHome: ImageVector by lazy {
     bwIcon("home", "M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z")
 }

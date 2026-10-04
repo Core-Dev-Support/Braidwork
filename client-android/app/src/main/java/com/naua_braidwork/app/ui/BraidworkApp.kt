@@ -29,7 +29,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.naua_braidwork.app.ui.components.EmptyHint
 import com.naua_braidwork.app.ui.icons.IcwDevices
 import com.naua_braidwork.app.ui.icons.IcwFamily
 import com.naua_braidwork.app.ui.icons.IcwHome
@@ -42,11 +41,14 @@ import com.naua_braidwork.app.ui.state.Sample
 /**
  * Разделы приложения.
  *
+ * Приветствия здесь нет намеренно: это разовый экран, а не раздел. Иначе оно
+ * занимало бы место в нижнем меню и открывалось по тапу, что противоречит
+ * смыслу: показать его нужно один раз, при первом запуске.
+ *
  * Перечисление, а не набор строк в разметке: раздел — это ещё и маршрут,
  * и подпись, и иконка. Списком таких строк они разъезжаются уже на третьем.
  */
 enum class Tab(val route: String, val label: String, val icon: ImageVector) {
-    Welcome("welcome", "Приветствие", IcwHome),
     Home("home", "Главная", IcwHome),
     Devices("devices", "Устройства", IcwDevices),
     Share("share", "Обмен", IcwFamily),
@@ -64,12 +66,25 @@ enum class Tab(val route: String, val label: String, val icon: ImageVector) {
 fun BraidworkApp(deviceId: String, deviceName: String) {
     val state = remember(deviceId) { Sample.mainState(deviceId, deviceName) }
 
-    // Приветствие показывается один раз за сеанс: после перезапуска появится
-    // снова, пока нет постоянного хранилища настроек.
-    val startTab = remember {
-        if (Sample.seenWelcome()) Tab.Home else Tab.Welcome
+    // Приветствие — разовый экран, а не раздел: пока флаг не выставлен,
+    // нижнего меню нет вообще. Это отличает его от обычного экрана приложения.
+    var welcomeDone by remember { mutableStateOf(Sample.seenWelcome()) }
+    var tab by remember { mutableStateOf(Tab.Home) }
+
+    if (!welcomeDone) {
+        WelcomeScreen(
+            onCreateFamily = {
+                Sample.markWelcomeSeen()
+                welcomeDone = true
+            },
+            onJoinByQr = {
+                Sample.markWelcomeSeen()
+                welcomeDone = true
+                tab = Tab.Devices
+            },
+        )
+        return
     }
-    var tab by remember { mutableStateOf(startTab) }
 
     // Полноэкранный режим: фон рисуется под статус-бар и под системную
     // навигацию, а отступы берутся из окна. Иначе сверху остаётся полоса
@@ -82,17 +97,6 @@ fun BraidworkApp(deviceId: String, deviceName: String) {
     ) {
         Box(modifier = Modifier.weight(1f)) {
             when (tab) {
-                Tab.Welcome -> WelcomeScreen(
-                    onCreateFamily = {
-                        Sample.markWelcomeSeen()
-                        tab = Tab.Home
-                    },
-                    onJoinByQr = {
-                        Sample.markWelcomeSeen()
-                        tab = Tab.Devices
-                    },
-                )
-
                 Tab.Home -> MainScreen(
                     state = state,
                     onPairClick = { tab = Tab.Devices },
@@ -107,57 +111,44 @@ fun BraidworkApp(deviceId: String, deviceName: String) {
                     state = Sample.devicesState(),
                     onFilter = { tab = Tab.Devices },
                     onAdd = { tab = Tab.Devices },
-                    onDevice = { },
+                    onDevice = { tab = Tab.Devices },
                 )
 
-                else -> PlaceholderScreen(tab)
+                Tab.Share -> ShareScreen(
+                    onQuickAction = { },
+                )
+
+                Tab.Family -> FamilyScreen(
+                    members = Sample.familyState(),
+                )
+
+                Tab.Settings -> SettingsScreen(
+                    groups = Sample.settingsGroups(),
+                    deviceName = deviceName,
+                    role = "Владелец устройства",
+                    // Показываем начало и конец, а не полный идентификатор:
+                    // на экране его достаточно для сверки, целиком он не нужен.
+                    deviceIdShort = shortenId(deviceId),
+                    onOpen = { },
+                    onOpenProfile = { tab = Tab.Family },
+                )
             }
         }
 
-        if (tab != Tab.Welcome) {
-            BottomBar(current = tab, onSelect = { tab = it })
-        }
+        BottomBar(current = tab, onSelect = { tab = it })
     }
 }
 
 /**
- * Заглушка раздела.
+ * Короткая запись идентификатора: первые и последние четыре символа.
  *
- * Показывает, что раздел существует и что внутри ещё ничего не работает.
- * Это лучше пустого белого экрана: пользователь видит, что это отложенная
- * работа, а не сбой.
+ * На карточке профиля полный идентификатор не нужен: для сверки хватает краёв,
+ * а строки длиннее экрана он всё равно не покажет целиком.
  */
-@Composable
-private fun PlaceholderScreen(tab: Tab) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 24.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Text(
-            text = tab.label,
-            style = MaterialTheme.typography.displaySmall,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surface,
-        ) {
-            Column(modifier = Modifier.padding(20.dp)) {
-                EmptyHint("Экран по спецификации готов, наполнение ждёт функции")
-                Text(
-                    text = "Раздел «${tab.label}» будет сделан сразу после того, " +
-                        "как появится то, что он показывает. Пустой экран или " +
-                        "выдуманные данные были бы хуже: ими пришлось бы врать.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 8.dp, start = 12.dp),
-                )
-            }
-        }
-    }
+private fun shortenId(id: String): String {
+    val letters = id.filter { it.isLetterOrDigit() }
+    if (letters.length <= 10) return id
+    return "${letters.take(4)}…${letters.takeLast(4)}"
 }
 
 /**
