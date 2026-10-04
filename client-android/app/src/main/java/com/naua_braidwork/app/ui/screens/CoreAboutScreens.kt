@@ -60,7 +60,7 @@ import com.naua_braidwork.app.ui.state.withToggleValues
 import com.naua_braidwork.app.ui.theme.LocalBwColors
 
 /**
- * Ядро и диагностика по спецификации `Core.dc.html`.
+ * Ядро и диагностика по спецификации `design/spec/SPEC.txt`.
  *
  * Сведения о сборке настоящие: они выведены из того, что CI действительно
  * собирает и проверяет. Кнопка запуска проверки двух устройств ничего не
@@ -251,7 +251,7 @@ private fun TestRow(test: CoreTest) {
     }
 }
 
-/** О приложении по спецификации `About.dc.html`. */
+/** О приложении по спецификации `design/spec/SPEC.txt`. */
 @Composable
 fun AboutScreen(
     state: AboutState,
@@ -371,7 +371,7 @@ fun AboutScreen(
     }
 }
 
-/** Этапы разработки по спецификации `Roadmap.dc.html`. */
+/** Этапы разработки по спецификации `design/spec/SPEC.txt`. */
 @Composable
 fun RoadmapScreen(
     steps: List<RoadmapStep>,
@@ -504,7 +504,7 @@ private fun LinkRow(text: String, onClick: () -> Unit) {
 }
 
 /**
- * Карточка устройства по спецификации `DeviceDetail.dc.html`.
+ * Карточка устройства по спецификации `design/spec/SPEC.txt`.
  *
  * Экран включается, как только в списке появится хоть одно устройство: сейчас
  * их нет, и показывать карточку выдуманного устройства было бы враньём.

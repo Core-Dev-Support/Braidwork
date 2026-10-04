@@ -20,7 +20,7 @@ import com.naua_braidwork.app.ui.state.Tone
 import com.naua_braidwork.app.ui.state.withToggleValues
 
 /**
- * Сеть и соединение по спецификации `Network.dc.html`.
+ * Сеть и соединение по спецификации `design/spec/SPEC.txt`.
  *
  * Режим подключения — общий с главным экраном, поэтому выбранный вариант
  * приходит снаружи и меняет там же: два экрана не должны показывать разное.

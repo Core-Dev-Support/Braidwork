@@ -20,7 +20,7 @@ import com.naua_braidwork.app.ui.state.Tone
 import com.naua_braidwork.app.ui.state.withToggleValues
 
 /**
- * Безопасность и ключи по спецификации `Security.dc.html`.
+ * Безопасность и ключи по спецификации `design/spec/SPEC.txt`.
  *
  * Экран — это карточка состояния и группы строк, поэтому здесь только
  * перечисление: всё общее живёт в компонентах.

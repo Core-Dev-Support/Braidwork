@@ -40,7 +40,7 @@ import com.naua_braidwork.app.ui.state.AppearanceState
 import com.naua_braidwork.app.ui.state.SubRow
 
 /**
- * Внешний вид и язык по спецификации `Appearance.dc.html`.
+ * Внешний вид и язык по спецификации `design/spec/SPEC.txt`.
  *
  * Выбор сохраняется и сразу показывается, но не применяется: тема по-прежнему
  * следует за системной, потому что постоянного хранилища настроек ещё нет.

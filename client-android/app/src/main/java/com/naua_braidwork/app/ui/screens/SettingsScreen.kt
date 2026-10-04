@@ -34,7 +34,7 @@ import com.naua_braidwork.app.ui.state.SettingsGroup
 import com.naua_braidwork.app.ui.state.SettingsRow
 
 /**
- * Настройки по спецификации `Settings.dc.html`.
+ * Настройки по спецификации `design/spec/SPEC.txt`.
  *
  * Значения справа показывают фактическое состояние, а не из макета: например
  * «Фоновая работа — Не проверена», а не «Активна». На экране, который

@@ -35,7 +35,7 @@ import com.naua_braidwork.app.ui.state.FamilyMember
 import com.naua_braidwork.app.ui.theme.LocalBwColors
 
 /**
- * Семья по спецификации `Family.dc.html`.
+ * Семья по спецификации `design/spec/SPEC.txt`.
  *
  * Название семьи и состав участников пока не подставляются: пока нет ввода
  * устройств, любое имя было бы выдумкой на экране, который показывают людям.

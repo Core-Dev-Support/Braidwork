@@ -47,7 +47,7 @@ import com.naua_braidwork.app.ui.state.DevicesState
 import com.naua_braidwork.app.ui.theme.LocalAppGradient
 
 /**
- * Устройства по спецификации `Devices.dc.html`.
+ * Устройства по спецификации `design/spec/SPEC.txt`.
  *
  * Экран тёмный в обеих темах: так задано в макете градиентом. Светлая тема
  * его не отменяет — иначе плитки на светлом фоне выглядят выключенными.

@@ -47,7 +47,7 @@ import com.naua_braidwork.app.ui.state.QuickAction
 import com.naua_braidwork.app.ui.theme.LocalBwColors
 
 /**
- * Главный экран по спецификации `Main.dc.html`.
+ * Главный экран по спецификации `design/spec/SPEC.txt`.
  *
  * Порядок блоков и размеры взяты из макета: заголовок со счётчиком устройств,
  * строка канала, карточка своего устройства с тремя режимами связи, две кнопки

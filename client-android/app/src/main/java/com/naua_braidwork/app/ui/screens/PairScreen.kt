@@ -37,7 +37,7 @@ import com.naua_braidwork.app.ui.icons.IcwLockPad
 private data class Step(val n: String, val title: String, val sub: String)
 
 /**
- * Сопряжение по QR-коду по спецификации `Pair.dc.html`.
+ * Сопряжение по QR-коду по спецификации `design/spec/SPEC.txt`.
  *
  * Отличие от макета одно, и оно осознанное: сам QR-код не рисуется. Нарисовать
  * случайные квадраты — значит показать код, который невозможно распознать;

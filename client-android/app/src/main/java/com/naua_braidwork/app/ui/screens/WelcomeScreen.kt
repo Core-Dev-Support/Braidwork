@@ -37,7 +37,7 @@ import com.naua_braidwork.app.ui.icons.IcwSync
 import com.naua_braidwork.app.ui.icons.IcwTablet
 
 /**
- * Приветствие по спецификации `Welcome.dc.html`.
+ * Приветствие по спецификации `design/spec/SPEC.txt`.
  *
  * Иллюстрация нарисована на Canvas из тех же координат, что и SVG в макете:
  * четыре устройства вокруг центра, соединённые пунктирными линиями.

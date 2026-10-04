@@ -38,7 +38,7 @@ import com.naua_braidwork.app.ui.icons.IcwPlus
 import com.naua_braidwork.app.ui.icons.IcwUpload
 
 /**
- * Обмен по спецификации `Share.dc.html`.
+ * Обмен по спецификации `design/spec/SPEC.txt`.
  *
  * Экран тёмный в обеих темах: так задано в макете, фон `#000000`.
  * Три кольца активности рисуются на Canvas из тех же радиусов и дуг.

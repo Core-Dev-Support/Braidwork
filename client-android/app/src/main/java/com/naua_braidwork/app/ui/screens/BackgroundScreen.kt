@@ -46,7 +46,7 @@ import com.naua_braidwork.app.ui.state.withToggleValues
 import com.naua_braidwork.app.ui.theme.LocalBwColors
 
 /**
- * Фоновая работа по спецификации `Background.dc.html`.
+ * Фоновая работа по спецификации `design/spec/SPEC.txt`.
  *
  * Названия шагов различаются у Xiaomi, Samsung, Huawei, Realme и прочих
  * оболочек, поэтому шаги приходят для выбранного бренда, а не хранятся здесь.
