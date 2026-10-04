@@ -132,6 +132,29 @@ val IcwInfo: ImageVector by lazy {
     bwIcon("info", "M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0M12 11v6M12 7.5v.5", 2f)
 }
 
+/** Стрелка назад. Зеркало шеврона: вверх-вправо против вправо-вниз. */
+val IcwBack: ImageVector by lazy {
+    bwIcon("back", "M15 6l-6 6 6 6", 1.9f)
+}
+
+val IcwCheck: ImageVector by lazy {
+    bwIcon("check", "M5 12l4 4 10-10", 3f)
+}
+
+val IcwWarn: ImageVector by lazy {
+    bwIcon("warn", "M12 4l9 16H3zM12 10v4M12 17v.5")
+}
+
+/** Ползунки: две строки с ручками. Открывает настройки системы. */
+val IcwSliders: ImageVector by lazy {
+    bwIcon("sliders", "M4 7h9M17 7h3M4 17h3M11 17h9M13 7a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7 17a2 2 0 1 0 4 0a2 2 0 1 0-4 0", 1.9f)
+}
+
+/** Замок с дугой: поясняющая плашка о ключах. */
+val IcwLockPad: ImageVector by lazy {
+    bwIcon("lockpad", "M7 11h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2zM8 11V8a4 4 0 0 1 8 0v3", 1.9f)
+}
+
 val IcwHome: ImageVector by lazy {
     bwIcon("home", "M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z")
 }

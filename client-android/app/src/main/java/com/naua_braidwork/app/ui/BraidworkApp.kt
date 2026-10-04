@@ -21,6 +21,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -29,16 +30,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.BackHandler
 import com.naua_braidwork.app.ui.icons.IcwDevices
 import com.naua_braidwork.app.ui.icons.IcwFamily
 import com.naua_braidwork.app.ui.icons.IcwHome
 import com.naua_braidwork.app.ui.icons.IcwSettings
+import com.naua_braidwork.app.ui.icons.IcwSync
 import com.naua_braidwork.app.ui.screens.DevicesScreen
 import com.naua_braidwork.app.ui.screens.FamilyScreen
 import com.naua_braidwork.app.ui.screens.MainScreen
 import com.naua_braidwork.app.ui.screens.SettingsScreen
 import com.naua_braidwork.app.ui.screens.ShareScreen
 import com.naua_braidwork.app.ui.screens.WelcomeScreen
+import com.naua_braidwork.app.ui.state.LinkMode
 import com.naua_braidwork.app.ui.state.Sample
 
 /**
@@ -54,7 +58,7 @@ import com.naua_braidwork.app.ui.state.Sample
 enum class Tab(val route: String, val label: String, val icon: ImageVector) {
     Home("home", "Главная", IcwHome),
     Devices("devices", "Устройства", IcwDevices),
-    Share("share", "Обмен", IcwFamily),
+    Share("share", "Обмен", IcwSync),
     Family("family", "Семья", IcwFamily),
     Settings("settings", "Настройки", IcwSettings),
 }
@@ -74,6 +78,20 @@ fun BraidworkApp(deviceId: String, deviceName: String) {
     var welcomeDone by remember { mutableStateOf(Sample.seenWelcome()) }
     var tab by remember { mutableStateOf(Tab.Home) }
 
+    // Режим связи общий для главного экрана и «Сети»: держать его в обоих
+    // местах значило бы показывать пользователю два разных ответа на один
+    // и тот же вопрос.
+    var mode by remember { mutableStateOf(state.mode) }
+
+    // Стек открытых подэкранов. Пустой — мы в разделе; непустой — поверх него
+    // открыт подэкран, и последний элемент тот, что на экране.
+    val stack = remember { mutableStateListOf<String>() }
+    val route = stack.lastOrNull()
+    val openSystemSettings = rememberSystemSettingsOpener()
+
+    // Системная кнопка «назад» закрывает подэкран, а не выходит из приложения.
+    BackHandler(enabled = stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
+
     if (!welcomeDone) {
         WelcomeScreen(
             onCreateFamily = {
@@ -84,6 +102,7 @@ fun BraidworkApp(deviceId: String, deviceName: String) {
                 Sample.markWelcomeSeen()
                 welcomeDone = true
                 tab = Tab.Devices
+                stack.add(Route.PAIR)
             },
         )
         return
@@ -99,49 +118,72 @@ fun BraidworkApp(deviceId: String, deviceName: String) {
             .windowInsetsPadding(WindowInsets.systemBars),
     ) {
         Box(modifier = Modifier.weight(1f)) {
-            when (tab) {
-                Tab.Home -> MainScreen(
-                    state = state,
-                    onPairClick = { tab = Tab.Devices },
-                    onNotificationsClick = { tab = Tab.Share },
-                    onQuickAction = { tab = Tab.Home },
-                    onChannelClick = { tab = Tab.Settings },
-                    onBleClick = { tab = Tab.Settings },
-                    onSoftApClick = { tab = Tab.Settings },
+            if (route != null) {
+                SubScreen(
+                    route = route,
+                    deviceId = deviceId,
+                    mode = mode,
+                    onMode = { mode = it },
+                    onBack = { stack.removeAt(stack.lastIndex) },
+                    onRow = { },
+                    onOpenSystemSettings = openSystemSettings,
                 )
+            } else {
+                when (tab) {
+                    Tab.Home -> MainScreen(
+                        state = state,
+                        mode = mode,
+                        onMode = { mode = it },
+                        onPairClick = { stack.add(Route.PAIR) },
+                        onNotificationsClick = { tab = Tab.Share },
+                        onQuickAction = { tab = Tab.Home },
+                        onChannelClick = { tab = Tab.Settings; stack.add(Route.NETWORK) },
+                        onBleClick = { tab = Tab.Settings; stack.add(Route.NETWORK) },
+                        onSoftApClick = { tab = Tab.Settings; stack.add(Route.NETWORK) },
+                    )
 
-                Tab.Devices -> DevicesScreen(
-                    state = Sample.devicesState(),
-                    onFilter = { tab = Tab.Devices },
-                    onAdd = { tab = Tab.Devices },
-                    onDevice = { tab = Tab.Devices },
-                )
+                    Tab.Devices -> DevicesScreen(
+                        state = Sample.devicesState(),
+                        onFilter = { tab = Tab.Devices },
+                        onAdd = { stack.add(Route.PAIR) },
+                        onDevice = { tab = Tab.Devices },
+                    )
 
-                Tab.Share -> ShareScreen(
-                    onQuickAction = { },
-                )
+                    Tab.Share -> ShareScreen(
+                        onQuickAction = { },
+                        onAddDevice = { stack.add(Route.PAIR) },
+                    )
 
-                Tab.Family -> FamilyScreen(
-                    members = Sample.familyState(),
-                    onInvite = { tab = Tab.Devices },
-                )
+                    Tab.Family -> FamilyScreen(
+                        members = Sample.familyState(),
+                        onInvite = { stack.add(Route.PAIR) },
+                    )
 
-                Tab.Settings -> SettingsScreen(
-                    groups = Sample.settingsGroups(),
-                    deviceName = deviceName,
-                    role = "Владелец устройства",
-                    // Показываем начало и конец, а не полный идентификатор:
-                    // на экране его достаточно для сверки, целиком он не нужен.
-                    deviceIdShort = shortenId(deviceId),
-                    onOpen = { },
-                    onOpenProfile = { tab = Tab.Family },
-                )
+                    Tab.Settings -> SettingsScreen(
+                        groups = Sample.settingsGroups(),
+                        deviceName = deviceName,
+                        role = "Владелец устройства",
+                        // Показываем начало и конец, а не полный идентификатор:
+                        // на экране его достаточно для сверки, целиком он не нужен.
+                        deviceIdShort = shortenId(deviceId),
+                        // Открываем только те подэкраны, которые уже собраны.
+                        // Остальные строки пока не ведут никуда: лучше ничего,
+                        // чем экран-заглушка на месте настоящего.
+                        onOpen = { id -> if (id in OPEN_ROUTES) stack.add(id) },
+                        onOpenProfile = { tab = Tab.Family },
+                    )
+                }
             }
         }
 
-        BottomBar(current = tab, onSelect = { tab = it })
+        if (route == null) {
+            BottomBar(current = tab, onSelect = { tab = it })
+        }
     }
 }
+
+/** Подэкраны, которые уже готовы: настройки ведут только в эти строки. */
+private val OPEN_ROUTES = setOf(Route.NETWORK, Route.SECURITY, Route.BACKGROUND)
 
 /**
  * Короткая запись идентификатора: первые и последние четыре символа.

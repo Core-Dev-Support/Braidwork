@@ -21,10 +21,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -60,6 +56,8 @@ import com.naua_braidwork.app.ui.theme.LocalBwColors
 @Composable
 fun MainScreen(
     state: MainState,
+    mode: LinkMode,
+    onMode: (LinkMode) -> Unit,
     onPairClick: () -> Unit,
     onNotificationsClick: () -> Unit,
     onQuickAction: (QuickAction) -> Unit,
@@ -68,7 +66,6 @@ fun MainScreen(
     onSoftApClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var mode by remember { mutableStateOf(state.mode) }
 
     LazyColumn(
         modifier = modifier
@@ -145,7 +142,7 @@ fun MainScreen(
             BwCard(radius = 28.dp, paddingHorizontal = 12.dp) {
                 ThisDeviceBlock(state)
                 Gap(22.dp)
-                ModeRow(current = mode, onPick = { mode = it })
+                ModeRow(current = mode, onPick = onMode)
                 Gap(22.dp)
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),

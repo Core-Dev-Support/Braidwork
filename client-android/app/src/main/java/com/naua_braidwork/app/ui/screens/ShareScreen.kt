@@ -46,6 +46,7 @@ import com.naua_braidwork.app.ui.icons.IcwUpload
 @Composable
 fun ShareScreen(
     onQuickAction: (String) -> Unit,
+    onAddDevice: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val orange = Color(0xFFFF6A1F)
@@ -71,9 +72,9 @@ fun ShareScreen(
             )
             Box(
                 modifier = Modifier
-                    .size(40.dp)
-                    .background(Color.Transparent, RoundedCornerShape(20.dp))
-                    .clickable { },
+                    .size(44.dp)
+                    .background(Color.Transparent, RoundedCornerShape(22.dp))
+                    .clickable(onClick = onAddDevice),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(

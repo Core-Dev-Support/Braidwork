@@ -82,6 +82,11 @@ data class BwColors(
     /** Фон кнопки-режима в невыбранном состоянии. */
     val modeIdle: Color,
     val active: Color,
+    /** Дорожка выключенного переключателя: серая в обеих темах. */
+    val trackOff: Color,
+    /** Подложка поясняющей плашки и текст на ней. */
+    val infoBg: Color,
+    val infoFg: Color,
 )
 
 private val LightBw = BwColors(
@@ -99,6 +104,9 @@ private val LightBw = BwColors(
     onChip = Color(0xFFFFFFFF),
     modeIdle = Color(0xFFEDEDF0),
     active = Color(0xFF2B8CF5),
+    trackOff = Color(0xFFA4A7B2),
+    infoBg = Color(0xFFE4F1FF),
+    infoFg = Color(0xFF14498F),
 )
 
 private val DarkBw = BwColors(
@@ -116,6 +124,9 @@ private val DarkBw = BwColors(
     onChip = Color(0xFFEDEFF5),
     modeIdle = Color(0xFF2E3340),
     active = Color(0xFF5B9BF5),
+    trackOff = Color(0xFF5A5F6B),
+    infoBg = Color(0xFF16243A),
+    infoFg = Color(0xFF9CC3F5),
 )
 
 val LocalBwColors = staticCompositionLocalOf { LightBw }
