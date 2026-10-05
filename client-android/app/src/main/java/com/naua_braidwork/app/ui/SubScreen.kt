@@ -119,7 +119,10 @@ fun SubScreen(
      * показывать «192.168.1.42:42424» в списке незачем, а разбирать это обратно
      * из подписи — значит завести второй источник правды о том же устройстве.
      */
-    devices: List<com.naua_braidwork.app.DeviceDiscovery.Device> = emptyList(),
+"    devices: List<com.naua_braidwork.app.DeviceDiscovery.Device> = emptyList(),
+
+    /** Ход подключения для показа в карточке. Пустой список — событий не было. */
+    trail: List<String> = emptyList(),"
     modifier: Modifier = Modifier,
 ) {
     // Значения переключателей живут здесь, а не в описании экрана: описание
@@ -274,6 +277,7 @@ fun SubScreen(
                             address = найденное?.ipv4?.joinToString(".") { (it.toInt() and 0xFF).toString() }
                                 ?: "—",
                             port = найденное?.port ?: 0,
+                            trail = trail,
                         ),
                         onBack = onBack,
                         onMore = { onRow(Route.DEVICE) },

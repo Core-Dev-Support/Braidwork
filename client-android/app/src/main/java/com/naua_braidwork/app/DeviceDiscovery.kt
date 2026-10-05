@@ -67,8 +67,27 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
         }
     }
 
-    /** Что происходит с каналом. */
-    enum class State { ОСТАНОВЛЕН, ЗАПУСКАЕТСЯ, РАБОТАЕТ, ОШИБКА }
+    /**
+     * Что происходило с подключениями, последние шаги.
+     *
+     * Показывается пользователю в карточке устройства. Причина не в удобстве:
+     * журнал ядра и клиента читается только с кабелем, а на телефоне из рук
+     * пользователя подключение либо работает, либо нет — и без этой полосы
+     * «не работает» неотличимо от «не нажали» или «нажали не туда».
+     *
+     * Новые записи сверху, старые снизу, глубина ограничена: полоса не должна
+     * расти без конца и выталкивать карточку за экран.
+     */
+    private val след = java.util.concurrent.CopyOnWriteArrayList<String>()
+
+    private fun записать(строка: String) {
+        Log.i(TAG, строка)
+        if (след.size >= ГЛУБИНА_СЛЕДА) след.removeAt(след.size - 1)
+        след.add(0, строка)
+    }
+
+    /** Последние шаги подключения, новые сверху. */
+    fun trail(): List<String> = след.toList()
 
     /**
      * Устройство исчезает из списка через столько миллисекунд с последнего
@@ -176,14 +195,14 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
     fun connect(устройство: Device) {
         val id = устройство.deviceId.toHex()
         if (соединения.values.contains(id)) {
-            Log.i(TAG, "соединение с $id уже есть")
+            записать("соединение с $id уже есть")
             return
         }
         if (просьбы.contains(устройство)) {
-            Log.i(TAG, "просьба о $id уже в очереди")
+            записать("просьба о $id уже в очереди")
             return
         }
-        Log.i(TAG, "просьба подключиться к $id на порт ${устройство.port}")
+        записать("просьба: подключиться к $id на порт ${устройство.port}")
         просьбы.add(устройство)
     }
 
@@ -200,13 +219,13 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
             try {
                 val conn = BraidworkCore.transportConnect(h, устройство.ipv4, устройство.port)
                 соединения[conn] = id
-                Log.i(TAG, "соединение $conn с $id открыто, ждём рукопожатие")
+                записать("соединение $conn открыто, ждём рукопожатие")
             } catch (e: Exception) {
                 // Причина показывается пользователю, а не только пишется в
                 // журнал: иначе нажатие выглядело бы как ничего не сделавшее,
                 // а это самый обидный вид поломки — пользователь не знает, куда
                 // смотреть.
-                Log.w(TAG, "подключение к $id не удалось", e)
+                записать("подключение к $id НЕ удалось: ${e.message}")`r`n                Log.w(TAG, "подключение к $id не удалось", e)
                 publish(снимки.get().copy(problem = "не удалось подключиться: ${e.message}"))
             }
         }
@@ -265,11 +284,11 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
             val port = BraidworkCore.transportPort(h)
             состояние = if (port != 0) State.РАБОТАЕТ else State.ОШИБКА
 
-            publish(Snapshot(emptyList(), port, port != 0, ""))
+            записать("канал поднят, порт $port")`r`n            publish(Snapshot(emptyList(), port, port != 0, ""))
             true
         } catch (e: Exception) {
             состояние = State.ОШИБКА
-            publish(Snapshot(emptyList(), 0, false, e.message ?: "канал не поднялся"))
+            записать("канал НЕ поднялся: ${e.message}")`r`n            publish(Snapshot(emptyList(), 0, false, e.message ?: "канал не поднялся"))
             false
         }
     }
@@ -316,11 +335,13 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
                 // после сверки Hello, и это следующий шаг.
                 is BraidworkCore.TransportEvent.Connected -> {
                     val id = соединения[событие.conn] ?: continue
+                    записать("рукопожатие прошло с ")
                     прежние[id]?.let { прежние[id] = it.copy(connected = true) }
                 }
 
                 is BraidworkCore.TransportEvent.Closed -> {
                     val id = соединения.remove(событие.conn) ?: continue
+                    записать("соединение с  закрыто")
                     прежние[id]?.let { прежние[id] = it.copy(connected = false) }
                 }
 
@@ -395,7 +416,7 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
     }
 
     private companion object {
-        const val TAG = "BraidworkDiscovery"
+        const val TAG = "BraidworkDiscovery"`r`n`r`n        /** Сколько шагов подключения хранить. Глубже бесполезно: событий столько же. */`r`n        const val ГЛУБИНА_СЛЕДА = 8
 
         /**
          * Событий за один опрос.

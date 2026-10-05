@@ -111,30 +111,35 @@ fun BraidworkApp(
     var welcomeDone by remember { mutableStateOf(settings.welcomeSeen) }
     var tab by remember { mutableStateOf(Tab.Home) }
 
-    // Устройства из канала локальной сети. Опрос идёт в своём потоке внутри
-    // [DeviceDiscovery], а снимок сюда приходит по таймеру: подписка на поток
+    // Канал поиска. Значение **перечитывается**, а не запоминается один раз.
+    //
+    // Сервис создаётся системой позже, чем Activity, поэтому при первой
+    // композиции `LinkService.поиск` ещё `null`. С `remember` это значение
+    // застывало бы навсегда, и весь поиск молча перестал бы работать: список
+    // пустой, нажатие ничего не делает, ошибок нет.
+    val поиск = remember { mutableStateOf(LinkService.поиск) }
+
+    // Снимок того, что канал видит. Обновляется по таймеру: подписка на поток
     // означала бы перерисовку экрана из фонового потока, а Compose этого не
     // любит.
-    //
+    val снимок = remember { mutableStateOf(DeviceDiscovery.Snapshot.EMPTY) }
+
     // Фильтр живёт здесь, а не в состоянии экрана: тот пересоздаётся на каждой
     // перерисовке, и нажатия бы терялись.
     var filter by remember { mutableStateOf(DeviceFilter.All) }
-    val поиск = remember { LinkService.поиск }
-    val снимок = remember { mutableStateOf(DeviceDiscovery.Snapshot.EMPTY) }
 
-    // Устройство, открытое на карточке. Хранится отдельно от списка: список
-    // пересобирается каждые две секунды, и карточка открытого устройства
-    // закрылась бы сама, как только пришло следующее объявление.
-    var выбранное by remember { mutableStateOf<DeviceSummary?>(null) }
-
-    LaunchedEffect(поиск) {
-        // Канал поднимается в сервисе, а не здесь: он обязан пережить сворачивание
-        // приложения. Пока сервис не начал, список честно пуст.
+    LaunchedEffect(Unit) {
+        // Сервис поднимает канал, а не этот экран: он обязан пережить
+        // сворачивание. Пока сервис не начал, список честно пуст — и список
+        // берётся заново, как только канал появится.
         while (isActive) {
-            снимок.value = поиск?.snapshot() ?: DeviceDiscovery.Snapshot.EMPTY
+            val свежий = LinkService.поиск
+            if (поиск.value !== свежий) поиск.value = свежий
+            снимок.value = свежий?.snapshot() ?: DeviceDiscovery.Snapshot.EMPTY
             delay(ОПРОС_СНИМКА_МС)
         }
     }
+
 
     val devicesState = remember(снимок.value, filter) {
         DevicesState(
@@ -243,6 +248,7 @@ fun BraidworkApp(
                     onOpenListenerSettings = openListenerSettings,
                     selectedDevice = выбранное,
                     devices = снимок.value.devices,
+                    trail = поиск.value?.trail() ?: emptyList(),
                 )
             } else {
                 when (tab) {
@@ -291,10 +297,10 @@ fun BraidworkApp(
                             // показа: адрес напарника есть только в первом, а
                             // выковывать его из подписи значило бы разбирать
                             // обратно то, что ядро уже разобрало.
-                            поиск?.let { поиск ->
+                            поиск.value?.let { поиск ->
                                 снимок.value.devices
                                     .firstOrNull { it.deviceId.toHex() == device.id }
-                                    ?.let { поиск.connect(it) }
+                                    ?.let { поиск.value.connect(it) }
                             }
                         },
                     )

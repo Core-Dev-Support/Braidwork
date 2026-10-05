@@ -638,6 +638,7 @@ object Sample {
         device: DeviceSummary,
         address: String,
         port: Int,
+        trail: List<String> = emptyList(),
     ): DeviceDetailState = DeviceDetailState(
         name = device.name,
         statusLine = when (device.presence) {
@@ -655,16 +656,36 @@ object Sample {
         groups = listOf(
             SubGroup(
                 title = "О устройстве",
-                rows = listOf(
+                rows = buildList {
                     // Идентификатор известен из объявления и постоянен — в отличие
                     // от платформы и заряда, которые придут только с кадрами.
-                    SubRow("id", "Идентификатор", "", RowEnd.Value(device.id.take(8).uppercase())),
-                    SubRow("address", "Адрес", "", RowEnd.Value("$address:$port")),
-                    SubRow("platform", "Платформа", "", RowEnd.Value("—")),
-                    SubRow("core", "Версия ядра", "", RowEnd.Value("—")),
-                    SubRow("fingerprint", "Отпечаток ключа", "", RowEnd.Value("—")),
-                    SubRow("trust", "Доверие", "", RowEnd.Chevron),
-                ),
+                    add(SubRow("id", "Идентификатор", "", RowEnd.Value(device.id.take(8).uppercase())))
+                    add(SubRow("address", "Адрес", "", RowEnd.Value("$address:$port")))
+                    add(SubRow("platform", "Платформа", "", RowEnd.Value("—")))
+                    add(SubRow("core", "Версия ядра", "", RowEnd.Value("—")))
+                    add(SubRow("fingerprint", "Отпечаток ключа", "", RowEnd.Value("—")))
+                    add(SubRow("trust", "Доверие", "", RowEnd.Chevron))
+                },
+            ),
+            // Ход подключения показывается пользователю.
+            //
+            // Не отладочный вывод, а способ понять, что произошло: без него
+            // «нажал и ничего не случилось» неотличимо от «нажал не туда».
+            // Записи идут от свежих к старым, поэтому первая — последняя по времени.
+            SubGroup(
+                title = "Что происходит",
+                rows = if (trail.isEmpty()) {
+                    listOf(SubRow("trail", "Подключение", "", RowEnd.Value("—")))
+                } else {
+                    trail.mapIndexed { индекс, строка ->
+                        SubRow(
+                            "trail$индекс",
+                            if (индекс == 0) "Подключение" else " ",
+                            "",
+                            RowEnd.Value(строка),
+                        )
+                    }
+                },
             ),
             SubGroup(
                 title = "Управление",
