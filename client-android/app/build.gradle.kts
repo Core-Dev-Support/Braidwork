@@ -20,7 +20,11 @@ val версияИзТега: String? = runCatching {
         // видно, что код новее последнего тега. С `--abbrev=0` было бы просто
         // «0.7.0», и сборка с невыпущенными изменениями выдавала бы себя за
         // релиз — ровно та подмена, от которой мы уходим.
-        commandLine("git", "describe", "--tags", "--dirty")
+        //
+        // `--dirty` намеренно не используется: CI кладёт собранные `.so` в дерево
+        // перед gradle, и дерево всегда было бы «грязным». Пользователь видел бы
+        // «-dirty» в каждой сборке и не понял бы, что это значит.
+        commandLine("git", "describe", "--tags")
         workingDir(rootProject.projectDir.parentFile)
         isIgnoreExitValue = true
     }.standardOutput.asText.get().trim().removePrefix("v").takeIf { it.isNotEmpty() }
