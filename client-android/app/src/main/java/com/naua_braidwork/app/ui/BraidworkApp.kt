@@ -140,6 +140,10 @@ fun BraidworkApp(
         }
     }
 
+    // Устройство, открытое на карточке. Хранится отдельно от списка: список
+    // пересобирается каждые две секунды, и карточка открытого устройства
+    // закрылась бы сама, как только пришло следующее объявление.
+    var выбранное by remember { mutableStateOf<DeviceSummary?>(null) }
 
     val devicesState = remember(снимок.value, filter) {
         DevicesState(
