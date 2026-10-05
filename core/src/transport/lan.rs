@@ -205,10 +205,19 @@ impl LanTransport {
             return Err(TransportError::NotRunning);
         }
 
-        let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(3))
-            .map_err(|_| TransportError::Unreachable(addr))?;
+        let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(3)).map_err(|e| {
+            // Причина пишется в журнал ядра, а не теряется: клиент получает
+            // только общий код, и «недоступно» и «соединение сброшено» выглядели
+            // бы одинаково, хотя чинятся по-разному.
+            crate::android_log::предостережение(
+                &format!("подключение к {addr} не удалось: {e}"),
+            );
+            TransportError::Unreachable(addr)
+        })?;
         stream.set_nonblocking(true).map_err(TransportError::Io)?;
         stream.set_nodelay(true).map_err(TransportError::Io)?;
+
+        crate::android_log::инфо(&format!("соединение с {addr} открыто, ждём рукопожатие"));
 
         let handshake =
             Handshake::initiate(&self.keys).map_err(|e| TransportError::Other(e.to_string()))?;
@@ -590,6 +599,10 @@ impl LanTransport {
                                 // к данным. Событие на открытии TCP было бы
                                 // враньём: рукопожатие ещё могло провалиться,
                                 // и подпись не сошлась бы.
+                                crate::android_log::инфо(&format!(
+                                    "рукопожатие завершено с {} (соединение {})",
+                                    peer.remote, peer.handle
+                                ));
                                 self.events.push(TransportEvent::Connected(Connection::new(
                                     peer.handle,
                                     peer.role,

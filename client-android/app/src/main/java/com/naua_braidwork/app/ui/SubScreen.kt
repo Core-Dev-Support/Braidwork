@@ -111,6 +111,14 @@ fun SubScreen(
      * подэкран. Тогда показывается честное сообщение, а не чужая карточка.
      */
     selectedDevice: DeviceSummary? = null,
+    /**
+     * Устройства, как их видит канал.
+     *
+     * Нужно карточке ради настоящего адреса и порта. Сам плитка не несёт их:
+     * показывать «192.168.1.42:42424» в списке незачем, а разбирать это обратно
+     * из подписи — значит завести второй источник правды о том же устройстве.
+     */
+    devices: List<com.naua_braidwork.app.DeviceDiscovery.Device> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     // Значения переключателей живут здесь, а не в описании экрана: описание
@@ -253,8 +261,19 @@ fun SubScreen(
                 if (device == null) {
                     MissingScreen("Устройство не выбрано", onBack)
                 } else {
+                    // Адрес и порт берутся из объекта канала, а не разбираются
+                    // обратно из подписи списка: разбор строки, которую сам же
+                    // собрали для показа, — это второй источник правды о том же
+                    // устройстве, и они разошлись бы при первом же изменении
+                    // формата подписи.
+                    val найденное = devices.firstOrNull { it.deviceId.toHex() == device.id }
                     DeviceDetailScreen(
-                        state = Sample.deviceDetailState(device),
+                        state = Sample.deviceDetailState(
+                            device = device,
+                            address = найденное?.ipv4?.joinToString(".") { (it.toInt() and 0xFF).toString() }
+                                ?: "—",
+                            port = найденное?.port ?: 0,
+                        ),
                         onBack = onBack,
                         onMore = { onRow(Route.DEVICE) },
                         onFeature = { onRow(Route.DEVICE) },

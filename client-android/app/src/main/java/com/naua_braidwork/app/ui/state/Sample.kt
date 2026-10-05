@@ -626,16 +626,24 @@ object Sample {
     /**
      * Карточка устройства.
      *
-     * Устройства в списке нет, поэтому и карточки нет: [DevicesState] пуст.
-     * Экран собран целиком и включается, как только появится хоть одно
-     * устройство — тогда состояние придёт из транспорта, а не отсюда.
+     * Значения, которых ещё нет, показаны честными прочерками, а не выдуманными:
+     * платформа станет известна после соединения, отпечаток ключа — после
+     * сопряжения. Заполнять их заранее значило бы показывать пользователю то,
+     * чего никто не знает.
+     *
+     * Состояние соединения — единственное, что известно сразу, и оно здесь
+     * настоящее.
      */
-    fun deviceDetailState(device: DeviceSummary): DeviceDetailState = DeviceDetailState(
+    fun deviceDetailState(
+        device: DeviceSummary,
+        address: String,
+        port: Int,
+    ): DeviceDetailState = DeviceDetailState(
         name = device.name,
-        statusLine = if (device.online) {
-            "В сети · LAN · 12 мс"
-        } else {
-            "Офлайн"
+        statusLine = when (device.presence) {
+            Presence.Online -> "На связи"
+            Presence.Nearby -> "Рядом, канал не установлен"
+            Presence.Offline -> "Офлайн"
         },
         online = device.online,
         features = listOf(
@@ -648,8 +656,11 @@ object Sample {
             SubGroup(
                 title = "О устройстве",
                 rows = listOf(
+                    // Идентификатор известен из объявления и постоянен — в отличие
+                    // от платформы и заряда, которые придут только с кадрами.
+                    SubRow("id", "Идентификатор", "", RowEnd.Value(device.id.take(8).uppercase())),
+                    SubRow("address", "Адрес", "", RowEnd.Value("$address:$port")),
                     SubRow("platform", "Платформа", "", RowEnd.Value("—")),
-                    SubRow("link", "Подключение", "", RowEnd.Value("—")),
                     SubRow("core", "Версия ядра", "", RowEnd.Value("—")),
                     SubRow("fingerprint", "Отпечаток ключа", "", RowEnd.Value("—")),
                     SubRow("trust", "Доверие", "", RowEnd.Chevron),

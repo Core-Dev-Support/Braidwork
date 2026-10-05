@@ -16,6 +16,7 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 mod abi_session;
+pub mod android_log;
 // Транспорт в C ABI появляется только вместе с каналом: клиент без сети не
 // должен платить за мёртвый код.
 #[cfg(feature = "transport-lan")]

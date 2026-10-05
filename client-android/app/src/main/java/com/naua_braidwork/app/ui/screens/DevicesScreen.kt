@@ -58,6 +58,13 @@ fun DevicesScreen(
     onFilter: (DeviceFilter) -> Unit,
     onAdd: () -> Unit,
     onDevice: (DeviceSummary) -> Unit,
+    /**
+     * Причина, по которой канал не работает. Пустая строка — проблем нет.
+     *
+     * Показывается на этом же экране: ошибка, известная только журналу, для
+     * пользователя неотличима от поломки без причины.
+     */
+    problem: String = "",
     modifier: Modifier = Modifier,
 ) {
     val isDark = isSystemInDarkTheme()
@@ -106,6 +113,29 @@ fun DevicesScreen(
             Spacer(Modifier.height(18.dp))
             FilterRow(current = state.filter, onFilter = onFilter, isDark = isDark)
             Spacer(Modifier.height(18.dp))
+
+            // Причина показывается пользователю, а не только пишется в журнал.
+            // Нажатие на устройство, после которого ничего не происходит, —
+            // самый обидный вид поломки: пользователь не знает, куда смотреть,
+            // и решает, что сломалось приложение.
+            if (problem.isNotEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (isDark) Color(0xFF3A2A24) else Color(0xFFFDEDE7),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp),
+                ) {
+                    Text(
+                        text = problem,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        color = if (isDark) Color(0xFFE8B9A8) else Color(0xFF8A3A1E),
+                        modifier = Modifier.padding(14.dp),
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+            }
         }
 
         if (state.devices.isEmpty()) {
@@ -255,10 +285,23 @@ private fun DeviceCard(device: DeviceSummary, onClick: () -> Unit) {
     }
 }
 
-private fun statusLabel(device: DeviceSummary): String = when {
-    !device.online -> "Офлайн"
-    device.batteryPercent != null -> "На связи · ${device.batteryPercent}%"
-    else -> "На связи"
+/**
+ * Подпись состояния под именем.
+ *
+ * Раньше здесь было два состояния, и устройство, которое объявляет себя прямо
+ * сейчас, подписывалось «Офлайн». Это враньё: плитка стоит в списке «рядом», а
+ * подпись говорит обратное. Теперь состояний три, и «Офлайн» достаётся только
+ * тем, кто действительно молчит.
+ */
+private fun statusLabel(device: DeviceSummary): String = when (device.presence) {
+    Presence.Nearby -> "Рядом, не подключено"
+    Presence.Online -> if (device.batteryPercent != null) {
+        "На связи · ${device.batteryPercent}%"
+    } else {
+        "На связи"
+    }
+
+    Presence.Offline -> "Офлайн"
 }
 
 private fun iconFor(kind: DeviceKind): ImageVector = when (kind) {

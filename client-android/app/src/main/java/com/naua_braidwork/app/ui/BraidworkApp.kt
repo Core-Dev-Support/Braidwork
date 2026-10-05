@@ -145,12 +145,12 @@ fun BraidworkApp(
                     // «Устройство» в плитке хуже: в общей квартире чужой телефон
                     // рядом со своим, и отличить их можно только по названию.
                     name = найденное.name,
-                    // Состояние соединения видно сразу. Без него нажатие на
-                    // плитку выглядело бы как ничего не сделавшее: карточка
-                    // открывается одинаково что при соединении, что без него.
+                    // Состояние видно сразу: устройство найдено, но канал с ним
+                    // ещё не установлен. Раньше здесь стояло «Офлайн», и плитка,
+                    // которая прямо сейчас объявляет себя, читалась как молчащая.
                     subtitle = if (найденное.connected) "На связи" else "Рядом, не подключено",
                     kind = DeviceKind.Desktop,
-                    online = найденное.connected,
+                    presence = if (найденное.connected) Presence.Online else Presence.Nearby,
                     // Заряд придёт с первым кадром после соединения. До этого
                     // «нет данных» честнее выдуманного процента.
                     batteryPercent = null,
@@ -241,6 +241,7 @@ fun BraidworkApp(
                     onOpenSystemSettings = openSystemSettings,
                     onOpenListenerSettings = openListenerSettings,
                     selectedDevice = выбранное,
+                    devices = снимок.value.devices,
                 )
             } else {
                 when (tab) {
@@ -270,6 +271,7 @@ fun BraidworkApp(
 
                     Tab.Devices -> DevicesScreen(
                         state = devicesState,
+                        problem = снимок.value.problem,
                         onFilter = { filter = it },
                         onAdd = { stack.add(Route.PAIR) },
                         // Нажатие открывает карточку и начинает подключение.
