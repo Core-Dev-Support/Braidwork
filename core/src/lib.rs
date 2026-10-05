@@ -14,9 +14,10 @@
 //! и отравляется после первой же паники (D-009).
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicU64, Ordering};
 
+mod abi_session;
 mod crypto;
+mod registry;
 mod session;
 
 // Мост к JVM нужен только под Android. На десктопе клиент обращается к ядру
@@ -29,6 +30,11 @@ pub mod pb {
     include!(concat!(env!("OUT_DIR"), "/braidwork.v1.rs"));
 }
 
+pub use abi_session::{
+    fl_hello_build, fl_hello_verify, fl_session_create, fl_session_finish, fl_session_free,
+    fl_session_open, fl_session_ready, fl_session_seal, fl_session_step, FL_ROLE_INITIATOR,
+    FL_ROLE_RESPONDER, FL_STEP_COMPLETE, FL_STEP_SEND, FL_STEP_WAIT,
+};
 pub use crypto::{verify_handshake, CryptoError, DeviceId, DeviceKeys, DEVICE_KEYS_BLOB_LEN};
 pub use session::{
     build_hello, default_capabilities, parse_and_verify_hello, Handshake, HandshakeStep, Role,
@@ -247,53 +253,6 @@ fn write_public_keys(keys: &DeviceKeys, out_public: *mut u8) {
 #[repr(transparent)]
 pub struct FlHandle(pub u64);
 
-/// Хэндлы пока не выдаются наружу: сессии ещё не выведены в C ABI.
-///
-/// Механизм готов и покрыт тестами, поэтому код не удаляем — он понадобится
-/// сразу, как только сессии станут доступны клиентам.
-#[allow(dead_code)]
-mod handles {
-    use super::*;
-
-    pub(super) const HANDLE_INVALID: FlHandle = FlHandle(0);
-
-    /// Счётчик слотов. Начинается с 1, потому что слот 0 зарезервирован.
-    static NEXT_SLOT: AtomicU64 = AtomicU64::new(1);
-
-    /// Начальное поколение. Ноль зарезервирован под «слот не выдавался».
-    pub(super) const GENERATION_START: u64 = 1;
-
-    /// Выдаёт хэндл для нового объекта ядра.
-    ///
-    /// Ноль не может получиться: слот начинается с 1, а поколение с 1, значит
-    /// младшие 32 бита ненулевые и весь хэндл тоже ненулевой. Клиент
-    /// использует `HANDLE_INVALID` как признак «объекта нет», поэтому
-    /// выдача нуля означала бы, что несуществующий объект выглядит как
-    /// освобождённый.
-    pub(super) fn alloc_handle(generation: u64) -> FlHandle {
-        let slot = NEXT_SLOT.fetch_add(1, Ordering::Relaxed);
-        debug_assert!(slot > 0 && slot <= u32::MAX as u64, "слот исчерпан");
-        debug_assert!(
-            generation > 0 && generation <= u32::MAX as u64,
-            "поколение вне диапазона"
-        );
-        FlHandle((slot << 32) | (generation & 0xffff_ffff))
-    }
-
-    /// Разбирает хэндл на слот и поколение.
-    pub(super) fn split_handle(handle: FlHandle) -> (usize, u64) {
-        let raw = handle.0;
-        ((raw >> 32) as usize, raw & 0xffff_ffff)
-    }
-
-    impl FlHandle {
-        /// Хэндл не ссылается ни на один объект.
-        pub fn is_valid(&self) -> bool {
-            *self != HANDLE_INVALID
-        }
-    }
-}
-
 // =============================================================================
 // Инициализация
 // =============================================================================
@@ -437,7 +396,7 @@ pub extern "C" fn fl_abi_version() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use handles::{alloc_handle, split_handle, GENERATION_START, HANDLE_INVALID};
+    use crate::registry::{make_handle, split_handle, GENERATION_START, HANDLE_INVALID};
 
     #[test]
     fn статус_паники_не_пропускает_наружу() {
@@ -448,11 +407,10 @@ mod tests {
 
     #[test]
     fn хэндлы_разбираются_на_слот_и_поколение() {
-        let h = alloc_handle(GENERATION_START);
+        let h = make_handle(1, GENERATION_START);
         let (slot, gen) = split_handle(h);
         assert_eq!(gen, GENERATION_START);
         assert_ne!(slot, 0);
-        // Ноль зарезервирован под «объекта нет», выдавать его нельзя.
         assert_ne!(h, HANDLE_INVALID);
         assert!(h.is_valid());
         assert!(!HANDLE_INVALID.is_valid());
@@ -460,8 +418,8 @@ mod tests {
 
     #[test]
     fn у_разных_объектов_разные_слоты() {
-        let a = alloc_handle(GENERATION_START);
-        let b = alloc_handle(GENERATION_START);
+        let a = make_handle(1, GENERATION_START);
+        let b = make_handle(2, GENERATION_START);
         assert_ne!(split_handle(a).0, split_handle(b).0);
     }
 

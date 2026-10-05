@@ -32,11 +32,13 @@ pub enum Role {
 
 /// Незавершённое рукопожатие.
 ///
-/// Живёт только до первого обмена. После `into_session` состояние рукопожатия
-/// внутри `snow` переиспользуется под транспортный ключ, поэтому держать
-/// рукопожатие и сессию одновременно нельзя.
+/// Состояние лежит в `Option` не из осторожности, а по существу: внутри `snow`
+/// то же самое состояние переиспользуется под транспортный ключ, поэтому
+/// держать рукопожатие и сессию одновременно нельзя. `Option` позволяет
+/// перейти на месте, не разбирая и не собирая объект заново, — именно это нужно
+/// реестру хэндлов, где объект нельзя временно убрать из слота.
 pub struct Handshake {
-    state: snow::HandshakeState,
+    state: Option<snow::HandshakeState>,
     role: Role,
 }
 
@@ -57,16 +59,25 @@ pub enum HandshakeStep {
 impl Handshake {
     pub fn initiate(keys: &DeviceKeys) -> Result<Self, SessionError> {
         Ok(Self {
-            state: noise_initiator(keys.static_secret())?,
+            state: Some(noise_initiator(keys.static_secret())?),
             role: Role::Initiator,
         })
     }
 
     pub fn accept(keys: &DeviceKeys) -> Result<Self, SessionError> {
         Ok(Self {
-            state: noise_responder(keys.static_secret())?,
+            state: Some(noise_responder(keys.static_secret())?),
             role: Role::Responder,
         })
+    }
+
+    /// Состояние `snow`, пока рукопожатие не перешло в транспортный режим.
+    fn state(&self) -> Result<&snow::HandshakeState, SessionError> {
+        self.state.as_ref().ok_or(SessionError::Transport)
+    }
+
+    fn state_mut(&mut self) -> Result<&mut snow::HandshakeState, SessionError> {
+        self.state.as_mut().ok_or(SessionError::Transport)
     }
 
     /// Выполняет один шаг автомата.
@@ -78,7 +89,7 @@ impl Handshake {
     /// этого правила рано или поздно разошлась бы с библиотекой, и рукопожатие
     /// зависало бы намертво.
     pub fn step(&mut self, input: &[u8]) -> Result<HandshakeStep, SessionError> {
-        let my_turn = self.state.is_my_turn();
+        let my_turn = self.state()?.is_my_turn();
 
         if input.is_empty() {
             if !my_turn {
@@ -97,17 +108,17 @@ impl Handshake {
         }
 
         let mut plaintext = vec![0u8; MAX_FRAME];
-        self.state
+        self.state_mut()?
             .read_message(input, &mut plaintext)
             .map_err(|_| SessionError::Transport)?;
 
-        if self.state.is_handshake_finished() {
+        if self.state()?.is_handshake_finished() {
             return Ok(HandshakeStep::Complete);
         }
 
         // Ответчик обязан отвечать сразу после чтения, иначе инициатор
         // останется ждать вечно.
-        if self.state.is_my_turn() {
+        if self.state()?.is_my_turn() {
             Ok(HandshakeStep::Send(self.write(&[])?))
         } else {
             Ok(HandshakeStep::WaitForInput)
@@ -117,28 +128,50 @@ impl Handshake {
     fn write(&mut self, payload: &[u8]) -> Result<Vec<u8>, SessionError> {
         let mut buffer = vec![0u8; MAX_FRAME];
         let len = self
-            .state
+            .state_mut()?
             .write_message(payload, &mut buffer)
             .map_err(|_| SessionError::Transport)?;
         buffer.truncate(len);
         Ok(buffer)
     }
 
-    /// Забирает транспортное состояние, если рукопожатие завершено.
-    pub fn into_session(self) -> Result<Session, SessionError> {
-        if !self.state.is_handshake_finished() {
+    /// Переводит рукопожатие в сессию на месте.
+    ///
+    /// Повторный вызов возвращает `HandshakeIncomplete`: состояние ушло в
+    /// транспортный режим, и второй раз брать его нечего. Клиент обязан
+    /// переходить один раз — иначе он потерял бы сессию, не заметив.
+    pub fn take_session(&mut self) -> Result<Session, SessionError> {
+        let finished = self
+            .state
+            .as_ref()
+            .map(|s| s.is_handshake_finished())
+            .ok_or(SessionError::HandshakeIncomplete)?;
+
+        if !finished {
             return Err(SessionError::HandshakeIncomplete);
         }
-        let role = self.role;
-        let transport = self
-            .state
+
+        let state = self.state.take().ok_or(SessionError::Transport)?;
+        let transport = state
             .into_transport_mode()
             .map_err(|_| SessionError::Transport)?;
-        Ok(Session { transport, role })
+        Ok(Session {
+            transport,
+            role: self.role,
+        })
+    }
+
+    /// Забирает транспортное состояние, если рукопожатие завершено.
+    pub fn into_session(self) -> Result<Session, SessionError> {
+        let mut this = self;
+        this.take_session()
     }
 
     pub fn is_finished(&self) -> bool {
-        self.state.is_handshake_finished()
+        self.state
+            .as_ref()
+            .map(|s| s.is_handshake_finished())
+            .unwrap_or(false)
     }
 }
 

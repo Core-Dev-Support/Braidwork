@@ -77,6 +77,100 @@ typedef void (*fl_callback)(void *context, fl_event_type event, const uint8_t *d
 size_t fl_keys_blob_len(void);
 
 /*
+ * Сессия между двумя устройствами.
+ *
+ * Сессия живёт дольше одного вызова, поэтому клиенту нужен хэндл. Хэндл
+ * проверяется на каждом вызове: клиент держит его в своих переменных и вполне
+ * может отдать освобождённый — это даёт FL_ERR_INVALID_ARG, а не чужой объект.
+ *
+ * Рукопожатие Noise XX — это три сообщения, а не два:
+ *   инициатор -> e
+ *   ответчик  <- e, ee
+ *   инициатор -> s, se
+ * Ответчик после чтения сразу пишет своё, отдельного шага «прочитал» нет.
+ *
+ * Важно о безопасности: рукопожатие само по себе НЕ определяет, кто перед нами.
+ * Первое сообщение несёт только эфемерный ключ, поэтому ответчик принимает его
+ * от любого, кто подключился. Личность связывается на третьем сообщении, а
+ * сверяется подписью Hello поверх уже установленного канала. Отсюда правило:
+ * fl_hello_verify зовётся на КАЖДОМ соединении, а не только при первом
+ * сопряжении.
+ */
+
+/* Создаёт сессию по сохранённым ключам устройства. */
+fl_status fl_session_create(const uint8_t *blob, size_t blob_len,
+                            uint32_t role, uint64_t *out_handle);
+
+/*
+ * Один шаг рукопожатия.
+ *
+ * Пустой input означает «говори сам», непустой — «продолжай после полученного».
+ * В out_step кладётся FL_STEP_SEND, FL_STEP_WAIT или FL_STEP_COMPLETE.
+ *
+ * out_data вместе с out_len: когда отправлять нечего, out_len равен нулю и
+ * out_data можно передать NULL. Чтобы узнать нужный размер, зови с out_data =
+ * NULL — вернётся длина и FL_ERR_INVALID_ARG, если длина ненулевая.
+ */
+fl_status fl_session_step(uint64_t handle,
+                          const uint8_t *input, size_t input_len,
+                          size_t *out_step,
+                          uint8_t *out_data, size_t *out_len);
+
+/* Готова ли сессия к обмену: 1 — да, 0 — ещё рукопожатие. */
+fl_status fl_session_ready(uint64_t handle, uint32_t *out_ready);
+
+/*
+ * Переводит сессию из рукопожатия в обмен.
+ *
+ * Переход явный и ровно один раз. До него fl_session_seal и fl_session_open
+ * возвращают FL_ERR_CRYPTO, а повторный вызов — тоже: состояние ушло внутрь
+ * snow, второй раз брать нечего.
+ */
+fl_status fl_session_finish(uint64_t handle);
+
+/* Шифрует и расшифровывает сообщение. */
+fl_status fl_session_seal(uint64_t handle,
+                          const uint8_t *payload, size_t payload_len,
+                          uint8_t *out_frame, size_t *out_len);
+fl_status fl_session_open(uint64_t handle,
+                          const uint8_t *frame, size_t frame_len,
+                          uint8_t *out_payload, size_t *out_len);
+
+/*
+ * Освобождает сессию.
+ *
+ * Повторный вызов с тем же хэндл даёт FL_ERR_INVALID_ARG, а не паникует: клиент
+ * вправе освободить объект в обработчике ошибки, не зная, что он уже освобождён.
+ */
+fl_status fl_session_free(uint64_t handle);
+
+/*
+ * Собирает Hello устройства.
+ *
+ * Отдельная функция, а не часть создания сессии: Hello ходит по открытому
+ * каналу обнаружения и должен быть готов до того, как напарник подключился.
+ * Имя приходит UTF-8 длиной name_len.
+ */
+fl_status fl_hello_build(const uint8_t *blob, size_t blob_len,
+                         const uint8_t *display_name, size_t name_len,
+                         uint64_t nonce, uint64_t unix_time_ms,
+                         uint8_t *out_data, size_t *out_len);
+
+/*
+ * Разбирает и проверяет Hello полученного устройства.
+ *
+ * Проверяется и подпись, и соответствие ключу из файла: устройство подписало бы
+ * чужим ключом и прошло верификацию, если бы сверялась только подпись.
+ *
+ * Идентификатор и имя возвращаются готовыми, чтобы клиенту не пришлось заводить
+ * второго разборщика протокола — а он разошёлся бы с первым.
+ */
+fl_status fl_hello_verify(const uint8_t *expected_blob, size_t expected_blob_len,
+                          const uint8_t *body, size_t body_len,
+                          uint8_t *out_id, size_t *out_id_len,
+                          uint8_t *out_name, size_t *out_name_len);
+
+/*
  * Создаёт новый набор ключей и отдаёт его для сохранения.
  *
  * Вызывается РОВНО ОДИН раз за жизнь устройства. При следующем запуске клиент
