@@ -67,6 +67,9 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
         }
     }
 
+    /** Что происходит с каналом. */
+    enum class State { ОСТАНОВЛЕН, ЗАПУСКАЕТСЯ, РАБОТАЕТ, ОШИБКА }
+
     /**
      * Что происходило с подключениями, последние шаги.
      *
@@ -225,7 +228,8 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
                 // журнал: иначе нажатие выглядело бы как ничего не сделавшее,
                 // а это самый обидный вид поломки — пользователь не знает, куда
                 // смотреть.
-                записать("подключение к $id НЕ удалось: ${e.message}")`r`n                Log.w(TAG, "подключение к $id не удалось", e)
+                записать("подключение к $id НЕ удалось: ${e.message}")
+                Log.w(TAG, "подключение к $id не удалось", e)
                 publish(снимки.get().copy(problem = "не удалось подключиться: ${e.message}"))
             }
         }
@@ -284,11 +288,13 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
             val port = BraidworkCore.transportPort(h)
             состояние = if (port != 0) State.РАБОТАЕТ else State.ОШИБКА
 
-            записать("канал поднят, порт $port")`r`n            publish(Snapshot(emptyList(), port, port != 0, ""))
+            записать("канал поднят, порт $port")
+            publish(Snapshot(emptyList(), port, port != 0, ""))
             true
         } catch (e: Exception) {
             состояние = State.ОШИБКА
-            записать("канал НЕ поднялся: ${e.message}")`r`n            publish(Snapshot(emptyList(), 0, false, e.message ?: "канал не поднялся"))
+            записать("канал НЕ поднялся: ${e.message}")
+            publish(Snapshot(emptyList(), 0, false, e.message ?: "канал не поднялся"))
             false
         }
     }
@@ -416,7 +422,10 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
     }
 
     private companion object {
-        const val TAG = "BraidworkDiscovery"`r`n`r`n        /** Сколько шагов подключения хранить. Глубже бесполезно: событий столько же. */`r`n        const val ГЛУБИНА_СЛЕДА = 8
+        const val TAG = "BraidworkDiscovery"
+
+        /** Сколько шагов подключения хранить. Глубже бесполезно: событий столько же. */
+        const val ГЛУБИНА_СЛЕДА = 8
 
         /**
          * Событий за один опрос.
