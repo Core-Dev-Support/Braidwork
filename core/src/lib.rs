@@ -16,6 +16,10 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 mod abi_session;
+// Транспорт в C ABI появляется только вместе с каналом: клиент без сети не
+// должен платить за мёртвый код.
+#[cfg(feature = "transport-lan")]
+mod abi_transport;
 mod crypto;
 mod frame;
 mod registry;
@@ -36,6 +40,13 @@ pub use abi_session::{
     fl_hello_build, fl_hello_verify, fl_session_create, fl_session_finish, fl_session_free,
     fl_session_open, fl_session_ready, fl_session_seal, fl_session_step, FL_ROLE_INITIATOR,
     FL_ROLE_RESPONDER, FL_STEP_COMPLETE, FL_STEP_SEND, FL_STEP_WAIT,
+};
+#[cfg(feature = "transport-lan")]
+pub use abi_transport::{
+    fl_frame_encode, fl_transport_conn_close, fl_transport_connect, fl_transport_event_size,
+    fl_transport_free, fl_transport_lan_start, fl_transport_poll, fl_transport_port,
+    fl_transport_send, fl_transport_stop, FlTransEvent, FL_EV_CLOSED, FL_EV_CONNECTED,
+    FL_EV_DISCOVERED, FL_EV_FRAME, FL_EV_INCOMING, FL_EV_NOTICE, FL_EV_STATE,
 };
 pub use crypto::{verify_handshake, CryptoError, DeviceId, DeviceKeys, DEVICE_KEYS_BLOB_LEN};
 pub use frame::{
@@ -92,6 +103,18 @@ fn guard<F: FnOnce() -> FlStatus>(f: F) -> FlStatus {
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(code) => code,
         Err(_) => FL_ERR_PANIC,
+    }
+}
+
+/// Обёртка внешней функции, возвращающей значение, а не статус-код.
+///
+/// Паника внутри превращается в `при_панике`, а не в разматывание стека через
+/// C-кадр: это UB (D-008). Отдельная обёртка, потому что `guard` жёстко зашит на
+/// `FlStatus`, а несколько функций возвращают числа — порт, размер структуры.
+pub(crate) fn guard_value<T, F: FnOnce() -> T>(f: F, при_панике: T) -> T {
+    match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(v) => v,
+        Err(_) => при_панике,
     }
 }
 

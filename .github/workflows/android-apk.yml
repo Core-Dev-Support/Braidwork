@@ -146,6 +146,46 @@ jobs:
 
           ls -laR "$out"
 
+      # The header is hand-written and only Rust is compiled here, so nothing
+      # would catch a typo in a prototype or a function that exists in the
+      # library but was never declared. That failure mode is nasty: the app
+      # builds, installs and only then dies with UnsatisfiedLinkError on a
+      # phone. Comparing the two lists takes a second and catches it here.
+      - name: Сверка заголовка с библиотекой
+        working-directory: core
+        run: |
+          set -euo pipefail
+          bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+          so="target/aarch64-linux-android/debug/libbraidwork_core.so"
+          if [ ! -f "$so" ]; then
+            so="target/aarch64-linux-android/release/libbraidwork_core.so"
+          fi
+
+          # Declared in braidwork_core.h, defined in the library.
+          "$bin/llvm-nm" -D --defined-only "$so" \
+            | awk '$2 == "T" { print $3 }' | sort -u > /tmp/in_lib.txt
+
+          grep -oE '\bfl_[a-z0-9_]+[[:space:]]*\(' include/braidwork_core.h \
+            | sed 's/[[:space:]]*($//; s/($//; s/[[:space:]]*(//' \
+            | sort -u > /tmp/in_header.txt
+
+          echo "--- in header, missing from library ---"
+          comm -23 /tmp/in_header.txt /tmp/in_lib.txt | tee /tmp/only_header.txt || true
+
+          echo "--- in library, not declared in header ---"
+          comm -13 /tmp/in_header.txt /tmp/in_lib.txt | tee /tmp/only_lib.txt || true
+
+          if [ -s /tmp/only_header.txt ] || [ -s /tmp/only_lib.txt ]; then
+            echo ""
+            echo "The header and the library disagree. Both lists must match:"
+            echo "  the header is the contract and is edited by hand;"
+            echo "  a function declared but not exported would fail on a phone."
+            exit 1
+          fi
+
+          echo "OK: $(wc -l < /tmp/in_header.txt) functions, header and library agree."
+
       - name: Сборка APK
         working-directory: client-android
         run: |

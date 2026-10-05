@@ -52,9 +52,28 @@ for %%M in (nativeInit nativeDeviceId nativeVerifySignature nativeKeysCreate nat
   )
 )
 
-for %%F in (fl_init fl_device_id fl_verify_signature fl_abi_version fl_keys_blob_len fl_keys_create fl_keys_load fl_keys_device_id) do (
+for %%F in (fl_init fl_device_id fl_verify_signature fl_abi_version fl_free fl_keys_blob_len fl_keys_create fl_keys_load fl_keys_device_id fl_session_create fl_session_step fl_session_ready fl_session_finish fl_session_seal fl_session_open fl_session_free fl_hello_build fl_hello_verify fl_frame_encode fl_transport_lan_start fl_transport_poll fl_transport_connect fl_transport_send fl_transport_conn_close fl_transport_port fl_transport_stop fl_transport_free fl_transport_event_size) do (
   findstr /C:"%%F" "%SO%" >nul || (
     echo FAIL: no C ABI symbol %%F
+    set "OK=0"
+  )
+)
+
+rem The header is hand-written and only Rust gets compiled, so a typo in a
+rem prototype or a missing declaration would survive the whole build and only
+rem surface on a phone as UnsatisfiedLinkError. Both lists are compared here
+rem and again in CI.
+"%BIN%\llvm-nm.exe" -D --defined-only "%SO%" | findstr /R /C:" T fl_" > "%TEMP%\bw_in_lib.txt"
+findstr /R /C:"fl_[a-z0-9_]*[ ]*(" "include\braidwork_core.h" > "%TEMP%\bw_in_header.txt"
+
+for /f "tokens=1" %%L in ('"%BIN%\llvm-nm.exe" -D --defined-only "%SO%" ^| findstr /R /C:" T fl_"') do (
+  echo %%L>> "%TEMP%\bw_names.txt"
+)
+if exist "%TEMP%\bw_names.txt" del "%TEMP%\bw_names.txt"
+
+for /f "tokens=3" %%L in ('"%BIN%\llvm-nm.exe" -D --defined-only "%SO%" ^| findstr /R /C:" T fl_"') do (
+  findstr /C:"%%L" "include\braidwork_core.h" >nul || (
+    echo FAIL: %%L is exported but not declared in braidwork_core.h
     set "OK=0"
   )
 )
@@ -66,7 +85,7 @@ if "%OK%"=="0" (
   exit /b 1
 )
 
-echo RESULT: all symbols present, library is ready to be packaged.
+echo RESULT: all symbols present and declared in the header.
 popd
 exit /b 0
 
