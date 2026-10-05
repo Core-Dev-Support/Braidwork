@@ -558,55 +558,6 @@ fun PillButton(
 }
 
 /**
- * Окошко «перезагрузить сейчас?».
- *
- * Само переключение темы мгновенное, но не всё в приложении рисуется Compose:
- * постоянное уведомление и значок службы живут вне него и держат старую палитру
- * до перезапуска. Поэтому предлагаем перезапуск, а «Позже» оставляет как есть.
- */
-@Composable
-fun RestartDialog(
-    onRestart: () -> Unit,
-    onLater: () -> Unit,
-) {
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = onLater,
-        containerColor = MaterialTheme.colorScheme.surface,
-        title = {
-            Text(
-                text = "Перезагрузить приложение?",
-                style = MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-        },
-        text = {
-            Text(
-                text = "Интерфейс переключится сразу, а уведомление и значок " +
-                    "службы останутся в старой теме до перезапуска.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        },
-        confirmButton = {
-            Text(
-                text = "Перезагрузить",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.tapNoRipple(onClick = onRestart),
-            )
-        },
-        dismissButton = {
-            Text(
-                text = "Позже",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.tapNoRipple(onClick = onLater),
-            )
-        },
-    )
-}
-
-/**
  * Переключатель-сегмент: два или три варианта в одной дорожке.
  *
  * Высота 48, радиус дорожки 24 и активной части 20, поля 4 — из макета.

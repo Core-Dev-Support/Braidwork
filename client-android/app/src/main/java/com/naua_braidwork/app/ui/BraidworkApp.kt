@@ -1,9 +1,6 @@
 package com.naua_braidwork.app.ui
 
-import android.content.Intent
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,7 +30,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.activity.compose.BackHandler
@@ -42,9 +38,7 @@ import com.naua_braidwork.app.ui.icons.IcwFamily
 import com.naua_braidwork.app.ui.icons.IcwHome
 import com.naua_braidwork.app.ui.icons.IcwSettings
 import com.naua_braidwork.app.ui.icons.IcwSync
-import com.naua_braidwork.app.MainActivity
 import com.naua_braidwork.app.SettingsStore
-import com.naua_braidwork.app.ui.components.RestartDialog
 import com.naua_braidwork.app.ui.components.tapNoRipple
 import com.naua_braidwork.app.ui.screens.DevicesScreen
 import com.naua_braidwork.app.ui.screens.FamilyScreen
@@ -55,7 +49,6 @@ import com.naua_braidwork.app.ui.screens.WelcomeScreen
 import com.naua_braidwork.app.ui.state.LinkMode
 import com.naua_braidwork.app.ui.state.Sample
 import com.naua_braidwork.app.ui.theme.LocalAppGradient
-import com.naua_braidwork.app.ui.theme.ThemeChoice
 
 /**
  * Разделы приложения.
@@ -104,32 +97,6 @@ fun BraidworkApp(
     // на каждой перерисовке, и нажатия бы терялись.
     var bleOn by remember { mutableStateOf(state.bleOn) }
     var softApOn by remember { mutableStateOf(state.softApOn) }
-
-    // Окошко перезапуска после смены темы. Показывается один раз на выбор,
-    // а не висит: решение пользователя — перезапустить сейчас или позже.
-    var restartAsk by remember { mutableStateOf<ThemeChoice?>(null) }
-    val context = LocalContext.current
-    val restart = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) { restartAsk = null }
-
-    if (restartAsk != null) {
-        RestartDialog(
-            onRestart = {
-                restartAsk = null
-                restart.launch(
-                    Intent(context, MainActivity::class.java).apply {
-                        // Пересоздание Activity, а не запуск второй копии:
-                        // иначе в стеке останется старая, со старой темой.
-                        addFlags(
-                            Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP,
-                        )
-                    },
-                )
-            },
-            onLater = { restartAsk = null },
-        )
-    }
 
     // Стек открытых подэкранов. Пустой — мы в разделе; непустой — поверх него
     // открыт подэкран, и последний элемент тот, что на экране.
@@ -191,10 +158,7 @@ fun BraidworkApp(
                     mode = mode,
                     onMode = { mode = it },
                     themeChoice = settings.theme,
-                    onThemeChoice = { choice ->
-                        settings.chooseTheme(choice)
-                        restartAsk = choice
-                    },
+                    onThemeChoice = { choice -> settings.chooseTheme(choice) },
                     onBack = { stack.removeAt(stack.lastIndex) },
                     onRow = { },
                     onRoute = { id -> if (id in OPEN_ROUTES) stack.add(id) },
@@ -211,12 +175,18 @@ fun BraidworkApp(
                         softApOn = softApOn,
                         onPairClick = { stack.add(Route.PAIR) },
                         onNotificationsClick = { stack.add(Route.NOTIFS) },
-                        // Быстрое действие не должно открывать настройки: нажал
-                        // «Буфер» — получил обмен, а не его настройки. Сводка по
-                        // всем модулям живёт в «Обмене», оттуда и доходит до
-                        // каждого. Когда появится транспорт, эти кнопки станут
-                        // самими действиями.
-                        onQuickAction = { tab = Tab.Share },
+                        // Быстрое действие открывает свой модуль: подпись под
+                        // иконкой должна совпадать с тем, куда попал. Раньше все
+                        // четыре вели в «Обмен», и это было хуже — четыре
+                        // одинаковые кнопки не отличаются от одной.
+                        //
+                        // Это компромисс, а не решение: настоящее быстрое
+                        // действие отправляет буфер или запускает трансляцию.
+                        // Пока транспорта нет, показывать вместо действия пустую
+                        // ссылку хуже, чем вести в модуль. Менять здесь — по
+                        // одной строке на кнопку, когда появится первая
+                        // работающая передача.
+                        onQuickAction = { action -> stack.add(quickRoute(action.id)) },
                         onBleClick = { bleOn = it },
                         onSoftApClick = { softApOn = it },
                     )
