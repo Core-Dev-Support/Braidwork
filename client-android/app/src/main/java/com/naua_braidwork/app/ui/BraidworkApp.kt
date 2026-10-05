@@ -77,9 +77,12 @@ enum class Tab(val route: String, val label: String, val icon: ImageVector) {
 @Composable
 fun BraidworkApp(
     deviceId: String,
-    deviceName: String,
     settings: SettingsStore,
 ) {
+    // Имя устройства пока задано здесь, а не приходит из ядра: оно не входит в
+    // подпись и может быть переименовано, поэтому это свойство профиля, а не
+    // часть идентичности. После появления хранилища профиля будет свой экран.
+    val deviceName = "Телефон"
     val state = remember(deviceId) { Sample.mainState(deviceId, deviceName) }
 
     // Приветствие — разовый экран, а не раздел: пока флаг не выставлен,

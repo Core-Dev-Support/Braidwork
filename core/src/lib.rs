@@ -29,7 +29,7 @@ pub mod pb {
     include!(concat!(env!("OUT_DIR"), "/braidwork.v1.rs"));
 }
 
-pub use crypto::{verify_handshake, CryptoError, DeviceId, DeviceKeys};
+pub use crypto::{verify_handshake, CryptoError, DeviceId, DeviceKeys, DEVICE_KEYS_BLOB_LEN};
 pub use session::{
     build_hello, default_capabilities, parse_and_verify_hello, Handshake, HandshakeStep, Role,
     Session, SessionError,
@@ -56,11 +56,19 @@ pub const FL_ERR_INTERNAL: FlStatus = 7;
 /// Ловушка сработала. Состояние сессии потеряно, клиент обязан пересоздать её,
 /// а не продолжать работу с half-инициализированным объектом.
 pub const FL_ERR_PANIC: FlStatus = 8;
+/// Хранилище ключей нечитаемо: файл повреждён, обрезан или записан другой
+/// версией ядра. Клиент обязан показать это пользователю, а не заменить ключи:
+/// новая пара ключей означала бы потерю доверия ко всем устройствам разом.
+pub const FL_ERR_STORAGE: FlStatus = 9;
 
 fn status_from_crypto(err: &CryptoError) -> FlStatus {
     match err {
         CryptoError::BadSignature | CryptoError::IdentityMismatch => FL_ERR_NOT_TRUSTED,
         CryptoError::Rejected | CryptoError::HandshakeIncomplete => FL_ERR_CRYPTO,
+        // Повреждённый файл ключей — это не криптографическая ошибка, а ошибка
+        // хранилища: клиент должен сообщить пользователю, что файл не читается,
+        // а не предлагать создать новые ключи молча.
+        CryptoError::MalformedKeys => FL_ERR_STORAGE,
     }
 }
 
@@ -75,11 +83,155 @@ fn guard<F: FnOnce() -> FlStatus>(f: F) -> FlStatus {
     }
 }
 
-/// Длина буфера публичных ключей: signing (32) + static (32) + qr (32).
+/// Длина публичных ключей: signing (32) + static (32) + qr (32).
 pub const PUBLIC_KEYS_LEN: usize = 96;
 
 /// Максимальная длина `device_id` в байтах.
 pub const DEVICE_ID_MAX: usize = 32;
+
+// =============================================================================
+// Хранилище ключей устройства
+// =============================================================================
+//
+// Ядро не хранит файлы само: в нём нет ни одной платформенной зависимости
+// (D-001), а хранилище у Android, Windows и Linux устроено по-разному. Ядро
+// отдаёт байты и принимает их обратно, клиент решает, куда их положить.
+//
+// Такой раздел нужен именно потому, что без него каждое открытие приложения
+// выдавало новое устройство: идентификатор выводится из ключа подписи, а ключ
+// нигде не сохранялся. Доверие, сопряжение по QR и транспорт на таком
+// устройстве невозможны.
+
+/// Длина файла ключей. Клиент вызывает заранее, до выделения буфера.
+///
+/// # Safety
+/// Функция безопасна: указателей не принимает и ничего не меняет.
+#[no_mangle]
+pub extern "C" fn fl_keys_blob_len() -> usize {
+    DEVICE_KEYS_BLOB_LEN
+}
+
+/// Создаёт новый набор ключей и отдаёт его для сохранения.
+///
+/// Вызывается ровно один раз за жизнь устройства: при следующем запуске
+/// клиент обязан загрузить сохранённые байты через `fl_keys_import`.
+/// Второй вызов на том же устройстве создаст другое устройство.
+///
+/// Публичные ключи (96 байт) кладёт в `out_public`, файл — в `out_blob`.
+///
+/// # Safety
+/// `out_public` должен указывать на 96 байт, `out_blob` — на
+/// `fl_keys_blob_len()` байт, `out_len` — на `usize`. Указатели валидны,
+/// не пересекаются и не перекрывают входной буфер.
+#[no_mangle]
+pub unsafe extern "C" fn fl_keys_create(out_blob: *mut u8, out_public: *mut u8) -> FlStatus {
+    guard(|| {
+        if out_blob.is_null() || out_public.is_null() {
+            return FL_ERR_INVALID_ARG;
+        }
+
+        let mut keys = DeviceKeys::generate();
+        write_public_keys(&keys, out_public);
+
+        // QR-ключ выдаётся отдельно и в файл не входит: он одноразовый, и
+        // сохранять его рядом с постоянными ключами значило бы раздать лишний
+        // секрет на все случаи жизни.
+        let _ = keys.take_qr_key();
+        let blob = keys.export();
+
+        let out = std::slice::from_raw_parts_mut(out_blob, DEVICE_KEYS_BLOB_LEN);
+        out.copy_from_slice(&blob);
+
+        FL_OK
+    })
+}
+
+/// Загружает ключи из сохранённого файла и отдаёт публичные ключи.
+///
+/// Несовпадение формата, версии или контрольной суммы — `FL_ERR_STORAGE`.
+/// Клиент обязан показать это пользователю и не заменять ключи: новая пара
+/// ключей означала бы, что все ранее доверенные устройства стали чужими.
+///
+/// # Safety
+/// `blob` указывает на `blob_len` байт, `out_public` — на 96 байт. Указатели
+/// валидны, читаемы и не пересекаются.
+#[no_mangle]
+pub unsafe extern "C" fn fl_keys_load(
+    blob: *const u8,
+    blob_len: usize,
+    out_public: *mut u8,
+) -> FlStatus {
+    guard(|| {
+        if blob.is_null() || out_public.is_null() {
+            return FL_ERR_INVALID_ARG;
+        }
+        if blob_len != DEVICE_KEYS_BLOB_LEN {
+            return FL_ERR_STORAGE;
+        }
+
+        let bytes = std::slice::from_raw_parts(blob, blob_len);
+        let keys = match DeviceKeys::import(bytes) {
+            Ok(k) => k,
+            Err(e) => return status_from_crypto(&e),
+        };
+
+        write_public_keys(&keys, out_public);
+        FL_OK
+    })
+}
+
+/// Идентификатор устройства из сохранённого файла ключей.
+///
+/// Нужен там, где ключи в памяти держать нельзя или незачем: сверка по QR,
+/// показ в настройках. Приватные ключи не восстанавливаются и наружу не
+/// отдаются — вычисляется только публичный signing-ключ.
+///
+/// # Safety
+/// `blob` указывает на `blob_len` байт, `out_id` — на буфер не менее
+/// `DEVICE_ID_MAX` байт, `out_len` — на `usize`. Указатели валидны.
+#[no_mangle]
+pub unsafe extern "C" fn fl_keys_device_id(
+    blob: *const u8,
+    blob_len: usize,
+    out_id: *mut u8,
+    out_len: *mut usize,
+) -> FlStatus {
+    guard(|| {
+        if blob.is_null() || out_id.is_null() || out_len.is_null() {
+            return FL_ERR_INVALID_ARG;
+        }
+        if blob_len != DEVICE_KEYS_BLOB_LEN {
+            return FL_ERR_STORAGE;
+        }
+
+        let bytes = std::slice::from_raw_parts(blob, blob_len);
+        let keys = match DeviceKeys::import(bytes) {
+            Ok(k) => k,
+            Err(e) => return status_from_crypto(&e),
+        };
+
+        let id = keys.device_id();
+        let raw = id.as_bytes();
+        let out = std::slice::from_raw_parts_mut(out_id, DEVICE_ID_MAX);
+        let n = raw.len().min(DEVICE_ID_MAX);
+        out[..n].copy_from_slice(&raw[..n]);
+        *out_len = n;
+
+        FL_OK
+    })
+}
+
+/// Раскладывает публичные ключи в буфер клиента: signing, static, qr.
+///
+/// Отдельная функция, потому что порядок полей — часть контракта, а не
+/// деталь реализации: клиент на Android и клиент на Windows читают эти 96 байт
+/// одинаково.
+fn write_public_keys(keys: &DeviceKeys, out_public: *mut u8) {
+    let out = unsafe { std::slice::from_raw_parts_mut(out_public, PUBLIC_KEYS_LEN) };
+    out[..32].copy_from_slice(&keys.signing_public());
+    out[32..64].copy_from_slice(&keys.static_public());
+    out[64..PUBLIC_KEYS_LEN].copy_from_slice(&[0u8; 32]);
+}
 
 // =============================================================================
 // Хэндлы
@@ -219,11 +371,7 @@ pub unsafe extern "C" fn fl_device_id(
 
 /// `device_id` без хранения приватного ключа: нужен клиенту для сверки QR.
 fn device_id_from_signing(signing_public: &[u8; 32]) -> Result<DeviceId, CryptoError> {
-    let mut buf = Vec::with_capacity(16 + 32);
-    buf.extend_from_slice(b"bw-device-id-v1");
-    buf.extend_from_slice(signing_public);
-    let hash = blake3::hash(&buf);
-    Ok(DeviceId::from_raw(&hash.as_bytes()[..16]))
+    Ok(crypto::device_id_from_signing(signing_public))
 }
 
 /// Проверяет подпись рукопожатия.
@@ -334,5 +482,70 @@ mod tests {
         let a = device_id_from_signing(&[1u8; 32]).unwrap();
         let b = device_id_from_signing(&[2u8; 32]).unwrap();
         assert_ne!(a, b);
+    }
+
+    /// Ключи, прошедшие через границу C ABI, должны остаться теми же.
+    ///
+    /// Ошибка в раскладке публичных ключей или в разборе файла выглядела бы
+    /// снаружи как «устройство сменило идентификатор», и найти её можно было бы
+    /// только на телефоне.
+    #[test]
+    fn ключи_переживают_границу_abi() {
+        let mut blob = vec![0u8; DEVICE_KEYS_BLOB_LEN];
+        let mut public = vec![0u8; PUBLIC_KEYS_LEN];
+
+        let code = unsafe { fl_keys_create(blob.as_mut_ptr(), public.as_mut_ptr()) };
+        assert_eq!(code, FL_OK);
+
+        // Загружаем тем же путём, каким воспользуется клиент.
+        let mut public2 = vec![0u8; PUBLIC_KEYS_LEN];
+        let code = unsafe { fl_keys_load(blob.as_ptr(), blob.len(), public2.as_mut_ptr()) };
+        assert_eq!(code, FL_OK);
+        assert_eq!(public, public2, "публичные ключи не должны меняться");
+
+        // Идентификатор из файла совпадает с тем, что даёт сам ключ.
+        let keys = DeviceKeys::import(&blob).expect("загрузка");
+        let mut id = vec![0u8; DEVICE_ID_MAX];
+        let mut len = 0usize;
+        let code =
+            unsafe { fl_keys_device_id(blob.as_ptr(), blob.len(), id.as_mut_ptr(), &mut len) };
+        assert_eq!(code, FL_OK);
+        assert_eq!(&id[..len], keys.device_id().as_bytes());
+    }
+
+    #[test]
+    fn повреждённый_файл_ключей_даёт_ошибку_хранилища() {
+        let mut blob = vec![0u8; DEVICE_KEYS_BLOB_LEN];
+        let mut public = vec![0u8; PUBLIC_KEYS_LEN];
+        assert_eq!(
+            unsafe { fl_keys_create(blob.as_mut_ptr(), public.as_mut_ptr()) },
+            FL_OK
+        );
+
+        blob[30] ^= 0xff;
+        let mut public2 = vec![0u8; PUBLIC_KEYS_LEN];
+        assert_eq!(
+            unsafe { fl_keys_load(blob.as_ptr(), blob.len(), public2.as_mut_ptr()) },
+            FL_ERR_STORAGE
+        );
+
+        // Обрезанный файл отвергается по длине, не читая содержимого.
+        assert_eq!(
+            unsafe { fl_keys_load(blob.as_ptr(), 10, public2.as_mut_ptr()) },
+            FL_ERR_STORAGE
+        );
+    }
+
+    #[test]
+    fn нулевые_указатели_отвергаются() {
+        let mut public = vec![0u8; PUBLIC_KEYS_LEN];
+        assert_eq!(
+            unsafe { fl_keys_create(std::ptr::null_mut(), public.as_mut_ptr()) },
+            FL_ERR_INVALID_ARG
+        );
+        assert_eq!(
+            unsafe { fl_keys_create(public.as_mut_ptr(), std::ptr::null_mut()) },
+            FL_ERR_INVALID_ARG
+        );
     }
 }

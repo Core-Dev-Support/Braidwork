@@ -15,7 +15,10 @@ use jni::objects::{JByteArray, JClass, JIntArray};
 use jni::sys::jint;
 use jni::JNIEnv;
 
-use crate::{fl_device_id, fl_init, fl_verify_signature, FL_OK, PUBLIC_KEYS_LEN};
+use crate::{
+    fl_device_id, fl_init, fl_keys_blob_len, fl_keys_create, fl_keys_device_id, fl_keys_load,
+    fl_verify_signature, FL_OK, PUBLIC_KEYS_LEN,
+};
 
 /// `jni` работает со знаковыми байтами: это тип Android, а не наш выбор.
 ///
@@ -55,6 +58,122 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeInit<'lo
 
     if env
         .set_byte_array_region(&out_public, 0, &to_signed(&buffer[..len]))
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+    if env
+        .set_int_array_region(&out_len, 0, &[len as jint])
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    FL_OK
+}
+
+/// Создаёт новый набор ключей и отдаёт файл для сохранения.
+///
+/// Вызывается ровно один раз за жизнь устройства. При следующем запуске клиент
+/// обязан отдать сохранённые байты в `nativeKeysLoad`: второй вызов создал бы
+/// другое устройство с другим `device_id`, и всё накопленное доверие исчезло бы
+/// без единого сообщения.
+///
+/// Экранирование подчёркивания объяснено у `nativeInit`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeKeysCreate<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    out_blob: JByteArray<'local>,
+    out_public: JByteArray<'local>,
+) -> jint {
+    let mut blob = vec![0u8; fl_keys_blob_len()];
+    let mut public = vec![0u8; PUBLIC_KEYS_LEN];
+
+    let status = unsafe { fl_keys_create(blob.as_mut_ptr(), public.as_mut_ptr()) };
+    if status != FL_OK {
+        return status;
+    }
+
+    if env
+        .set_byte_array_region(&out_blob, 0, &to_signed(&blob))
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+    if env
+        .set_byte_array_region(&out_public, 0, &to_signed(&public))
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    FL_OK
+}
+
+/// Загружает ключи из сохранённого файла.
+///
+/// Возвращает `FL_ERR_STORAGE`, если файл нечитаем. Клиент обязан показать это
+/// пользователю и не создавать новые ключи: подмена ключей молча уничтожила бы
+/// доверие ко всем ранее сопряжённым устройствам.
+///
+/// Экранирование подчёркивания объяснено у `nativeInit`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeKeysLoad<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    blob: JByteArray<'local>,
+    out_public: JByteArray<'local>,
+) -> jint {
+    let stored = match env.convert_byte_array(&blob) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_STORAGE,
+    };
+
+    let mut public = vec![0u8; PUBLIC_KEYS_LEN];
+    let status = unsafe { fl_keys_load(stored.as_ptr(), stored.len(), public.as_mut_ptr()) };
+    if status != FL_OK {
+        return status;
+    }
+
+    if env
+        .set_byte_array_region(&out_public, 0, &to_signed(&public))
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    FL_OK
+}
+
+/// Идентификатор устройства из сохранённого файла ключей.
+///
+/// Приватные ключи наружу не отдаются и в память клиента не попадают.
+/// Экранирование подчёркивания объяснено у `nativeInit`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeKeysDeviceId<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    blob: JByteArray<'local>,
+    out_id: JByteArray<'local>,
+    out_len: JIntArray<'local>,
+) -> jint {
+    let stored = match env.convert_byte_array(&blob) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_STORAGE,
+    };
+
+    let mut buffer = vec![0u8; crate::DEVICE_ID_MAX];
+    let mut len = 0usize;
+
+    let status =
+        unsafe { fl_keys_device_id(stored.as_ptr(), stored.len(), buffer.as_mut_ptr(), &mut len) };
+    if status != FL_OK {
+        return status;
+    }
+
+    if env
+        .set_byte_array_region(&out_id, 0, &to_signed(&buffer[..len]))
         .is_err()
     {
         return crate::FL_ERR_INTERNAL;

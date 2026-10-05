@@ -45,14 +45,14 @@ echo === Exported symbols ===
 echo.
 
 set "OK=1"
-for %%M in (nativeInit nativeDeviceId nativeVerifySignature) do (
+for %%M in (nativeInit nativeDeviceId nativeVerifySignature nativeKeysCreate nativeKeysLoad nativeKeysDeviceId) do (
   findstr /C:"Java_com_naua_1braidwork_app_BraidworkCore_%%M" "%SO%" >nul || (
     echo FAIL: no symbol for %%M
     set "OK=0"
   )
 )
 
-for %%F in (fl_init fl_device_id fl_verify_signature fl_abi_version) do (
+for %%F in (fl_init fl_device_id fl_verify_signature fl_abi_version fl_keys_blob_len fl_keys_create fl_keys_load fl_keys_device_id) do (
   findstr /C:"%%F" "%SO%" >nul || (
     echo FAIL: no C ABI symbol %%F
     set "OK=0"

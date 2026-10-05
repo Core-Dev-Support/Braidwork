@@ -80,17 +80,32 @@ class MainActivity : ComponentActivity() {
                     } else if (problem != null) {
                         ErrorScreen(describe(problem))
                     } else {
+                        // Ключи читаются с диска, а не создаются заново при
+                        // каждом запуске: идентификатор выводится из ключа
+                        // подписи, и новый ключ означал бы новое устройство.
                         val identity = remember {
-                            runCatching {
-                                val keys = BraidworkCore.generateKeys()
-                                BraidworkCore.deviceId(keys.signing)
-                            }.getOrElse { "идентификатор вычисляется" }
+                            DeviceIdentityStore(filesDir).loadOrCreate()
                         }
-                        BraidworkApp(
-                            deviceId = identity,
-                            deviceName = "Телефон",
-                            settings = settings,
-                        )
+                        when (val loaded = identity) {
+                            is DeviceIdentityStore.Result.Ready ->
+                                BraidworkApp(deviceId = loaded.identity.deviceId, settings)
+
+                            is DeviceIdentityStore.Result.Created ->
+                                BraidworkApp(deviceId = loaded.identity.deviceId, settings)
+
+                            // Повреждённый файл ключей — не повод создать новые.
+                            // Пользователь должен узнать об этом иначе, решив,
+                            // что его телефон забыл все устройства.
+                            is DeviceIdentityStore.Result.Broken ->
+                                ErrorScreen(
+                                    "Не читаются ключи устройства\n\n" +
+                                        "Идентификатор выводится из ключа подписи, поэтому " +
+                                        "файл ключей — это и есть устройство. Новые ключи " +
+                                        "сделали бы все ранее сопряжённые устройства чужими, " +
+                                        "поэтому приложение их не создаёт само.\n\n" +
+                                        loaded.reason,
+                                )
+                        }
                     }
                 }
             }

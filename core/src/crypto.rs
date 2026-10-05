@@ -30,7 +30,39 @@ pub enum CryptoError {
 
     #[error("рукопожатие не завершено")]
     HandshakeIncomplete,
+
+    #[error("хранилище ключей повреждено или чужого формата")]
+    MalformedKeys,
 }
+
+// =============================================================================
+// Хранилище ключей
+// =============================================================================
+
+/// Начало файла ключей.
+///
+/// Проверяется при каждой загрузке: без него повреждённый файл молча превратился
+/// бы в новое устройство с новым идентификатором, и старая доверенная связь
+/// перестала бы существовать без единого сообщения об ошибке.
+const BLOB_MAGIC: [u8; 4] = *b"BWKY";
+
+/// Версия формата. Меняется только при несовместимой правке.
+const BLOB_VERSION: u8 = 1;
+
+/// Флаг «ключ для QR ещё не использован».
+const FLAG_QR_PRESENT: u8 = 1;
+
+/// Смещение контрольной суммы: 4 (начало) + 1 (версия) + 1 (флаги) + 2 (резерв).
+const BLOB_CHECKSUM_AT: usize = 8;
+
+/// Длина контрольной суммы: 128 бит достаточно, чтобы поймать обрыв файла.
+const BLOB_CHECKSUM_LEN: usize = 16;
+
+/// Начало полезной части.
+const BLOB_BODY_AT: usize = BLOB_CHECKSUM_AT + BLOB_CHECKSUM_LEN;
+
+/// Полный размер хранилища ключей: заголовок 8, сумма 16, три секрета по 32.
+pub const DEVICE_KEYS_BLOB_LEN: usize = BLOB_BODY_AT + 3 * 32;
 
 /// Ключи устройства.
 ///
@@ -89,6 +121,94 @@ impl DeviceKeys {
         self.qr_key
             .take()
             .map(|s| x25519_dalek::PublicKey::from(&s).to_bytes())
+    }
+
+    /// Упаковывает ключи для хранения на устройстве.
+    ///
+    /// Ядро не пишет файлы само: в нём нет ни одной платформенной зависимости
+    /// (D-001), и хранилище Android, Windows и Linux устроены по-разному.
+    /// Ядро отдаёт байты, клиент кладёт их куда может и отдаёт обратно при
+    /// следующем запуске.
+    ///
+    /// Формат версионированный и с контрольной суммой. Без суммы обрыв файла
+    /// дал бы устройство с другим идентификатором, и старая доверенная связь
+    /// исчезла бы молча.
+    pub fn export(&self) -> Vec<u8> {
+        let mut out = vec![0u8; DEVICE_KEYS_BLOB_LEN];
+        out[..4].copy_from_slice(&BLOB_MAGIC);
+        out[4] = BLOB_VERSION;
+        out[5] = if self.qr_key.is_some() {
+            FLAG_QR_PRESENT
+        } else {
+            0
+        };
+        // 6..8 — резерв под будущие флаги. Обязателен нулём: иначе сумма
+        // перестанет проверяться, а формат окажется непредсказуемым.
+
+        out[BLOB_BODY_AT..BLOB_BODY_AT + 32].copy_from_slice(&self.static_key.to_bytes());
+        out[BLOB_BODY_AT + 32..BLOB_BODY_AT + 64].copy_from_slice(&self.signing_key.to_bytes());
+        // Отсутствующий ключ QR хранится нулями: длина хранилища не зависит от
+        // того, был ли он использован.
+        let qr = self
+            .qr_key
+            .as_ref()
+            .map(|s| s.to_bytes())
+            .unwrap_or([0u8; 32]);
+        out[BLOB_BODY_AT + 64..].copy_from_slice(&qr);
+
+        let sum = blake3::hash(&[&out[..BLOB_CHECKSUM_AT], &out[BLOB_BODY_AT..]].concat());
+        out[BLOB_CHECKSUM_AT..BLOB_BODY_AT].copy_from_slice(&sum.as_bytes()[..BLOB_CHECKSUM_LEN]);
+
+        out
+    }
+
+    /// Восстанавливает ключи из сохранённых байтов.
+    ///
+    /// Любое несовпадение — ошибка, а не «создать новые ключи»: молчаливая
+    /// замена ключей выглядела бы для пользователя как потеря доверия ко всем
+    /// устройствам сразу.
+    pub fn import(bytes: &[u8]) -> Result<Self, CryptoError> {
+        if bytes.len() != DEVICE_KEYS_BLOB_LEN {
+            return Err(CryptoError::MalformedKeys);
+        }
+        if bytes[..4] != BLOB_MAGIC {
+            return Err(CryptoError::MalformedKeys);
+        }
+        if bytes[4] != BLOB_VERSION {
+            // Неизвестная версия: возможно, файл записан более новым ядром.
+            // Отказываемся, а не пытаемся разобрать поле с другим смыслом.
+            return Err(CryptoError::MalformedKeys);
+        }
+        if bytes[6] != 0 || bytes[7] != 0 {
+            return Err(CryptoError::MalformedKeys);
+        }
+
+        let sum = blake3::hash(&[&bytes[..BLOB_CHECKSUM_AT], &bytes[BLOB_BODY_AT..]].concat());
+        if bytes[BLOB_CHECKSUM_AT..BLOB_BODY_AT] != sum.as_bytes()[..BLOB_CHECKSUM_LEN] {
+            return Err(CryptoError::MalformedKeys);
+        }
+
+        let static_bytes: [u8; 32] = bytes[BLOB_BODY_AT..BLOB_BODY_AT + 32]
+            .try_into()
+            .map_err(|_| CryptoError::MalformedKeys)?;
+        let signing_bytes: [u8; 32] = bytes[BLOB_BODY_AT + 32..BLOB_BODY_AT + 64]
+            .try_into()
+            .map_err(|_| CryptoError::MalformedKeys)?;
+        let qr_bytes: [u8; 32] = bytes[BLOB_BODY_AT + 64..]
+            .try_into()
+            .map_err(|_| CryptoError::MalformedKeys)?;
+
+        let qr_key = if bytes[5] & FLAG_QR_PRESENT != 0 {
+            Some(x25519_dalek::StaticSecret::from(qr_bytes))
+        } else {
+            None
+        };
+
+        Ok(Self {
+            static_key: x25519_dalek::StaticSecret::from(static_bytes),
+            signing_key: SigningKey::from_bytes(&signing_bytes),
+            qr_key,
+        })
     }
 
     /// Подписывает сообщение.
@@ -363,6 +483,102 @@ mod tests {
             capabilities_hash(&caps(&["a", "b"])),
             capabilities_hash(&caps(&["b", "a"]))
         );
+    }
+
+    /// Главное свойство хранилища: перезапуск не должен менять устройство.
+    ///
+    /// Идентификатор выводится из ключа подписи, поэтому достаточно сохранить
+    /// ключи и загрузить их обратно. Пока этого не было, каждое открытие
+    /// приложения выдавало новое устройство, а всё накопленное доверие обнулялось
+    /// само по себе.
+    #[test]
+    fn ключи_переживают_перезапуск() {
+        let a = DeviceKeys::generate();
+        let blob = a.export();
+
+        let b = DeviceKeys::import(&blob).expect("загрузка ключей");
+        assert_eq!(a.device_id(), b.device_id());
+        assert_eq!(a.signing_public(), b.signing_public());
+        assert_eq!(a.static_public(), b.static_public());
+        assert_eq!(DEVICE_KEYS_BLOB_LEN, blob.len());
+    }
+
+    #[test]
+    fn подпись_пережившего_перезапуск_устройства_принимается() {
+        let a = DeviceKeys::generate();
+        let blob = a.export();
+        let b = DeviceKeys::import(&blob).expect("загрузка ключей");
+
+        let hash = capabilities_hash(&caps(&["feature/v1"]));
+        let tape = b.handshake_tape(&hash, 5);
+        let sig = b.sign(&tape);
+
+        // Проверяет именно исходное устройство: подпись должна остаться его.
+        verify_handshake(&a.signing_public(), &tape, &sig).expect("подпись принята");
+    }
+
+    #[test]
+    fn повреждённое_хранилище_отвергается() {
+        let a = DeviceKeys::generate();
+        let blob = a.export();
+
+        // Оборванный файл.
+        assert_eq!(
+            DeviceKeys::import(&blob[..blob.len() - 1]).err(),
+            Some(CryptoError::MalformedKeys)
+        );
+
+        // Изменённый байт секрета: сумма перестаёт совпадать.
+        let mut подмена = blob.clone();
+        подмена[BLOB_BODY_AT] ^= 0x01;
+        assert_eq!(
+            DeviceKeys::import(&подмена).err(),
+            Some(CryptoError::MalformedKeys)
+        );
+
+        // Чужое начало файла.
+        let mut чужая = blob.clone();
+        чужая[..4].copy_from_slice(b"NOPE");
+        assert_eq!(
+            DeviceKeys::import(&чужая).err(),
+            Some(CryptoError::MalformedKeys)
+        );
+
+        // Неизвестная версия: возможно, файл записан более новым ядром.
+        let mut новая = blob.clone();
+        новая[4] = 99;
+        assert_eq!(
+            DeviceKeys::import(&новая).err(),
+            Some(CryptoError::MalformedKeys)
+        );
+
+        // Пустой файл и мусор.
+        assert_eq!(
+            DeviceKeys::import(&[]).err(),
+            Some(CryptoError::MalformedKeys)
+        );
+        assert_eq!(
+            DeviceKeys::import(&[0xff; DEVICE_KEYS_BLOB_LEN]).err(),
+            Some(CryptoError::MalformedKeys)
+        );
+    }
+
+    /// Ключ QR одноразовый, и это обязано пережить перезапуск: иначе код,
+    /// показанный пользователю, перестал бы работать после закрытия приложения.
+    #[test]
+    fn состояние_ключа_qr_сохраняется() {
+        let mut a = DeviceKeys::generate();
+        assert!(a.take_qr_key().is_some());
+
+        let blob = a.export();
+        let mut b = DeviceKeys::import(&blob).expect("загрузка ключей");
+        assert!(
+            b.take_qr_key().is_none(),
+            "использованный ключ QR не должен выдаваться снова"
+        );
+
+        let mut c = DeviceKeys::import(&DeviceKeys::generate().export()).expect("загрузка");
+        assert!(c.take_qr_key().is_some(), "неиспользованный ключ выдаётся");
     }
 
     #[test]
