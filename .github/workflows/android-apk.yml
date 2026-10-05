@@ -163,8 +163,11 @@ jobs:
           fi
 
           # Declared in braidwork_core.h, defined in the library.
+          # The fl_ prefix is required: the library also exports JNI entry
+          # points (declared in Kotlin, not here) and whatever the Rust
+          # dependencies leave behind.
           "$bin/llvm-nm" -D --defined-only "$so" \
-            | awk '$2 == "T" { print $3 }' | sort -u > /tmp/in_lib.txt
+            | awk '$2 == "T" && $3 ~ /^fl_/ { print $3 }' | sort -u > /tmp/in_lib.txt
 
           grep -oE '\bfl_[a-z0-9_]+[[:space:]]*\(' include/braidwork_core.h \
             | sed 's/[[:space:]]*($//; s/($//; s/[[:space:]]*(//' \
