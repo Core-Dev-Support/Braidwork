@@ -225,7 +225,7 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
         // Убираем то, что замолчало. Проверка по времени, а не по отсутствию в
         // порции: объявления приходят пачками и с пропусками, и очистка по
         // одной порции выбрасывала бы устройства из списка каждые две секунды.
-        val живые = прежние.values.filter { теперь - it.lastSeenMs < исчезает_мс }
+        val живые = прежние.values.filter { теперь - it.lastSeenMs < исчезает_через_мс }
         живые.sortBy { it.lastSeenMs }
 
         if (!живой && проблема.isEmpty() && снимки.get().running) {
