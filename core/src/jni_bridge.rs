@@ -361,6 +361,7 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTranspor
     out_kind: JIntArray<'local>,
     out_aux: JIntArray<'local>,
     out_device: JByteArray<'local>,
+    out_ip: JByteArray<'local>,
     out_off: JIntArray<'local>,
     out_plen: JIntArray<'local>,
     out_payload: JByteArray<'local>,
@@ -388,6 +389,7 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTranspor
     let mut виды = vec![0i32; максимум];
     let mut вспомогательные = vec![0i32; максимум];
     let mut идентификаторы = vec![0i8; максимум * 16];
+    let mut адреса = vec![0i8; максимум * 4];
     let mut смещения = vec![0i32; максимум];
     let mut длины = vec![0i32; максимум];
     let mut тела = vec![0u8; мест_под_тела];
@@ -434,6 +436,9 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTranspor
         } else {
             событие.port as i32
         };
+        for j in 0..4usize {
+            адреса[i * 4 + j] = событие.ipv4[j] as i8;
+        }
         смещения[i] = событие.payload_off as i32;
         длины[i] = событие.payload_len as i32;
 
@@ -448,11 +453,14 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTranspor
         }
     }
 
-    // Идентификатор значим только для обнаружения: у остальных событий он нулей,
-    // и отдавать его в клиент незачем.
+    // Идентификатор и адрес значимы только для обнаружения: у остальных событий
+    // они нулей, и отдавать их в клиент незачем.
     if env
         .set_byte_array_region(&out_device, 0, &идентификаторы[..count * 16])
         .is_err()
+        || env
+            .set_byte_array_region(&out_ip, 0, &адреса[..count * 4])
+            .is_err()
     {
         return crate::FL_ERR_INTERNAL;
     }
@@ -487,6 +495,57 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTranspor
             .set_byte_array_region(&out_payload, 0, &to_signed(&тела[..used]))
             .is_err()
     {
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    FL_OK
+}
+
+/// Подключается к устройству в локальной сети.
+///
+/// Экранирование подчёркивания объяснено у `nativeInit`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTransportConnect<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    ipv4: JByteArray<'local>,
+    port: jint,
+    out_conn: JLongArray<'local>,
+) -> jint {
+    let адрес = match env.convert_byte_array(&ipv4) {
+        Ok(v) if v.len() == 4 => v,
+        Ok(_) => return crate::FL_ERR_INVALID_ARG,
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+
+    let mut conn = FlHandle(0);
+    // Порт ограничивается здесь, а не в клиенте: клиент мог бы прислать
+    // отрицательное число, и `as u16` тихо превратил бы его в 65 тысяч.
+    if !(1..=u16::MAX as jint).contains(&port) {
+        return crate::FL_ERR_INVALID_ARG;
+    }
+
+    let status = unsafe {
+        crate::fl_transport_connect(
+            FlHandle(handle as u64),
+            адрес.as_ptr(),
+            port as u16,
+            &mut conn,
+        )
+    };
+    if status != FL_OK {
+        return status;
+    }
+
+    if env
+        .set_long_array_region(&out_conn, 0, &[conn.0 as jlong])
+        .is_err()
+    {
+        // Соединение уже создано и держится в транспорте. Отдать хэндл нечем, а
+        // оставить соединение жить — значит забыть про него навсегда: сокет
+        // останется открытым до конца процесса.
+        crate::fl_transport_conn_close(FlHandle(handle as u64), conn.0);
         return crate::FL_ERR_INTERNAL;
     }
 

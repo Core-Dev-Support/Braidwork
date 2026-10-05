@@ -225,6 +225,7 @@ pub fn build_hello(
     capabilities: &[String],
     nonce: u64,
     unix_time_ms: u64,
+    lan_port: u16,
 ) -> Result<Vec<u8>, SessionError> {
     let caps_hash = capabilities_hash(capabilities);
     let tape = keys.handshake_tape(&caps_hash, nonce);
@@ -248,6 +249,9 @@ pub fn build_hello(
         signature: prost::bytes::Bytes::copy_from_slice(&signature),
         nonce,
         unix_time_ms,
+        // Ноль означает «данные не принимаю». В подписи порта нет: он не часть
+        // личности, а просто адрес, по которому придут за данными.
+        lan_port: lan_port as u32,
     };
 
     Ok(hello.encode_to_vec())
@@ -491,7 +495,7 @@ mod tests {
     #[test]
     fn настоящий_hello_проходит_проверку() {
         let a = DeviceKeys::generate();
-        let body = build_hello(&a, "телефон", &default_capabilities(), 1, 0).expect("сборка");
+        let body = build_hello(&a, "телефон", &default_capabilities(), 1, 0, 0).expect("сборка");
         let hello = parse_and_verify_hello(&body, &a).expect("проверка");
 
         assert_eq!(hello.nonce, 1);
@@ -532,6 +536,7 @@ mod tests {
             signature: prost::bytes::Bytes::copy_from_slice(&подделка.sign(b"whatever")),
             nonce: 1,
             unix_time_ms: 0,
+            lan_port: 0,
         };
 
         assert_eq!(
@@ -546,7 +551,7 @@ mod tests {
         let другой = DeviceKeys::generate();
 
         // Ключ в сообщении не совпадает с объявленным при обнаружении.
-        let body = build_hello(&другой, "чужой", &default_capabilities(), 1, 0).expect("сборка");
+        let body = build_hello(&другой, "чужой", &default_capabilities(), 1, 0, 0).expect("сборка");
         assert_eq!(
             parse_and_verify_hello(&body, &ожидаемый).err(),
             Some(SessionError::Crypto(CryptoError::IdentityMismatch))
@@ -556,7 +561,7 @@ mod tests {
     #[test]
     fn hello_с_подменёнными_возможностями_отвергается() {
         let a = DeviceKeys::generate();
-        let original = build_hello(&a, "телефон", &caps(&["feature/v1"]), 7, 0).expect("сборка");
+        let original = build_hello(&a, "телефон", &caps(&["feature/v1"]), 7, 0, 0).expect("сборка");
 
         // Меняем набор возможностей в теле: подпись собрана по старому хэшу.
         let mut hello = Hello::decode(original.as_slice()).expect("разбор");
@@ -573,7 +578,8 @@ mod tests {
     #[test]
     fn hello_с_подменённым_nonce_отвергается() {
         let a = DeviceKeys::generate();
-        let original = build_hello(&a, "телефон", &default_capabilities(), 7, 0).expect("сборка");
+        let original =
+            build_hello(&a, "телефон", &default_capabilities(), 7, 0, 0).expect("сборка");
 
         let mut hello = Hello::decode(original.as_slice()).expect("разбор");
         hello.nonce = 8;
@@ -587,7 +593,8 @@ mod tests {
     #[test]
     fn hello_с_подменённым_именем_проходит_подпись_но_меняет_имя() {
         let a = DeviceKeys::generate();
-        let original = build_hello(&a, "телефон", &default_capabilities(), 7, 0).expect("сборка");
+        let original =
+            build_hello(&a, "телефон", &default_capabilities(), 7, 0, 0).expect("сборка");
 
         // Имя не входит в подпись: оно показывается пользователю и может быть
         // переименовано. Фиксируем поведение явно, чтобы изменение состава
@@ -626,6 +633,7 @@ mod tests {
             signature: prost::bytes::Bytes::new(),
             nonce: 1,
             unix_time_ms: 0,
+            lan_port: 0,
         };
         assert_eq!(
             parse_and_verify_hello(hello.encode_to_vec().as_slice(), &a).err(),
@@ -636,7 +644,7 @@ mod tests {
     #[test]
     fn идентификатор_в_hello_совпадает_с_вычисленным() {
         let a = DeviceKeys::generate();
-        let body = build_hello(&a, "планшет", &default_capabilities(), 3, 0).expect("сборка");
+        let body = build_hello(&a, "планшет", &default_capabilities(), 3, 0, 0).expect("сборка");
         let hello = parse_and_verify_hello(&body, &a).expect("проверка");
 
         let из_сообщения = hello.identity.expect("идентичность").device_id;

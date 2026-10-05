@@ -274,6 +274,14 @@ object BraidworkCore {
             val deviceId: ByteArray,
             val port: Int,
             val name: String,
+            /**
+             * Адрес в подсети, четыре байта в сетевом порядке.
+             *
+             * Нужен для подключения: порт у всех устройств один, и без адреса
+             * подключаться было бы некуда. Берётся из самого пакета объявления,
+             * а не из настроек сети — устройство может быть многоинтерфейсным.
+             */
+            val ipv4: ByteArray,
         ) : TransportEvent() {
             // ByteArray в data class сравнивается по ссылке, а не по содержимому:
             // два одинаковых идентификатора выглядели бы разными. Список
@@ -357,6 +365,7 @@ object BraidworkCore {
         val виды = IntArray(maxEvents)
         val вспомогательные = IntArray(maxEvents)
         val идентификаторы = ByteArray(maxEvents * DEVICE_ID_BYTES)
+        val адреса = ByteArray(maxEvents * 4)
         val смещения = IntArray(maxEvents)
         val длины = IntArray(maxEvents)
         val тела = ByteArray(payloadCap.coerceAtLeast(1))
@@ -364,7 +373,7 @@ object BraidworkCore {
 
         val status = nativeTransportPoll(
             handle, типы, коннекты, виды, вспомогательные,
-            идентификаторы, смещения, длины, тела, счётчик,
+            идентификаторы, адреса, смещения, длины, тела, счётчик,
         )
         if (status == STATUS_INVALID_ARG) {
             // Транспорта нет: либо освобождён, либо никогда не поднимался.
@@ -404,6 +413,7 @@ object BraidworkCore {
                     // чужом устройстве: тогда показываем честную заглушку, а не
                     // пустую строку, которая в плитке выглядит как поломка.
                     name = payload.toString(Charsets.UTF_8).ifEmpty { "Устройство" },
+                    ipv4 = адреса.copyOfRange(i * 4, i * 4 + 4),
                 )
 
                 EV_INCOMING -> TransportEvent.Incoming(conn)
@@ -432,6 +442,29 @@ object BraidworkCore {
     fun transportPort(handle: Long): Int {
         ensureLoaded()
         return nativeTransportPort(handle)
+    }
+
+    /**
+     * Подключается к устройству в локальной сети.
+     *
+     * [ipv4] — четыре байта адреса в сетевом порядке, как пришло в
+     * [TransportEvent.Discovered]. Строка разбирается на стороне клиента, и
+     * это вторая копия разбора адреса рядом с первой в ядре: они разошлись бы
+     * при первом же нестандартном написании.
+     *
+     * Возвращает хэндл соединения, по которому пойдёт рукопожатие и кадры.
+     */
+    fun transportConnect(handle: Long, ipv4: ByteArray, port: Int): Long {
+        require(ipv4.size == 4) { "адрес должен быть 4 байта" }
+        require(port in 1..65535) { "порт вне диапазона: $port" }
+        ensureLoaded()
+
+        val conn = LongArray(1)
+        val status = nativeTransportConnect(handle, ipv4, port, conn)
+        if (status != STATUS_OK) {
+            throw BraidworkException(status, "не удалось подключиться к устройству")
+        }
+        return conn[0]
     }
 
     /** Жив ли ещё транспорт по этому хэндлу. */
@@ -504,6 +537,7 @@ object BraidworkCore {
         outKind: IntArray,
         outAux: IntArray,
         outDevice: ByteArray,
+        outIp: ByteArray,
         outOff: IntArray,
         outPlen: IntArray,
         outPayload: ByteArray,
@@ -511,6 +545,12 @@ object BraidworkCore {
     ): Int
 
     private external fun nativeTransportPort(handle: Long): Int
+    private external fun nativeTransportConnect(
+        handle: Long,
+        ipv4: ByteArray,
+        port: Int,
+        outConn: LongArray,
+    ): Int
     private external fun nativeTransportStop(handle: Long): Int
     private external fun nativeTransportFree(handle: Long): Int
     private external fun nativeTransportAlive(handle: Long): Int

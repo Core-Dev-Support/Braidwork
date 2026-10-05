@@ -38,6 +38,10 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
          * не отличить ни от соседского телефона, ни от своего второго.
          */
         val name: String,
+        /** Адрес в подсети, четыре байта в сетевом порядке. */
+        val ipv4: ByteArray,
+        /** Соединение установлено и рукопожатие прошло. */
+        val connected: Boolean,
         /** Когда видели в последний раз, миллисекунды системного времени. */
         val lastSeenMs: Long,
     ) {
@@ -81,6 +85,15 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
     private val хэндл = AtomicLong(0)
     private val снимки = java.util.concurrent.atomic.AtomicReference(Snapshot.EMPTY)
 
+    /**
+     * Соответствие «хэндл соединения — устройство».
+     *
+     * Нужно потому, что события соединения приходят с хэндлом, а не с
+     * идентификатором: сопоставить их иначе не с чем, и список не знал бы,
+     * какое именно устройство подключилось.
+     */
+    private val соединения = java.util.concurrent.ConcurrentHashMap<Long, String>()
+
     @Volatile
     private var поток: Thread? = null
 
@@ -121,6 +134,11 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
         поток?.interrupt()
         поток = null
 
+        // Соединения закрываются вместе с каналом: отдельного вызова на каждое
+        // нет, а держать карту после остановки незачем — хэндлы уже мертвы, и
+        // первый же `Connected` после перезапуска вёл бы в пустоту.
+        соединения.clear()
+
         val h = хэндл.getAndSet(0)
         if (h != 0L) {
             runCatching { BraidworkCore.transportStop(h) }
@@ -132,6 +150,35 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
 
     /** Текущее состояние для интерфейса. */
     fun snapshot(): Snapshot = снимки.get()
+
+    /**
+     * Подключается к найденному устройству.
+     *
+     * Рукопожатие начнётся при следующем опросе, а результат придёт событием.
+     * Здесь только начинается: возвращать «подключено» сразу было бы враньём,
+     * между вызовом и рукопожатием проходит ещё несколько обменов.
+     *
+     * Повторное нажатие на то же устройство ничего не делает: соединение уже
+     * есть, а второе открыло бы второй сокет на тот же порт и забрало бы
+     * соединение у первого.
+     */
+    fun connect(устройство: Device): Boolean {
+        val h = хэндл.get()
+        if (h == 0L) return false
+
+        val id = устройство.deviceId.toHex()
+        if (соединения.values.contains(id)) return true
+
+        return try {
+            val conn = BraidworkCore.transportConnect(h, устройство.ipv4, устройство.port)
+            соединения[conn] = id
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "подключение не удалось", e)
+            publish(снимки.get().copy(problem = e.message ?: "не удалось подключиться"))
+            false
+        }
+    }
 
     /** Состояние канала. */
     fun state(): State = состояние
@@ -207,11 +254,38 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
             when (событие) {
                 is BraidworkCore.TransportEvent.Discovered -> {
                     val id = событие.deviceId
-                    прежние[id.toHex()] = Device(id, событие.port, событие.name, теперь)
+                    // Соединение не сбрасывается на каждом объявлении: оно
+                    // переживает паузу в сети и обрывается только по событию
+                    // FL_EV_CLOSED. Иначе плитка мигала бы «подключено» и
+                    // «не подключено» каждые две секунды.
+                    val было = прежние[id.toHex()]
+                    прежние[id.toHex()] = Device(
+                        deviceId = id,
+                        port = событие.port,
+                        name = событие.name,
+                        ipv4 = событие.ipv4,
+                        connected = было?.connected ?: false,
+                        lastSeenMs = теперь,
+                    )
                     if (!живой) {
                         живой = true
                         проблема = ""
                     }
+                }
+
+                // События соединения несут хэндл соединения, а не идентификатор
+                // устройства. Разбор идёт через карту, которую заполняет
+                // [connect]: инициатор знает, к кому подключился, а входящее
+                // соединение пока не с чем сопоставить — идентичность придёт
+                // после сверки Hello, и это следующий шаг.
+                is BraidworkCore.TransportEvent.Connected -> {
+                    val id = соединения[событие.conn] ?: continue
+                    прежние[id]?.let { прежние[id] = it.copy(connected = true) }
+                }
+
+                is BraidworkCore.TransportEvent.Closed -> {
+                    val id = соединения.remove(событие.conn) ?: continue
+                    прежние[id]?.let { прежние[id] = it.copy(connected = false) }
                 }
 
                 is BraidworkCore.TransportEvent.State ->

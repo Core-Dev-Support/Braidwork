@@ -433,6 +433,9 @@ pub unsafe extern "C" fn fl_hello_build(
             &crate::session::default_capabilities(),
             nonce,
             unix_time_ms,
+            // `Hello` по соединению не несёт адреса: соединение уже установлено,
+            // и порт объявлять незачем. Ноль честнее выдуманного значения.
+            0,
         ) {
             Ok(h) => h,
             Err(e) => return status_from_session(&e),

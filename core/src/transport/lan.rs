@@ -35,7 +35,7 @@
 
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream, UdpSocket};
 use std::time::{Duration, Instant};
 
 use crate::crypto::DeviceKeys;
@@ -44,7 +44,7 @@ use crate::pb::{Hello, MessageKind};
 use crate::session::{build_hello, default_capabilities, Handshake, HandshakeStep, Role, Session};
 use crate::transport::{
     Channel, Connection, Transport, TransportError, TransportEvent, TransportState,
-    ANNOUNCE_INTERVAL_MS, BROADCAST_ADDR, DISCOVERY_PORT, LAN_PORT,
+    ANNOUNCE_INTERVAL_MS, BROADCAST_ADDR, DISCOVERY_PORT,
 };
 use prost::Message;
 
@@ -69,6 +69,16 @@ enum Phase {
 /// Одно соединение внутри транспорта.
 struct Peer {
     stream: TcpStream,
+    /// Откуда соединение. Нужно для события `Connected`: без адреса клиент не
+    /// показал бы, куда он подключился.
+    remote: SocketAddr,
+    /// Сторона рукопожатия. Тоже для события `Connected`: у инициатора и
+    /// ответчика разный смысл, и путать их в интерфейсе нельзя.
+    role: Role,
+    /// Хэндл соединения. Совпадает с ключом в таблице, но нужен сам: событие
+    /// собирается отсюда, а искать себя в таблице во время обхода означало бы
+    /// лезть в `self` от ссылки на элемент той же таблицы.
+    handle: u64,
     phase: Phase,
     /// Накопитель входящих кадров.
     reader: FrameReader,
@@ -176,6 +186,9 @@ impl LanTransport {
             &default_capabilities(),
             nonce,
             unix_time_ms,
+            // Настоящий порт, а не константа: клиент подключается именно туда,
+            // и угадывать было бы вслепую.
+            self.port,
         )
         .map_err(|e| TransportError::Other(e.to_string()))?;
 
@@ -202,6 +215,9 @@ impl LanTransport {
         let handle = self.take_handle();
         let mut peer = Peer {
             stream,
+            remote: addr,
+            role: Role::Initiator,
+            handle,
             phase: Phase::Handshake(Box::new(handshake)),
             reader: FrameReader::new(),
             outbox: Vec::new(),
@@ -218,13 +234,12 @@ impl LanTransport {
         queue_handshake_step(&mut peer.outbox, step)?;
 
         self.peers.insert(handle, peer);
-        self.events.push(TransportEvent::Connected(Connection::new(
-            handle,
-            Role::Initiator,
-            addr,
-            Transport::Lan,
-        )));
 
+        // Событие `Connected` здесь **не** отправляется. TCP-соединение
+        // открыто, но рукопожатие ещё не прошло, а называть устройство «на
+        // связи» рано: через мгновение рукопожатие может провалиться, и
+        // подпись не сойдётся. Событие уходит из `шаг_рукопожатия`, когда
+        // соединение действительно готово к данным.
         Ok(handle)
     }
 
@@ -341,6 +356,9 @@ impl LanTransport {
                 handle,
                 Peer {
                     stream,
+                    remote,
+                    role: Role::Responder,
+                    handle,
                     phase: Phase::Handshake(Box::new(handshake)),
                     reader: FrameReader::new(),
                     outbox: Vec::new(),
@@ -364,13 +382,13 @@ impl LanTransport {
     /// известен. Поэтому объявление годится, чтобы показать «устройство
     /// рядом», и не годится, чтобы пустить в дом.
     fn read_discovery(&mut self) {
-        let mut найдено: Vec<(Vec<u8>, String)> = Vec::new();
+        let mut найдено: Vec<(Vec<u8>, SocketAddr, String)> = Vec::new();
         let mut сбой: Option<TransportError> = None;
 
         if let Some(discovery) = &self.discovery {
             let mut buf = [0u8; DISCOVERY_BUF];
             loop {
-                let (n, _) = match discovery.recv_from(&mut buf) {
+                let (n, откуда) = match discovery.recv_from(&mut buf) {
                     Ok(v) => v,
                     Err(ref e) if e.kind() == ErrorKind::WouldBlock => break,
                     Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
@@ -398,22 +416,45 @@ impl LanTransport {
                     continue;
                 }
 
+                // Порт данных объявлен в самом сообщении. Портом отправки
+                // подставлять нельзя: UDP-объявление уходит с порта обнаружения,
+                // и клиент подключался бы туда, где никто не слушает.
+                let порт = u16::try_from(hello.lan_port).unwrap_or(0);
+                if порт == 0 {
+                    // Устройство объявило себя, но данных не принимает. Показывать
+                    // его незачем: нажать будет не на что.
+                    continue;
+                }
+
                 let id = identity.device_id.to_vec();
                 // Своё объявление слышно и себе: напарником оно не является.
                 if id.as_slice() == self.keys.device_id().as_bytes() {
                     continue;
                 }
-                найдено.push((id, пригодное_имя(&identity.display_name)));
+
+                // IPv4 обязателен: клиент на Android передаёт адрес четырьмя
+                // байтами, и для IPv6 пришлось бы менять контракт. Объявление по
+                // IPv6 сюда не дойдёт, поэтому отбрасываем его молча — это не
+                // ошибка, а «канал так не работает».
+                let IpAddr::V4(ip) = откуда.ip() else {
+                    continue;
+                };
+
+                найдено.push((
+                    id,
+                    SocketAddr::from((ip, порт)),
+                    пригодное_имя(&identity.display_name),
+                ));
             }
         }
 
         if let Some(e) = сбой {
             self.events.push(TransportEvent::Notice(e));
         }
-        for (device_id, name) in найдено {
+        for (device_id, addr, name) in найдено {
             self.events.push(TransportEvent::Discovered {
                 device_id,
-                port: LAN_PORT,
+                addr,
                 name,
             });
         }
@@ -542,7 +583,20 @@ impl LanTransport {
                 if let Some(handshake) = peer.phase.as_handshake_mut() {
                     if handshake.is_finished() {
                         match handshake.take_session() {
-                            Ok(session) => peer.phase = Phase::Data(Box::new(session)),
+                            Ok(session) => {
+                                peer.phase = Phase::Data(Box::new(session));
+
+                                // Только теперь соединение действительно готово
+                                // к данным. Событие на открытии TCP было бы
+                                // враньём: рукопожатие ещё могло провалиться,
+                                // и подпись не сошлась бы.
+                                self.events.push(TransportEvent::Connected(Connection::new(
+                                    peer.handle,
+                                    peer.role,
+                                    peer.remote,
+                                    Transport::Lan,
+                                )));
+                            }
                             Err(e) => {
                                 peer.dead = true;
                                 self.events
@@ -1048,6 +1102,59 @@ mod tests {
             a.take_session().expect("сессия инициатора"),
             b.take_session().expect("сессия ответчика"),
         )
+    }
+
+    /// «На связи» появляется только после рукопожатия, а не на открытии TCP.
+    ///
+    /// Раньше событие уходило сразу после `connect`, и подпись в плитке
+    /// обещала связь заранее. Между открытием сокета и рукопожатием есть
+    /// несколько обменов, и любая из них может провалиться — тогда пользователь
+    /// увидел бы «на связи» у устройства, с которым связаться не удалось.
+    ///
+    /// Тест ловит именно момент: сразу после `connect` события быть не должно,
+    /// а после рукопожатия — должно.
+    #[test]
+    fn на_связи_только_после_рукопожатия() {
+        let mut a = LanTransport::bind(DeviceKeys::generate(), "A".to_owned(), 0).expect("порт A");
+        let mut b = LanTransport::bind(DeviceKeys::generate(), "B".to_owned(), 0).expect("порт B");
+
+        let target = std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, b.port());
+        let handle = a.connect(target.into()).expect("соединение");
+
+        // Один опрос: TCP уже открыт, но ни одного байта рукопожатия ещё не
+        // дошло, объявлять устройство «на связи» рано.
+        a.poll().expect("poll A");
+        // Один опрос: TCP уже открыт, но ни одного байта рукопожатия ещё не
+        // дошло, объявлять устройство «на связи» рано.
+        let первый = a.poll().expect("poll A");
+        b.poll().expect("poll B");
+        assert!(
+            !первый
+                .iter()
+                .any(|e| matches!(e, TransportEvent::Connected(_))),
+            "событие Connected пришло до рукопожатия: подпись обещала связь раньше времени"
+        );
+
+        // Доводим рукопожатие.
+        let mut готово = false;
+        for _ in 0..50 {
+            for событие in a.poll().expect("poll A") {
+                if let TransportEvent::Connected(c) = событие {
+                    assert_eq!(c.handle, handle);
+                    assert_eq!(c.role, Role::Initiator);
+                    готово = true;
+                }
+            }
+            b.poll().expect("poll B");
+            if готово {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            готово,
+            "после рукопожатия событие Connected так и не пришло"
+        );
     }
 
     /// Ответчик не обязан знать напарника заранее: принимает первое сообщение
