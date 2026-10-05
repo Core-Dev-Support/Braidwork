@@ -529,24 +529,32 @@ fun DeviceDetailScreen(
             .padding(top = 12.dp),
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp),
+            // Без горизонтального отступа: свой отступ 12 dp есть у самой
+            // стрелки назад, и строка добавляла к нему ещё 12. Стрелка уезжала
+            // на 24 dp от края, тогда как на «Сети» и «Соединении» она стоит
+            // на тех же 12. Шаг в 12 на глаз виден сразу и выглядит как ошибка.
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             BackButton(onClick = onBack)
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .tapNoRipple(onClick = onMore),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = IcwMore,
-                    contentDescription = "Ещё",
-                    tint = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.size(26.dp),
-                )
+
+            // Отступ справа задаётся обёрткой, а не самой кнопкой: иначе он
+            // съел бы часть поля нажатия, и кнопка «Ещё» попадала бы под палец
+            // заметно труднее, чем стрелка.
+            Box(modifier = Modifier.padding(end = 12.dp)) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .tapNoRipple(onClick = onMore),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = IcwMore,
+                        contentDescription = "Ещё",
+                        tint = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.size(26.dp),
+                    )
+                }
             }
         }
 
