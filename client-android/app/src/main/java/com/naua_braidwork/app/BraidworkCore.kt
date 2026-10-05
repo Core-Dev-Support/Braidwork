@@ -260,15 +260,29 @@ object BraidworkCore {
 
     /** Что произошло в транспорте. */
     sealed class TransportEvent {
-        /** Найдено устройство в сети. Ещё не сопряжено. */
-        data class Discovered(val deviceId: ByteArray, val port: Int) : TransportEvent() {
+        /**
+         * Найдено устройство в сети. Ещё не сопряжено.
+         *
+         * [name] — то, что устройство назвало само. Это **заявление**, а не
+         * проверенный факт: подпись сверяется только на соединении, а объявление
+         * приходит по UDP от кого угодно из подсети. Показывать его нужно,
+         * иначе в списке стояло бы «Устройство» и в общей квартире, где чужой
+         * телефон лежит рядом с твоим, отличить их было бы нечем. После
+         * соединения настоящее имя занимает место заявленного.
+         */
+        data class Discovered(
+            val deviceId: ByteArray,
+            val port: Int,
+            val name: String,
+        ) : TransportEvent() {
             // ByteArray в data class сравнивается по ссылке, а не по содержимому:
             // два одинаковых идентификатора выглядели бы разными. Список
             // устройств менялся бы при каждом объявлении, а выглядел бы так же.
             override fun equals(other: Any?) =
-                other is Discovered && deviceId.contentEquals(other.deviceId) && port == other.port
+                other is Discovered && deviceId.contentEquals(other.deviceId) &&
+                    port == other.port && name == other.name
 
-            override fun hashCode() = 31 * deviceId.contentHashCode() + port
+            override fun hashCode() = (31 * deviceId.contentHashCode() + port) * 31 + name.hashCode()
         }
 
         /** Пришло входящее соединение. Рукопожатие идёт, сверки ещё не было. */
@@ -385,6 +399,11 @@ object BraidworkCore {
                 EV_DISCOVERED -> TransportEvent.Discovered(
                     deviceId = идентификаторы.copyOfRange(i * DEVICE_ID_BYTES, (i + 1) * DEVICE_ID_BYTES),
                     port = вспомогательные[i],
+                    // Ядро гарантирует, что имя не пустое и без управляющих
+                    // символов, но разбор UTF-8 всё равно может не сойтись на
+                    // чужом устройстве: тогда показываем честную заглушку, а не
+                    // пустую строку, которая в плитке выглядит как поломка.
+                    name = payload.toString(Charsets.UTF_8).ifEmpty { "Устройство" },
                 )
 
                 EV_INCOMING -> TransportEvent.Incoming(conn)

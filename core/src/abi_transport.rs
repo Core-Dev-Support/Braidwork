@@ -250,7 +250,11 @@ fn в_c(событие: &TransportEvent, смещение: usize) -> (FlTransEve
             запись.state = код_состояния(*s);
             (запись, &[])
         }
-        TransportEvent::Discovered { device_id, port } => {
+        TransportEvent::Discovered {
+            device_id,
+            port,
+            name,
+        } => {
             запись.event_type = FL_EV_DISCOVERED;
             запись.port = *port;
             // Идентификатор короче 16 байт только у мусорного объявления.
@@ -262,7 +266,14 @@ fn в_c(событие: &TransportEvent, смещение: usize) -> (FlTransEve
             for (i, chunk) in id.chunks_exact(4).enumerate() {
                 запись.device_id[i] = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
             }
-            (запись, &[])
+
+            // Имя кладём в слот тела, а не в отдельное поле структуры. Причина
+            // та же, по которой тела кадров не в структуре: переменная длина в
+            // фиксированной раскладке означала бы либо обрезку, либо вторую
+            // копию раскладки в клиенте.
+            запись.payload_off = смещение as u32;
+            запись.payload_len = name.len() as u32;
+            (запись, name.as_bytes())
         }
         TransportEvent::Incoming(c) => {
             запись.event_type = FL_EV_INCOMING;
@@ -643,9 +654,10 @@ mod tests {
             let событие = TransportEvent::Discovered {
                 device_id: vec![0xABu8; длина],
                 port: 42424,
+                name: "Устройство".to_owned(),
             };
             let (запись, тело) = в_c(&событие, 0);
-            assert_eq!(тело.len(), 0);
+            assert_eq!(тело, "Устройство".as_bytes());
             assert_eq!(запись.event_type, FL_EV_DISCOVERED);
             assert_eq!(запись.port, 42424);
             // Всё, что поместилось, — правильные байты; лишнее — нули.
@@ -654,6 +666,21 @@ mod tests {
                 assert_eq!(первый, [0xAB; 4]);
             }
         }
+    }
+
+    /// Имя доходит до клиента в теле, а не отдельным полем структуры.
+    #[test]
+    fn имя_идёт_в_теле_события() {
+        let событие = TransportEvent::Discovered {
+            device_id: vec![7u8; 16],
+            port: 42424,
+            name: "Redmi Note 12".to_owned(),
+        };
+        let (запись, тело) = в_c(&событие, 24);
+
+        assert_eq!(тело, "Redmi Note 12".as_bytes());
+        assert_eq!(запись.payload_off, 24, "смещение имени передаётся наружу");
+        assert_eq!(запись.payload_len, тело.len() as u32);
     }
 
     /// Тело кадра кладётся в буфер по смещению, указанному в событии.
