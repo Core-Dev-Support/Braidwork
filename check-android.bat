@@ -45,7 +45,7 @@ echo === Exported symbols ===
 echo.
 
 set "OK=1"
-for %%M in (nativeInit nativeDeviceId nativeVerifySignature nativeKeysCreate nativeKeysLoad nativeKeysDeviceId) do (
+for %%M in (nativeInit nativeDeviceId nativeVerifySignature nativeKeysCreate nativeKeysLoad nativeKeysDeviceId nativeTransportStart nativeTransportPoll nativeTransportPort nativeTransportStop nativeTransportFree nativeTransportAlive nativeFrameEncode) do (
   findstr /C:"Java_com_naua_1braidwork_app_BraidworkCore_%%M" "%SO%" >nul || (
     echo FAIL: no symbol for %%M
     set "OK=0"
