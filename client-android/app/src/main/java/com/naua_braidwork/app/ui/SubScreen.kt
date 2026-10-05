@@ -36,6 +36,7 @@ import com.naua_braidwork.app.ui.screens.NotifsScreen
 import com.naua_braidwork.app.ui.screens.RoadmapScreen
 import com.naua_braidwork.app.ui.screens.PairScreen
 import com.naua_braidwork.app.ui.screens.SecurityScreen
+import com.naua_braidwork.app.ui.state.DeviceSummary
 import com.naua_braidwork.app.ui.state.LinkMode
 import com.naua_braidwork.app.ui.state.RowEnd
 import com.naua_braidwork.app.ui.state.Sample
@@ -99,6 +100,17 @@ fun SubScreen(
     onRoute: (String) -> Unit,
     onOpenSystemSettings: () -> Unit,
     onOpenListenerSettings: () -> Unit,
+    /**
+     * Устройство, открытое на карточке.
+     *
+     * Передаётся данными, а не ищется в списке по индексу: список пересобирается
+     * каждые две секунды, и устройство, выбранное полминуты назад, успело бы
+     * поменяться местом. Карточка обязана показывать то, на что нажали.
+     *
+     * `null` — устройство не выбрано: список был пуст, или нажали на закрытый
+     * подэкран. Тогда показывается честное сообщение, а не чужая карточка.
+     */
+    selectedDevice: DeviceSummary? = null,
     modifier: Modifier = Modifier,
 ) {
     // Значения переключателей живут здесь, а не в описании экрана: описание
@@ -235,9 +247,9 @@ fun SubScreen(
             )
 
             Route.DEVICE -> {
-                // Устройства пока нет, поэтому состояние для карточки тоже
-                // нет. Экран включается вместе с первым найденным устройством.
-                val device = Sample.devicesState().devices.firstOrNull()
+                // Устройство приходит из списка, а не берётся первым попавшимся:
+                // нажатие на третью плитку обязано открыть третью.
+                val device = selectedDevice
                 if (device == null) {
                     MissingScreen("Устройство не выбрано", onBack)
                 } else {

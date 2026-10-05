@@ -121,6 +121,11 @@ fun BraidworkApp(
     val поиск = remember { LinkService.поиск }
     val снимок = remember { mutableStateOf(DeviceDiscovery.Snapshot.EMPTY) }
 
+    // Устройство, открытое на карточке. Хранится отдельно от списка: список
+    // пересобирается каждые две секунды, и карточка открытого устройства
+    // закрылась бы сама, как только пришло следующее объявление.
+    var выбранное by remember { mutableStateOf<DeviceSummary?>(null) }
+
     LaunchedEffect(поиск) {
         // Канал поднимается в сервисе, а не здесь: он обязан пережить сворачивание
         // приложения. Пока сервис не начал, список честно пуст.
@@ -225,10 +230,14 @@ fun BraidworkApp(
                     themeChoice = settings.theme,
                     onThemeChoice = { choice -> settings.chooseTheme(choice) },
                     onBack = { stack.removeAt(stack.lastIndex) },
-                    onRow = { },
+                    // Строки внутри подэкрана открывают свои подэкраны, как и
+                    // раньше. Раньше здесь стояла пустая лямбда, и нажатие на
+                    // любую строку не делало ничего.
+                    onRow = { id -> if (id in OPEN_ROUTES) stack.add(id) },
                     onRoute = { id -> if (id in OPEN_ROUTES) stack.add(id) },
                     onOpenSystemSettings = openSystemSettings,
                     onOpenListenerSettings = openListenerSettings,
+                    selectedDevice = выбранное,
                 )
             } else {
                 when (tab) {
@@ -260,7 +269,14 @@ fun BraidworkApp(
                         state = devicesState,
                         onFilter = { filter = it },
                         onAdd = { stack.add(Route.PAIR) },
-                        onDevice = { tab = Tab.Devices },
+                        // Нажатие открывает карточку именно этого устройства.
+                        // Раньше здесь стояло `tab = Tab.Devices`, то есть
+                        // нажатие на плитку ничего не делало: пользователь
+                        // жал, экран не менялся, и это выглядело как поломка.
+                        onDevice = { device ->
+                            выбранное = device
+                            stack.add(Route.DEVICE)
+                        },
                     )
 
                     Tab.Share -> ShareScreen(
