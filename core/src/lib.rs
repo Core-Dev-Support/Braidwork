@@ -17,8 +17,10 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 mod abi_session;
 mod crypto;
+mod frame;
 mod registry;
 mod session;
+pub mod transport;
 
 // Мост к JVM нужен только под Android. На десктопе клиент обращается к ядру
 // через C ABI напрямую, и зависимость от `jni` была бы лишней.
@@ -36,6 +38,10 @@ pub use abi_session::{
     FL_ROLE_RESPONDER, FL_STEP_COMPLETE, FL_STEP_SEND, FL_STEP_WAIT,
 };
 pub use crypto::{verify_handshake, CryptoError, DeviceId, DeviceKeys, DEVICE_KEYS_BLOB_LEN};
+pub use frame::{
+    encode, encode_raw, is_known_kind, split, FrameError, FrameHeader, FrameReader, FRAME_MAGIC,
+    FRAME_VERSION, HEADER_LEN, MAX_BODY_LEN,
+};
 pub use session::{
     build_hello, default_capabilities, parse_and_verify_hello, Handshake, HandshakeStep, Role,
     Session, SessionError,

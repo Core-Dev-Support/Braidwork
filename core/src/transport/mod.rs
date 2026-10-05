@@ -1,0 +1,283 @@
+//! Общий интерфейс транспортов.
+//!
+//! Пять каналов — LAN, SoftAP, USB, BLE, ICE — скрыты за одним типом. Признаки
+//! вроде «буфер обмена», «файлы», «уведомления» не должны знать, по какому
+//! каналу идёт трафик: иначе пришлось бы переписывать их на каждый новый
+//! транспорт, а канал, работающий через точку доступа, отличался бы от прямого
+//! только в одной строке.
+//!
+//! Транспорт не `async`. Наружу из ядра отдаётся колбэк, а не футура (см.
+//! правила в `lib.rs`), и весь обмен сокетами идёт через `poll`, который
+//! клиент зовёт из своего потока. Это оставляет ядро независимым от выбранной
+//! в клиенте модели потоков.
+//!
+//! ## Чего транспорт не делает
+//!
+//! Не шифрует. Кадры уходят по сети открыто, и это осознанно: подпись `Hello`
+//! и сверка личности всё равно нужны, а шифрование каждого сообщения поверх
+//! TLS-подобного канала двойной работы не даёт. Исключение — обмен ключами:
+//! до `fl_session_finish` в канале нет ничего, кроме рукопожатия.
+
+use std::fmt;
+use std::net::SocketAddr;
+
+use crate::frame::FrameHeader;
+
+// Каналы включаются по фичам: клиент без интерфейса и без Bluetooth не должен
+// тащить их в сборку (см. eatures в Cargo.toml).
+#[cfg(feature = "transport-lan")]
+pub mod lan;
+
+/// Состояние транспорта.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TransportState {
+    /// Не запущен.
+    Idle,
+    /// Идёт объявление о себе.
+    Announcing,
+    /// Готов принимать и делать соединения.
+    Ready,
+    /// Останавливается: сокеты уже закрыты, ресурсы освобождаются.
+    Stopping,
+    /// Остановлен по ошибке, состояние сброшено.
+    Failed,
+}
+
+/// Канал связи.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Transport {
+    /// Прямое соединение в одной сети.
+    Lan,
+    /// Телефон поднял точку доступа, ноутбук подключился.
+    SoftAp,
+    /// Кабель или переходник.
+    Usb,
+    /// Bluetooth Low Energy.
+    Ble,
+    /// Интернет через ICE/STUN.
+    Ice,
+}
+
+impl Transport {
+    /// Строковое имя для журналов и интерфейса.
+    pub fn name(self) -> &'static str {
+        match self {
+            Transport::Lan => "Локальная сеть",
+            Transport::SoftAp => "Точка доступа",
+            Transport::Usb => "USB",
+            Transport::Ble => "Bluetooth LE",
+            Transport::Ice => "Интернет",
+        }
+    }
+
+    /// Требует ли канал прямого физического присутствия.
+    ///
+    /// Разница видна пользователю: `false` означает, что связь держится сама и
+    /// рвётся при уходе из зоны, и полагаться на неё в сценариях, где важна
+    /// доступность, нельзя.
+    pub fn is_local(self) -> bool {
+        matches!(
+            self,
+            Transport::Lan | Transport::SoftAp | Transport::Usb | Transport::Ble
+        )
+    }
+}
+
+/// Что транспорт сообщил клиенту.
+#[derive(Debug)]
+pub enum TransportEvent {
+    /// Состояние изменилось.
+    State(TransportState),
+    /// Найдено устройство, ещё не сопрягавшееся. Приходит многократно от
+    /// одного устройства — клиент сам решает, когда показать.
+    Discovered {
+        /// Идентификатор устройства, 16 байт.
+        device_id: Vec<u8>,
+        /// Порт, на котором устройство ждёт соединения.
+        port: u16,
+    },
+    /// Пришло входящее соединение. Готово к рукопожатию, но ещё не проверено:
+    /// сверку делает клиент через `fl_hello_verify`.
+    Incoming(Connection),
+    /// Открыто исходящее соединение.
+    Connected(Connection),
+    /// Пришёл целый кадр.
+    Frame {
+        conn: u64,
+        header: FrameHeader,
+        body: Vec<u8>,
+    },
+    /// Соединение закрыто по инициативе обеих сторон или из-за ошибки.
+    Closed { conn: u64 },
+    /// Нефатальная ошибка: объявление не ушло, соединение не принято.
+    /// Транспорт продолжает работать.
+    Notice(TransportError),
+}
+
+/// Ошибка транспорта.
+#[derive(Debug)]
+pub enum TransportError {
+    /// Сокет не создался.
+    Bind(std::io::Error),
+    /// Ошибка приёма или отправки.
+    Io(std::io::Error),
+    /// Разбор кадра не сошёлся. Соединение после этого закрыто.
+    Frame(crate::frame::FrameError),
+    /// Транспорт уже остановлен или не запущен.
+    NotRunning,
+    /// Запрошенный адрес занят или недоступен.
+    Unreachable(SocketAddr),
+    /// Транспорт недоступен на этой платформе.
+    Unsupported(&'static str),
+    /// Прочие ошибки ядра.
+    Other(String),
+}
+
+impl fmt::Display for TransportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TransportError::Bind(e) => write!(f, "порт занят: {e}"),
+            TransportError::Io(e) => write!(f, "ошибка сокета: {e}"),
+            TransportError::Frame(e) => write!(f, "плохой кадр: {e}"),
+            TransportError::NotRunning => write!(f, "транспорт не запущен"),
+            TransportError::Unreachable(a) => write!(f, "адрес недоступен: {a}"),
+            TransportError::Unsupported(t) => write!(f, "канал {t} недоступен"),
+            TransportError::Other(s) => write!(f, "{s}"),
+        }
+    }
+}
+
+impl std::error::Error for TransportError {}
+
+impl From<std::io::Error> for TransportError {
+    fn from(e: std::io::Error) -> Self {
+        TransportError::Io(e)
+    }
+}
+
+impl From<crate::frame::FrameError> for TransportError {
+    fn from(e: crate::frame::FrameError) -> Self {
+        TransportError::Frame(e)
+    }
+}
+
+/// Соединение внутри транспорта.
+///
+/// Тело не отдаётся отдельно от заголовка: клиенту всё равно нужно и то и
+/// другое, а раздельные структуры заставили бы его складывать их обратно.
+#[derive(Debug)]
+pub struct Connection {
+    /// Хэндл, который клиент использует в `fl_session_*`.
+    pub handle: u64,
+    /// Сторона рукопожатия.
+    pub role: crate::session::Role,
+    /// Откуда пришло, для показа в интерфейсе.
+    pub remote: SocketAddr,
+    /// Канал, по которому идёт.
+    pub transport: Transport,
+}
+
+impl Connection {
+    pub fn new(
+        handle: u64,
+        role: crate::session::Role,
+        remote: SocketAddr,
+        transport: Transport,
+    ) -> Self {
+        Connection {
+            handle,
+            role,
+            remote,
+            transport,
+        }
+    }
+}
+
+/// Общий интерфейс каналов.
+///
+/// События забираются **только** через [LanTransport::poll]-подобный вызов,
+/// который возвращает список и опустошает очередь. Второго способа нет
+/// намеренно: когда события можно забрать и возвратом, и отдельным
+/// `take_events`, вторая попытка всегда приходит пустой, а тест на события
+/// молча проходит, ничего не проверяя.
+pub trait Channel: Send {
+    /// Какой это канал.
+    fn kind(&self) -> Transport;
+
+    /// Текущее состояние.
+    fn state(&self) -> TransportState;
+
+    /// Отправляет кадр в соединение.
+    fn send(&mut self, conn: u64, bytes: &[u8]) -> Result<(), TransportError>;
+
+    /// Закрывает соединение.
+    fn close(&mut self, conn: u64) -> Result<(), TransportError>;
+
+    /// Останавливает транспорт.
+    fn stop(&mut self) -> Result<(), TransportError>;
+
+    /// Объявляет своё присутствие.
+    ///
+    /// Вызывается транспортом, а не клиентом: клиенту не знать, что для LAN
+    /// нужен широковещательный сокет, а для BLE — реклама.
+    fn announce(&mut self) -> Result<(), TransportError>;
+}
+
+/// Порт, на котором ядро принимает соединения LAN.
+///
+/// Не 0: клиенту нужен известный адрес, иначе он не смог бы ни объявить себя,
+/// ни объяснить пользователю, куда вводить адрес вручную.
+pub const LAN_PORT: u16 = 42424;
+
+/// Порт для широковещательного объявления.
+///
+/// Отдельный от [LAN_PORT]: объявление рассылается всем подряд, а данные
+/// принимает только тот, кто ждёт. Смешивать их в одном порту значило бы
+/// отвечать на объявления чужих устройств.
+pub const DISCOVERY_PORT: u16 = 42425;
+
+/// Широковещательный адрес для сетей с маской /24.
+pub const BROADCAST_ADDR: [u8; 4] = [255, 255, 255, 255];
+
+/// Как часто устройство повторяет объявление.
+///
+/// 2 секунды — заметно быстрее обычных mDNS, чтобы нажатие на «Найти» не
+/// ждало. Повторы не вредят: подпись уже собрана, повторяется только дата в
+/// `nonce`, а сверка `Hello` на канале от объявления не зависит.
+pub const ANNOUNCE_INTERVAL_MS: u64 = 2000;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn у_каналов_есть_человеческие_имена() {
+        // Имя канала попадает в интерфейс. Пустой строки быть не должно: она
+        // превратилась бы в пустую строку в списке устройств.
+        for t in [
+            Transport::Lan,
+            Transport::SoftAp,
+            Transport::Usb,
+            Transport::Ble,
+            Transport::Ice,
+        ] {
+            assert!(!t.name().is_empty(), "у канала пустое имя");
+        }
+    }
+
+    #[test]
+    fn локальные_каналы_отмечены_верно() {
+        assert!(Transport::Lan.is_local());
+        assert!(Transport::SoftAp.is_local());
+        assert!(Transport::Usb.is_local());
+        assert!(Transport::Ble.is_local());
+        assert!(!Transport::Ice.is_local(), "интернет не локальный канал");
+    }
+
+    #[test]
+    fn порты_разные() {
+        // На одном порту объявление и данные нельзя смешивать: на объявление
+        // отвечают все, кто слушает этот порт.
+        assert_ne!(LAN_PORT, DISCOVERY_PORT);
+    }
+}
