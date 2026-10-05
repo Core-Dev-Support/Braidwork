@@ -15,11 +15,12 @@ package com.naua_braidwork.app
  * Третья — буферы. Ядро требует буфер известного размера, а здесь размеры
  * живут в одной строке, а не размазаны по вызовам.
  *
- * Набор функций пока узкий: идентичность устройства и проверка подписи.
- * Сессии и транспорт ещё не реализованы, поэтому об хэндлах здесь знать
- * нечего — они появятся вместе с ними.
+ * Что здесь есть: идентичность устройства, проверка подписи, сборка кадра и
+ * канал локальной сети. Сессии из клиента пока не зовутся — ими пользуется сам
+ * транспорт, и второй путь к тому же рукопожатию разошёлся бы с первым.
  *
- * Статусы ядра: 0 — успех, 3 — криптография, 4 — не доверяем, 8 — паника ядра.
+ * Статусы ядра: 0 — успех, 1 — неверный аргумент, 2 — не хватило места,
+ * 3 — криптография, 4 — не доверяем, 8 — паника ядра, 9 — хранилище.
  */
 object BraidworkCore {
 
@@ -40,10 +41,48 @@ object BraidworkCore {
     const val DEVICE_ID_MAX = 32
 
     const val STATUS_OK = 0
+    const val STATUS_INVALID_ARG = 1
+    const val STATUS_NO_MEMORY = 2
     const val STATUS_CRYPTO = 3
     const val STATUS_NOT_TRUSTED = 4
     const val STATUS_PANIC = 8
     const val STATUS_STORAGE = 9
+
+    // =====================================================================
+    // Типы событий транспорта
+    //
+    // Значения повторяют константы ядра и потому лежат рядом с ними в одном
+    // файле: разойтись они могут только при правке ядра, и тогда сверка на CI
+    // (заголовок против библиотеки) не заметит, потому что она смотрит на
+    // имена функций, а не на числа внутри тела. Числа поэтому дублируются
+    // сознательно, с проверкой в тестах клиента.
+    // =====================================================================
+
+    const val EV_STATE = 0
+    const val EV_DISCOVERED = 1
+    const val EV_INCOMING = 2
+    const val EV_CONNECTED = 3
+    const val EV_FRAME = 4
+    const val EV_CLOSED = 5
+    const val EV_NOTICE = 6
+
+    /** Состояния транспорта для [TransportEvent.State]. */
+    const val STATE_IDLE = 0
+    const val STATE_ANNOUNCING = 1
+    const val STATE_READY = 2
+    const val STATE_STOPPING = 3
+    const val STATE_FAILED = 4
+
+    /** Длина идентификатора устройства в байтах. */
+    const val DEVICE_ID_BYTES = 16
+
+    /**
+     * Запас на заголовок кадра: 10 байт плюс запись varint на длину.
+     *
+     * Тело уже готово, поэтому длина известна, и её запись в protobuf занимает
+     * не больше 5 байт для тела до 2 ГиБ. Значение округлено с запасом.
+     */
+    const val FRAME_MAX_OVERHEAD = 16
 
     @Volatile
     private var loaded = false
@@ -209,12 +248,260 @@ object BraidworkCore {
         }
     }
 
+    // =====================================================================
+    // Транспорт
+    //
+    // События отдаются ядром параллельными массивами, а не структурой. Так
+    // раскладку события знает только Rust: если бы клиент размещал структуру
+    // ядра у себя, в проекте стало бы две её копии, и расхождение выглядело бы
+    // как «события приходят с мусором» — искать пришлось бы в интерфейсе, а не
+    // в ядре.
+    // =====================================================================
+
+    /** Что произошло в транспорте. */
+    sealed class TransportEvent {
+        /** Найдено устройство в сети. Ещё не сопряжено. */
+        data class Discovered(val deviceId: ByteArray, val port: Int) : TransportEvent() {
+            // ByteArray в data class сравнивается по ссылке, а не по содержимому:
+            // два одинаковых идентификатора выглядели бы разными. Список
+            // устройств менялся бы при каждом объявлении, а выглядел бы так же.
+            override fun equals(other: Any?) =
+                other is Discovered && deviceId.contentEquals(other.deviceId) && port == other.port
+
+            override fun hashCode() = 31 * deviceId.contentHashCode() + port
+        }
+
+        /** Пришло входящее соединение. Рукопожатие идёт, сверки ещё не было. */
+        data class Incoming(val conn: Long) : TransportEvent()
+
+        /** Соединение открыто нами. */
+        data class Connected(val conn: Long) : TransportEvent()
+
+        /** Пришёл целый кадр в расшифрованном виде. */
+        data class Frame(val conn: Long, val kind: Int, val body: ByteArray) : TransportEvent() {
+            override fun equals(other: Any?) =
+                other is Frame && conn == other.conn && kind == other.kind &&
+                    body.contentEquals(other.body)
+
+            override fun hashCode() = (31 * conn.hashCode() + kind) * 31 + body.contentHashCode()
+        }
+
+        /** Соединение закрыто. */
+        data class Closed(val conn: Long) : TransportEvent()
+
+        /** Нефатальная ошибка: транспорт продолжает работать. */
+        data class Notice(val error: Int) : TransportEvent()
+
+        /** Изменилось состояние транспорта. */
+        data class State(val value: Int) : TransportEvent()
+    }
+
+    /**
+     * Поднимает канал локальной сети и возвращает его хэндл.
+     *
+     * Ключи берутся из файла устройства: транспорт обязан работать от настоящей
+     * личности, иначе напарник не сверит подпись, а идентификатор устройства
+     * будет меняться при каждом запуске.
+     *
+     * [port] = 0 означает «выбери свободный». Настоящий порт — [transportPort].
+     *
+     * При `STATUS_STORAGE` файл ключей нечитаем. Вызывающий обязан показать это
+     * пользователю и не создавать новые ключи молча.
+     */
+    fun transportStart(keysBlob: ByteArray, displayName: String, port: Int = 0): Long {
+        require(keysBlob.size == PUBLIC_KEYS_BLOB_LEN) {
+            "файл ключей другой длины: ${keysBlob.size}"
+        }
+        ensureLoaded()
+
+        val name = displayName.toByteArray(Charsets.UTF_8)
+        val handle = LongArray(1)
+        val status = nativeTransportStart(keysBlob, name, port, handle)
+        if (status != STATUS_OK) {
+            throw BraidworkException(status, "не удалось поднять канал локальной сети")
+        }
+        return handle[0]
+    }
+
+    /**
+     * Забирает события транспорта.
+     *
+     * Пустой список — не ошибка, а «жди дальше»: клиент зовёт это в цикле, и
+     * отсутствие событий должно быть обычным ответом, а не записью в журнал
+     * каждый кадр.
+     *
+     * Размеры буферов определяют [maxEvents] и [payloadCap]. Если тел больше,
+     * чем влезло, ядро отдаёт события без тех тел, что не поместились, и
+     * клиент узнаёт об этом по пустому телу, а не по половине файла.
+     */
+    fun transportPoll(handle: Long, maxEvents: Int, payloadCap: Int): List<TransportEvent> {
+        require(maxEvents > 0) { "нужно место хотя бы под одно событие" }
+        ensureLoaded()
+
+        val типы = IntArray(maxEvents)
+        val коннекты = LongArray(maxEvents)
+        val виды = IntArray(maxEvents)
+        val вспомогательные = IntArray(maxEvents)
+        val идентификаторы = ByteArray(maxEvents * DEVICE_ID_BYTES)
+        val смещения = IntArray(maxEvents)
+        val длины = IntArray(maxEvents)
+        val тела = ByteArray(payloadCap.coerceAtLeast(1))
+        val счётчик = IntArray(1)
+
+        val status = nativeTransportPoll(
+            handle, типы, коннекты, виды, вспомогательные,
+            идентификаторы, смещения, длины, тела, счётчик,
+        )
+        if (status == STATUS_INVALID_ARG) {
+            // Транспорта нет: либо освобождён, либо никогда не поднимался.
+            // Не исключение — клиент сам освобождал его и ждёт следующего.
+            return emptyList()
+        }
+        if (status != STATUS_OK) {
+            throw BraidworkException(status, "опрос транспорта не удался")
+        }
+
+        val count = счётчик[0].coerceIn(0, maxEvents)
+        val события = ArrayList<TransportEvent>(count)
+
+        for (i in 0 until count) {
+            val conn = коннекты[i]
+            val off = смещения[i]
+            val сколько = длины[i]
+
+            // Тело вырезается по смещению И длине. Только по смещению нельзя:
+            // при двух кадрах в одной порции второе тело начиналось бы там, где
+            // кончилось первое, и клиент отдал бы чужой кадр.
+            val payload = if (off >= 0 && сколько >= 0 && off + сколько <= тела.size) {
+                тела.copyOfRange(off, off + сколько)
+            } else {
+                // Ядро отдало событие, тело которого не влезло. Пустое тело
+                // честнее половины: клиент знает, что кадр потерян, и не
+                // отправит напарнику обрывок.
+                ByteArray(0)
+            }
+
+            события += when (типы[i]) {
+                EV_DISCOVERED -> TransportEvent.Discovered(
+                    deviceId = идентификаторы.copyOfRange(i * DEVICE_ID_BYTES, (i + 1) * DEVICE_ID_BYTES),
+                    port = вспомогательные[i],
+                )
+
+                EV_INCOMING -> TransportEvent.Incoming(conn)
+                EV_CONNECTED -> TransportEvent.Connected(conn)
+                EV_CLOSED -> TransportEvent.Closed(conn)
+                EV_NOTICE -> TransportEvent.Notice(вспомогательные[i])
+                EV_STATE -> TransportEvent.State(виды[i])
+                EV_FRAME -> TransportEvent.Frame(conn, виды[i], payload)
+
+                // Неизвестный вид события — устройство с более новым ядром.
+                // Кадр отбрасывается, а не роняет разбор: иначе одно новое
+                // событие выключило бы связь со всей сетью.
+                else -> continue
+            }
+        }
+
+        return события
+    }
+
+    /**
+     * Порт, на котором транспорт принимает соединения.
+     *
+     * Ноль означает «транспорта нет»: клиенту это нужно отличать от порта, и
+     * показывать «0» в настройках было бы враньём.
+     */
+    fun transportPort(handle: Long): Int {
+        ensureLoaded()
+        return nativeTransportPort(handle)
+    }
+
+    /** Жив ли ещё транспорт по этому хэндлу. */
+    fun transportAlive(handle: Long): Boolean {
+        ensureLoaded()
+        return nativeTransportAlive(handle) == 1
+    }
+
+    /** Останавливает транспорт: сокеты закрыты, состояние сброшено. */
+    fun transportStop(handle: Long) {
+        ensureLoaded()
+        nativeTransportStop(handle)
+    }
+
+    /**
+     * Освобождает транспорт.
+     *
+     * Повторный вызов с тем же хэндлом даёт ошибку, а не паникует: клиент вправе
+     * освободить объект в обработчике ошибки, не зная, что он уже освобождён.
+     */
+    fun transportFree(handle: Long) {
+        ensureLoaded()
+        nativeTransportFree(handle)
+    }
+
+    /**
+     * Собирает кадр из готового protobuf-тела.
+     *
+     * Клиенту нужен кадр, а не тело: тип сообщения объявляется в заголовке.
+     * Собирать его здесь нельзя — второй разборщик рано или поздно разошёлся бы
+     * с ядром.
+     */
+    fun frameEncode(kind: Int, flags: Int, body: ByteArray): ByteArray {
+        ensureLoaded()
+        val out = ByteArray(body.size + FRAME_MAX_OVERHEAD)
+        val len = IntArray(1) { out.size }
+
+        val status = nativeFrameEncode(kind, flags, body, out, len)
+        if (status == STATUS_NO_MEMORY) {
+            // Ядро сообщило нужную длину: буфер мал.
+            val точнее = ByteArray(len[0])
+            val второй = IntArray(1) { точнее.size }
+            val повтор = nativeFrameEncode(kind, flags, body, точнее, второй)
+            if (повтор != STATUS_OK) throw BraidworkException(повтор, "кадр не собрался")
+            return точнее
+        }
+        if (status != STATUS_OK) throw BraidworkException(status, "кадр не собрался")
+
+        return out.copyOfRange(0, len[0])
+    }
+
     private external fun nativeInit(outPublic: ByteArray, outLen: IntArray): Int
     private external fun nativeKeysCreate(outBlob: ByteArray, outPublic: ByteArray): Int
     private external fun nativeKeysLoad(blob: ByteArray, outPublic: ByteArray): Int
     private external fun nativeKeysDeviceId(blob: ByteArray, outId: ByteArray, outLen: IntArray): Int
     private external fun nativeDeviceId(signingPublic: ByteArray, outId: ByteArray, outLen: IntArray): Int
     private external fun nativeVerifySignature(signingPublic: ByteArray, tape: ByteArray, signature: ByteArray): Int
+
+    private external fun nativeTransportStart(
+        keysBlob: ByteArray,
+        displayName: ByteArray,
+        port: Int,
+        outHandle: LongArray,
+    ): Int
+
+    private external fun nativeTransportPoll(
+        handle: Long,
+        outType: IntArray,
+        outConn: LongArray,
+        outKind: IntArray,
+        outAux: IntArray,
+        outDevice: ByteArray,
+        outOff: IntArray,
+        outPlen: IntArray,
+        outPayload: ByteArray,
+        outCount: IntArray,
+    ): Int
+
+    private external fun nativeTransportPort(handle: Long): Int
+    private external fun nativeTransportStop(handle: Long): Int
+    private external fun nativeTransportFree(handle: Long): Int
+    private external fun nativeTransportAlive(handle: Long): Int
+    private external fun nativeFrameEncode(
+        kind: Int,
+        flags: Int,
+        body: ByteArray,
+        out: ByteArray,
+        outLen: IntArray,
+    ): Int
 }
 
 /** Ошибка ядра с её статус-кодом. */

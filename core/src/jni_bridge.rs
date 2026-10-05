@@ -11,13 +11,14 @@
 //!
 //! Модуль собирается только под Android: на десктопе его не существует.
 
-use jni::objects::{JByteArray, JClass, JIntArray};
-use jni::sys::jint;
+use jni::objects::{JByteArray, JClass, JIntArray, JLongArray};
+use jni::sys::{jint, jlong};
 use jni::JNIEnv;
 
 use crate::{
     fl_device_id, fl_init, fl_keys_blob_len, fl_keys_create, fl_keys_device_id, fl_keys_load,
-    fl_verify_signature, FL_OK, PUBLIC_KEYS_LEN,
+    fl_transport_lan_start, fl_transport_poll, fl_transport_port, fl_verify_signature, FlHandle,
+    FlTransEvent, FL_EV_STATE, FL_OK, PUBLIC_KEYS_LEN,
 };
 
 /// `jni` работает со знаковыми байтами: это тип Android, а не наш выбор.
@@ -269,4 +270,365 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeVerifySi
     };
 
     unsafe { fl_verify_signature(key.as_ptr(), message.as_ptr(), message.len(), sign.as_ptr()) }
+}
+
+/// Поднимает канал локальной сети.
+///
+/// Экранирование подчёркивания объяснено у `nativeInit`.
+///
+/// # Привязка по порядку
+///
+/// Дальше идут четыре функции: `nativeTransportPoll`, `nativeTransportPort`,
+/// `nativeTransportStop`, `nativeTransportFree`. Имена в Kotlin и здесь должны
+/// совпадать побуквенно, иначе `UnsatisfiedLinkError`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTransportStart<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    blob: JByteArray<'local>,
+    name: JByteArray<'local>,
+    port: jint,
+    out_handle: JLongArray<'local>,
+) -> jint {
+    let keys = match env.convert_byte_array(&blob) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_STORAGE,
+    };
+    let имя = match env.convert_byte_array(&name) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+
+    let mut handle = FlHandle(0);
+    let status = unsafe {
+        fl_transport_lan_start(
+            keys.as_ptr(),
+            keys.len(),
+            имя.as_ptr(),
+            имя.len(),
+            port.clamp(0, u16::MAX as jint) as u16,
+            &mut handle,
+        )
+    };
+    if status != FL_OK {
+        return status;
+    }
+
+    if env
+        .set_long_array_region(&out_handle, 0, &[handle.0 as jlong])
+        .is_err()
+    {
+        // Хэндл уже выдан и реестр его держит. Отдать его наружу нечем, но
+        // освободить надо: иначе клиент не знает, что транспорт жив, и слот
+        // останется занят до перезапуска процесса.
+        let _ = crate::fl_transport_free(handle);
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    FL_OK
+}
+
+/// Забирает события транспорта.
+///
+/// События отдаются **параллельными массивами**, а не структурой: клиент на
+/// Android разместил бы `FlTransEvent` у себя и получил бы две копии её
+/// раскладки — в Rust и в Kotlin. Расхождение выглядело бы как «события приходят
+/// с мусором», и искать пришлось бы в интерфейсе, а не в ядре. Так раскладка
+/// знает только Rust.
+///
+/// Соответствие полей и событий:
+///
+/// * `out_type`    — что произошло, одно из `FL_EV_*`;
+/// * `out_conn`    — хэндл соединения, ноль там, где соединения нет;
+/// * `out_kind`    — тип сообщения для `FL_EV_FRAME` **или** состояние
+///                   транспорта для `FL_EV_STATE`. Одновременно они не нужны:
+///                   у кадра есть тип, у состояния его нет;
+/// * `out_aux`     — порт напарника для `FL_EV_DISCOVERED` **или** код ошибки
+///                   для `FL_EV_NOTICE`. По той же причине не одновременно;
+/// * `out_device`  — 16 байт идентификатора для `FL_EV_DISCOVERED`, иначе нули;
+/// * `out_off`     — смещение тела в `out_payload`;
+/// * `out_plen`    — длина тела, столько же элементов, сколько событий;
+/// * `out_payload` — тела кадров подряд.
+///
+/// Экранирование подчёркивания объяснено у `nativeInit`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTransportPoll<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    out_type: JIntArray<'local>,
+    out_conn: JLongArray<'local>,
+    out_kind: JIntArray<'local>,
+    out_aux: JIntArray<'local>,
+    out_device: JByteArray<'local>,
+    out_off: JIntArray<'local>,
+    out_plen: JIntArray<'local>,
+    out_payload: JByteArray<'local>,
+    out_count: JIntArray<'local>,
+) -> jint {
+    // Мест под события: клиент решает сам, сколько ему нужно. Больше, чем он
+    // приготовил, ядро не пишет — писать мимо чужого массива нельзя.
+    let максимум = match env.get_array_length(&out_type) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+    // Длины тел обязаны быть столько же, сколько событий: без них второе тело
+    // пришло бы с конца буфера, и клиент отдал бы чужой кадр.
+    match env.get_array_length(&out_plen) {
+        Ok(v) if v as usize == максимум => {}
+        _ => return crate::FL_ERR_INTERNAL,
+    }
+    let мест_под_тела = match env.get_array_length(&out_payload) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+
+    let mut типы = vec![0i32; максимум];
+    let mut коннекты = vec![0i64; максимум];
+    let mut виды = vec![0i32; максимум];
+    let mut вспомогательные = vec![0i32; максимум];
+    let mut идентификаторы = vec![0i8; максимум * 16];
+    let mut смещения = vec![0i32; максимум];
+    let mut длины = vec![0i32; максимум];
+    let mut тела = vec![0u8; мест_под_тела];
+    let mut событий = vec![FlTransEvent::default(); максимум];
+
+    let mut count = 0usize;
+    let mut used = 0usize;
+
+    let status = unsafe {
+        fl_transport_poll(
+            FlHandle(handle as u64),
+            if максимум == 0 {
+                std::ptr::null_mut()
+            } else {
+                событий.as_mut_ptr()
+            },
+            максимум,
+            if мест_под_тела == 0 {
+                std::ptr::null_mut()
+            } else {
+                тела.as_mut_ptr()
+            },
+            мест_под_тела,
+            &mut count,
+            &mut used,
+        )
+    };
+    if status != FL_OK {
+        return status;
+    }
+
+    // Разбор раскладки — здесь, а не в клиенте.
+    for (i, событие) in событий.iter().take(count).enumerate() {
+        типы[i] = событие.event_type as i32;
+        коннекты[i] = событие.conn as i64;
+        // Состояние и тип сообщения не встречаются вместе, поэтому делят поле.
+        виды[i] = if событие.event_type == FL_EV_STATE {
+            событие.state as i32
+        } else {
+            событие.kind as i32
+        };
+        вспомогательные[i] = if событие.event_type == crate::FL_EV_NOTICE {
+            событие.error
+        } else {
+            событие.port as i32
+        };
+        смещения[i] = событие.payload_off as i32;
+        длины[i] = событие.payload_len as i32;
+
+        // Идентификатор в структуре лежит четырьмя u32 в младшем порядке.
+        // Раскладку знает только этот файл: в Kotlin её нет.
+        let блок = i * 16;
+        for k in 0..4usize {
+            let октет = событие.device_id[k].to_le_bytes();
+            for j in 0..4usize {
+                идентификаторы[блок + k * 4 + j] = октет[j] as i8;
+            }
+        }
+    }
+
+    // Идентификатор значим только для обнаружения: у остальных событий он нулей,
+    // и отдавать его в клиент незачем.
+    if env
+        .set_byte_array_region(&out_device, 0, &идентификаторы[..count * 16])
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    if env
+        .set_int_array_region(&out_type, 0, &типы[..count])
+        .is_err()
+        || env
+            .set_long_array_region(&out_conn, 0, &коннекты[..count])
+            .is_err()
+        || env
+            .set_int_array_region(&out_kind, 0, &виды[..count])
+            .is_err()
+        || env
+            .set_int_array_region(&out_aux, 0, &вспомогательные[..count])
+            .is_err()
+        || env
+            .set_int_array_region(&out_off, 0, &смещения[..count])
+            .is_err()
+        || env
+            .set_int_array_region(&out_plen, 0, &длины[..count])
+            .is_err()
+        || env
+            .set_int_array_region(&out_count, 0, &[count as i32])
+            .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    if used > 0
+        && env
+            .set_byte_array_region(&out_payload, 0, &to_signed(&тела[..used]))
+            .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    FL_OK
+}
+
+/// Собирает кадр из готового protobuf-тела.
+///
+/// Клиент не собирает заголовок сам: раскладку заголовка знает только ядро, а
+/// второй разборщик рано или поздно разошёлся бы с первым. Поломка выглядела бы
+/// как «устройство не отвечает», и искать пришлось бы в интерфейсе.
+///
+/// Экранирование подчёркивания объяснено у `nativeInit`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFrameEncode<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    kind: jint,
+    flags: jint,
+    body: JByteArray<'local>,
+    out: JByteArray<'local>,
+    out_len: JIntArray<'local>,
+) -> jint {
+    let тело = match env.convert_byte_array(&body) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+
+    // Клиент сообщает, сколько мест он приготовил, и ядро проверяет это само:
+    // довериться длине из Kotlin значило бы поверить, что клиент ошибся лучше
+    // него самого.
+    let мест = match env.get_array_length(&out) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+    let mut буфер = vec![0u8; мест];
+    let mut len = мест;
+
+    let status = unsafe {
+        crate::fl_frame_encode(
+            kind as u32,
+            flags as u16,
+            тело.as_ptr(),
+            тело.len(),
+            буфер.as_mut_ptr(),
+            &mut len,
+        )
+    };
+    if status != FL_OK {
+        // Ядро сообщило нужную длину в out_len: клиент перевыделит и позовёт
+        // снова. Молча обрезанный кадр хуже отказа — клиент отправил бы
+        // половину файла и счёл бы передачу успешной.
+        if env
+            .set_int_array_region(&out_len, 0, &[len as jint])
+            .is_err()
+        {
+            return crate::FL_ERR_INTERNAL;
+        }
+        return status;
+    }
+
+    if env
+        .set_byte_array_region(&out, 0, &to_signed(&буфер[..len]))
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+    if env
+        .set_int_array_region(&out_len, 0, &[len as jint])
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    FL_OK
+}
+/// Порт, на котором транспорт принимает соединения.
+///
+/// Ноль означает «транспорта нет».
+///
+/// Экранирование подчёркивания объяснено у `nativeInit`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTransportPort<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jint {
+    fl_transport_port(FlHandle(handle as u64)) as jint
+}
+
+/// Останавливает и освобождает транспорт.
+///
+/// Экранирование подчёркивания объяснено у `nativeInit`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTransportStop<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jint {
+    crate::fl_transport_stop(FlHandle(handle as u64))
+}
+
+/// Освобождает транспорт.
+///
+/// Экранирование подчёркивания объяснено у `nativeInit`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTransportFree<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jint {
+    crate::fl_transport_free(FlHandle(handle as u64))
+}
+
+/// Транспорт жив, если он зарегистрирован в ядре.
+///
+/// Отдельный вызов, потому что порт и состояние читаются у уже освобождённого
+/// хэндла как у чужого, и клиент отличил бы «освободил» от «ещё работает» только
+/// по тому, что счётчик у него сошёлся. Счётчик — это его собственное
+/// предположение, а ядро знает точно.
+///
+/// Экранирование подчёркивания объяснено у `nativeInit`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTransportAlive<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jint {
+    match crate::fl_transport_port(FlHandle(handle as u64)) {
+        0 => 0,
+        _ => 1,
+    }
+}
+
+/// Размер структуры события — клиент сверяет его со своим, чтобы замететь
+/// расхождение версий заголовка.
+///
+/// Экранирование подчёркивания объяснено у `nativeInit`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeEventSize<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+) -> jint {
+    crate::fl_transport_event_size() as jint
 }

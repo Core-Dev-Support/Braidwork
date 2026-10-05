@@ -20,11 +20,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -38,7 +41,10 @@ import com.naua_braidwork.app.ui.icons.IcwFamily
 import com.naua_braidwork.app.ui.icons.IcwHome
 import com.naua_braidwork.app.ui.icons.IcwSettings
 import com.naua_braidwork.app.ui.icons.IcwSync
+import com.naua_braidwork.app.DeviceDiscovery
+import com.naua_braidwork.app.LinkService
 import com.naua_braidwork.app.SettingsStore
+import com.naua_braidwork.app.toHex
 import com.naua_braidwork.app.ui.components.tapNoRipple
 import com.naua_braidwork.app.ui.screens.DevicesScreen
 import com.naua_braidwork.app.ui.screens.FamilyScreen
@@ -46,9 +52,23 @@ import com.naua_braidwork.app.ui.screens.MainScreen
 import com.naua_braidwork.app.ui.screens.SettingsScreen
 import com.naua_braidwork.app.ui.screens.ShareScreen
 import com.naua_braidwork.app.ui.screens.WelcomeScreen
+import com.naua_braidwork.app.ui.state.DeviceFilter
+import com.naua_braidwork.app.ui.state.DeviceKind
+import com.naua_braidwork.app.ui.state.DeviceSummary
+import com.naua_braidwork.app.ui.state.DevicesState
 import com.naua_braidwork.app.ui.state.LinkMode
 import com.naua_braidwork.app.ui.state.Sample
 import com.naua_braidwork.app.ui.theme.LocalAppGradient
+
+/**
+ * Как часто экран забирает снимок из канала.
+ *
+ * Канал обновляется сам каждые полсекунды, но перерисовывать экран с той же
+ * частотой незачем: список меняется раз в две секунды, когда приходит очередное
+ * объявление. Раз в секунду — быстрее, чем глаз заметит задержку, и в четыре
+ * раза реже перерисовок.
+ */
+private const val ОПРОС_СНИМКА_МС = 1000L
 
 /**
  * Разделы приложения.
@@ -89,6 +109,48 @@ fun BraidworkApp(
     // нижнего меню нет вообще. Это отличает его от обычного экрана приложения.
     var welcomeDone by remember { mutableStateOf(settings.welcomeSeen) }
     var tab by remember { mutableStateOf(Tab.Home) }
+
+    // Устройства из канала локальной сети. Опрос идёт в своём потоке внутри
+    // [DeviceDiscovery], а снимок сюда приходит по таймеру: подписка на поток
+    // означала бы перерисовку экрана из фонового потока, а Compose этого не
+    // любит.
+    //
+    // Фильтр живёт здесь, а не в состоянии экрана: тот пересоздаётся на каждой
+    // перерисовке, и нажатия бы терялись.
+    var filter by remember { mutableStateOf(DeviceFilter.All) }
+    val поиск = remember { LinkService.поиск }
+    val снимок = remember { mutableStateOf(DeviceDiscovery.Snapshot.EMPTY) }
+
+    LaunchedEffect(поиск) {
+        // Канал поднимается в сервисе, а не здесь: он обязан пережить сворачивание
+        // приложения. Пока сервис не начал, список честно пуст.
+        while (isActive) {
+            снимок.value = поиск?.snapshot() ?: DeviceDiscovery.Snapshot.EMPTY
+            delay(ОПРОС_СНИМКА_МС)
+        }
+    }
+
+    val devicesState = remember(снимок.value, filter) {
+        DevicesState(
+            devices = снимок.value.devices.map { найденное ->
+                DeviceSummary(
+                    id = найденное.deviceId.toHex(),
+                    // Имя из объявления в этот список ещё не приходит: клиент
+                    // получает только идентификатор, а имя лежит в подписи и
+                    // разбирается при сопряжении. Выдуманное имя было бы враньём
+                    // — напарник увидел бы чужое имя на своём устройстве.
+                    name = "Устройство",
+                    subtitle = "Порт ${найденное.port}",
+                    kind = DeviceKind.Desktop,
+                    online = true,
+                    // Заряд придёт с первым кадром после соединения. До этого
+                    // «нет данных» честнее выдуманного процента.
+                    batteryPercent = null,
+                )
+            },
+            filter = filter,
+        )
+    }
 
     // Режим связи общий для главного экрана и «Сети»: держать его в обоих
     // местах значило бы показывать пользователю два разных ответа на один
@@ -195,8 +257,8 @@ fun BraidworkApp(
                     )
 
                     Tab.Devices -> DevicesScreen(
-                        state = Sample.devicesState(),
-                        onFilter = { tab = Tab.Devices },
+                        state = devicesState,
+                        onFilter = { filter = it },
                         onAdd = { stack.add(Route.PAIR) },
                         onDevice = { tab = Tab.Devices },
                     )

@@ -90,6 +90,54 @@ class DeviceIdentityStore(private val directory: File) {
     }
 
     /**
+     * Байты файла ключей для транспорта.
+     *
+     * Отдельный метод, а не переиспользование [loadOrCreate], потому что
+     * транспорту нужны сырые байты, а не разобранная личность, и потому что
+     * он поднимается в сервисе раньше экрана.
+     *
+     * Файл читается с диска, а не кэшируется: сервис и экран — разные времена
+     * жизни, и копия в памяти разошлась бы с тем, что на диске, сразу после
+     * того как кто-то из них это заметит.
+     *
+     * Повреждённый файл здесь **не пересоздаётся**: вызывается исключение, и
+     * поднимать канал без ключей нельзя. Молча сменить ключи значило бы сделать
+     * все ранее сопряжённые устройства чужими, не сказав пользователю ни
+     * слова.
+     */
+    fun loadOrCreateBlob(): ByteArray {
+        val file = keysFile()
+
+        if (file.exists()) {
+            val bytes = readAndCheck(file) ?: throw IllegalStateException("файл ключей не читается")
+            return bytes
+        }
+
+        val created = BraidworkCore.createKeys()
+        if (!saveAtomically(created.blob)) {
+            throw IllegalStateException("ключи созданы, но сохранить их не удалось")
+        }
+        return created.blob
+    }
+
+    /**
+     * Читает файл и проверяет его ядром.
+     *
+     * `null` означает «файл есть, но это не наши ключи». Проверку делает ядро:
+     * у него есть контрольная сумма и версия формата, а клиент знает только
+     * длину.
+     */
+    private fun readAndCheck(file: File): ByteArray? {
+        val bytes = runCatching { file.readBytes() }.getOrNull() ?: return null
+        return try {
+            BraidworkCore.loadKeys(bytes)
+            bytes
+        } catch (e: BraidworkException) {
+            null
+        }
+    }
+
+    /**
      * Записывает файл целиком: сначала во временный, потом переименованием.
      *
      * Переименование в пределах одного каталога атомарно, поэтому читатель
