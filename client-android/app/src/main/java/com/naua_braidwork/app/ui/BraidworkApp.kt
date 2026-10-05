@@ -57,6 +57,7 @@ import com.naua_braidwork.app.ui.state.DeviceKind
 import com.naua_braidwork.app.ui.state.DeviceSummary
 import com.naua_braidwork.app.ui.state.DevicesState
 import com.naua_braidwork.app.ui.state.LinkMode
+import com.naua_braidwork.app.ui.state.Presence
 import com.naua_braidwork.app.ui.state.Sample
 import com.naua_braidwork.app.ui.theme.LocalAppGradient
 

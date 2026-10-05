@@ -42,6 +42,7 @@ import com.naua_braidwork.app.ui.icons.IcwPlus
 import com.naua_braidwork.app.ui.icons.IcwTablet
 import com.naua_braidwork.app.ui.state.DeviceFilter
 import com.naua_braidwork.app.ui.state.DeviceKind
+import com.naua_braidwork.app.ui.state.Presence
 import com.naua_braidwork.app.ui.state.DeviceSummary
 import com.naua_braidwork.app.ui.state.DevicesState
 import com.naua_braidwork.app.ui.theme.LocalAppGradient

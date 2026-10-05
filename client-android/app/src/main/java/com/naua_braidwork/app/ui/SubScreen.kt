@@ -18,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.naua_braidwork.app.toHex
 import com.naua_braidwork.app.ui.components.BackButton
 import com.naua_braidwork.app.ui.components.SubBody
 import com.naua_braidwork.app.ui.components.SubGroupCard
