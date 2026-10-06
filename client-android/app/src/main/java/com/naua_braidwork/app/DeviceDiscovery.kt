@@ -281,7 +281,11 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
         return try {
             val blob = keysBlobProvider()
             val имя = имя_устройства()
-            val h = BraidworkCore.transportStart(blob, имя, 0)
+            // Постоянный порт, а не любой свободный: напарник узнаёт адрес из
+            // объявления, и при перезапуске сервиса произвольный порт уезжал,
+            // подключение падало с «недоступно», а в журнале не было ни слова
+            // о том, что у напарника просто другой порт.
+            val h = BraidworkCore.transportStart(blob, имя, ПОРТ_ДАННЫХ)
             хэндл.set(h)
 
             val port = BraidworkCore.transportPort(h)
@@ -434,6 +438,9 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
 
         /** Сколько шагов подключения хранить. Глубже бесполезно: событий столько же. */
         const val ГЛУБИНА_СЛЕДА = 8
+
+        /** Порт приёма соединений. Постоянный — см. `поднять()`. */
+        const val ПОРТ_ДАННЫХ = 42424
 
         /**
          * Событий за один опрос.
