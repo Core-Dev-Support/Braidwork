@@ -209,8 +209,37 @@ fun BraidworkApp(
     val openSystemSettings = rememberSystemSettingsOpener()
     val openListenerSettings = rememberListenerSettingsOpener()
 
+    // Открытие подэкрана идёт через одну функцию, а не через `stack.add` в
+    // каждом обработчике.
+    //
+    // Причина — не удобство. Повторное открытие того, что уже сверху, должно
+    // игнорироваться, иначе стек копит одинаковые записи. На карточке
+    // устройства кнопки «ещё» и плитки возможностей были подключены к
+    // `Route.DEVICE`, то есть к экрану, который уже открыт: нажатие
+    // добавляло в стек копию того же самого. «Назад» снимал копию за копией,
+    // и каждый раз показывался тот же экран — выглядело это как «назад не
+    // работает», а на самом деле работало четыре раза подряд. Пятое нажатие
+    // выходило из приложения, потому что стек наконец опустел.
+    //
+    // Проверка на вершине стека, а не на всём стеке: вернуться на тот же
+    // экран через промежуточный — обычное дело и должно работать.
+    val открыть = remember {
+        { id: String ->
+            if (id in OPEN_ROUTES && id != stack.lastOrNull()) stack.add(id)
+        }
+    }
+
+    // Закрытие верхнего подэкрана — с проверкой на пустоту. `removeAt` с
+    // индексом −1 бросает исключение, а вызвать его на пустом стеке легко:
+    // стрелка «назад» остаётся на экране кадры ещё секунду после нажатия.
+    val закрыть = remember {
+        {
+            if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex)
+        }
+    }
+
     // Системная кнопка «назад» закрывает подэкран, а не выходит из приложения.
-    BackHandler(enabled = stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
+    BackHandler(enabled = stack.isNotEmpty(), onBack = закрыть)
 
     if (!welcomeDone) {
         WelcomeScreen(
@@ -222,7 +251,7 @@ fun BraidworkApp(
                 settings.markWelcomeSeen()
                 welcomeDone = true
                 tab = Tab.Devices
-                stack.add(Route.PAIR)
+                открыть(Route.PAIR)
             },
         )
         return
@@ -263,12 +292,12 @@ fun BraidworkApp(
                     onMode = { mode = it },
                     themeChoice = settings.theme,
                     onThemeChoice = { choice -> settings.chooseTheme(choice) },
-                    onBack = { stack.removeAt(stack.lastIndex) },
+                    onBack = закрыть,
                     // Строки внутри подэкрана открывают свои подэкраны, как и
                     // раньше. Раньше здесь стояла пустая лямбда, и нажатие на
                     // любую строку не делало ничего.
-                    onRow = { id -> if (id in OPEN_ROUTES) stack.add(id) },
-                    onRoute = { id -> if (id in OPEN_ROUTES) stack.add(id) },
+                    onRow = { id -> открыть(id) },
+                    onRoute = { id -> открыть(id) },
                     onOpenSystemSettings = openSystemSettings,
                     onOpenListenerSettings = openListenerSettings,
                     selectedDevice = выбранное,
@@ -283,8 +312,8 @@ fun BraidworkApp(
                         onMode = { mode = it },
                         bleOn = bleOn,
                         softApOn = softApOn,
-                        onPairClick = { stack.add(Route.PAIR) },
-                        onNotificationsClick = { stack.add(Route.NOTIFS) },
+                        onPairClick = { открыть(Route.PAIR) },
+                        onNotificationsClick = { открыть(Route.NOTIFS) },
                         // Быстрое действие открывает свой модуль: подпись под
                         // иконкой должна совпадать с тем, куда попал. Раньше все
                         // четыре вели в «Обмен», и это было хуже — четыре
@@ -296,7 +325,7 @@ fun BraidworkApp(
                         // ссылку хуже, чем вести в модуль. Менять здесь — по
                         // одной строке на кнопку, когда появится первая
                         // работающая передача.
-                        onQuickAction = { action -> stack.add(quickRoute(action.id)) },
+                        onQuickAction = { action -> открыть(quickRoute(action.id)) },
                         onBleClick = { bleOn = it },
                         onSoftApClick = { softApOn = it },
                     )
@@ -305,7 +334,7 @@ fun BraidworkApp(
                         state = devicesState,
                         problem = снимок.value.problem,
                         onFilter = { filter = it },
-                        onAdd = { stack.add(Route.PAIR) },
+                        onAdd = { открыть(Route.PAIR) },
                         // Нажатие открывает карточку и начинает подключение.
                         // Раньше здесь стояло `tab = Tab.Devices`, то есть
                         // нажатие на плитку ничего не делало: пользователь
@@ -315,7 +344,7 @@ fun BraidworkApp(
                         // устройств один, и без адреса подключаться некуда.
                         onDevice = { device ->
                             выбранныйId = device.id
-                            stack.add(Route.DEVICE)
+                            открыть(Route.DEVICE)
 
                             // Подключение идёт к тому объекту, что пришёл из
                             // канала, а не к тому, что собран из строк для
@@ -339,13 +368,13 @@ fun BraidworkApp(
 
                     Tab.Share -> ShareScreen(
                         // Идентификаторы ячеек совпадают с маршрутами подэкранов.
-                        onQuickAction = { id -> stack.add(quickRoute(id)) },
-                        onAddDevice = { stack.add(Route.PAIR) },
+                        onQuickAction = { id -> открыть(quickRoute(id)) },
+                        onAddDevice = { открыть(Route.PAIR) },
                     )
 
                     Tab.Family -> FamilyScreen(
                         members = Sample.familyState(),
-                        onInvite = { stack.add(Route.PAIR) },
+                        onInvite = { открыть(Route.PAIR) },
                     )
 
                     Tab.Settings -> SettingsScreen(
@@ -358,7 +387,7 @@ fun BraidworkApp(
                         // Открываем только те подэкраны, которые уже собраны.
                         // Остальные строки пока не ведут никуда: лучше ничего,
                         // чем экран-заглушка на месте настоящего.
-                        onOpen = { id -> if (id in OPEN_ROUTES) stack.add(id) },
+                        onOpen = { id -> открыть(id) },
                         onOpenProfile = { tab = Tab.Family },
                     )
                 }
