@@ -73,6 +73,13 @@ object BraidworkCore {
     const val STATE_STOPPING = 3
     const val STATE_FAILED = 4
 
+    /** Причины разрыва соединения. Значения совпадают с CloseReason в ядре. */
+    const val CLOSE_PEER = 1
+    const val CLOSE_NETWORK = 2
+    const val CLOSE_HANDSHAKE = 3
+    const val CLOSE_BAD_FRAME = 4
+    const val CLOSE_BY_REQUEST = 5
+
     /** Длина идентификатора устройства в байтах. */
     const val DEVICE_ID_BYTES = 16
 
@@ -308,8 +315,24 @@ object BraidworkCore {
             override fun hashCode() = (31 * conn.hashCode() + kind) * 31 + body.contentHashCode()
         }
 
-        /** Соединение закрыто. */
-        data class Closed(val conn: Long) : TransportEvent()
+        /**
+         * Соединение закрыто.
+         *
+         * [reason] обязателен: «напарник закрыл сокет у себя» и «сеть отвалилась»
+         * снаружи выглядят одинаково, а правятся по-разному. Без различения
+         * пришлось бы угадывать, что именно сломалось.
+         */
+        data class Closed(val conn: Long, val reason: Int) : TransportEvent() {
+            /** Причина по-русски, для показа в журнале подключения. */
+            fun reasonText(): String = when (reason) {
+                CLOSE_PEER -> "напарник закрыл соединение у себя"
+                CLOSE_NETWORK -> "обрыв сети"
+                CLOSE_HANDSHAKE -> "рукопожатие сорвалось"
+                CLOSE_BAD_FRAME -> "пришёл битый кадр"
+                CLOSE_BY_REQUEST -> "закрыто по команде"
+                else -> "неизвестная причина ($reason)"
+            }
+        }
 
         /** Нефатальная ошибка: транспорт продолжает работать. */
         data class Notice(val error: Int) : TransportEvent()
@@ -418,7 +441,7 @@ object BraidworkCore {
 
                 EV_INCOMING -> TransportEvent.Incoming(conn)
                 EV_CONNECTED -> TransportEvent.Connected(conn)
-                EV_CLOSED -> TransportEvent.Closed(conn)
+                EV_CLOSED -> TransportEvent.Closed(conn, вспомогательные[i])
                 EV_NOTICE -> TransportEvent.Notice(вспомогательные[i])
                 EV_STATE -> TransportEvent.State(виды[i])
                 EV_FRAME -> TransportEvent.Frame(conn, виды[i], payload)

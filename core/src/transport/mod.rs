@@ -83,8 +83,42 @@ impl Transport {
     }
 }
 
-/// Что транспорт сообщил клиенту.
-#[derive(Debug)]
+/// Почему соединение закрылось.
+///
+/// Причина не для красоты: «напарник закрыл сокет у себя» и «сеть отвалилась»
+/// снаружи выглядят одинаково — соединение просто исчезло. А правятся они
+/// по-разному, и без различения пришлось бы гадать, что именно сломалось.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CloseReason {
+    /// Напарник закрыл соединение у себя: прочитано 0 байт.
+    PeerClosed,
+
+    /// Ошибка чтения или записи.
+    NetworkLost,
+
+    /// Рукопожатие сорвалось: ключи не сошлись или пришёл чужой кадр.
+    HandshakeFailed,
+
+    /// Ошибка в разборе кадра: соединение разорвано намеренно.
+    BadFrame,
+
+    /// Клиент попросил закрыть сам.
+    ByRequest,
+}
+
+impl CloseReason {
+    /// Номер для C ABI.
+    pub fn code(self) -> u32 {
+        match self {
+            CloseReason::PeerClosed => 1,
+            CloseReason::NetworkLost => 2,
+            CloseReason::HandshakeFailed => 3,
+            CloseReason::BadFrame => 4,
+            CloseReason::ByRequest => 5,
+        }
+    }
+}
+
 pub enum TransportEvent {
     /// Состояние изменилось.
     State(TransportState),
@@ -128,7 +162,7 @@ pub enum TransportEvent {
         body: Vec<u8>,
     },
     /// Соединение закрыто по инициативе обеих сторон или из-за ошибки.
-    Closed { conn: u64 },
+    Closed { conn: u64, reason: CloseReason },
     /// Нефатальная ошибка: объявление не ушло, соединение не принято.
     /// Транспорт продолжает работать.
     Notice(TransportError),

@@ -43,7 +43,7 @@ use crate::frame::{self, FrameReader};
 use crate::pb::{Hello, MessageKind};
 use crate::session::{build_hello, default_capabilities, Handshake, HandshakeStep, Role, Session};
 use crate::transport::{
-    Channel, Connection, Transport, TransportError, TransportEvent, TransportState,
+    Channel, CloseReason, Connection, Transport, TransportError, TransportEvent, TransportState,
     ANNOUNCE_INTERVAL_MS, BROADCAST_ADDR, DISCOVERY_PORT,
 };
 use prost::Message;
@@ -471,7 +471,9 @@ impl LanTransport {
 
     /// Пишет накопленное и читает входящее во всех соединениях.
     fn pump_peers(&mut self) {
-        let mut закрыть: Vec<u64> = Vec::new();
+        // Хэндл и причина: разрыв по разным причинам выглядит снаружи одинаково,
+        // а чинится по-разному.
+        let mut закрыть: Vec<(u64, CloseReason)> = Vec::new();
 
         // Таблица соединений вынимается на время обработки: разбор кадра
         // кладёт события в `self.events`, а держать заимствование на `self.peers`
@@ -483,17 +485,32 @@ impl LanTransport {
             if !peer.outbox.is_empty() && !peer.dead {
                 match peer.stream.write(&peer.outbox) {
                     Ok(0) => {
+                        // Ok(0) у неблокирующего сокета — это не конец
+                        // потока, а «сейчас писать некуда». Обрывать по нему
+                        // соединение нельзя: при отправке файла это случается
+                        // штатно, и соединение умерло бы на середине передачи.
+                        crate::android_log::предостережение(&format!(
+                            "запись в {} вернула 0, соединение закрывается",
+                            peer.remote
+                        ));
                         peer.dead = true;
-                        закрыть.push(*handle);
+                        закрыть.push((*handle, CloseReason::NetworkLost));
                     }
                     Ok(n) => {
                         peer.outbox.drain(..n);
                     }
                     Err(ref e) if e.kind() == ErrorKind::WouldBlock => {}
                     Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
-                    Err(_) => {
+                    Err(e) => {
+                        // Причина обрыва записывается: «напарник молча закрыл
+                        // сокет» и «сеть отвалилась» чинятся по-разному, а
+                        // снаружи обе выглядят одинаково.
+                        crate::android_log::ошибка(&format!(
+                            "запись в {} не удалась: {e}",
+                            peer.remote
+                        ));
                         peer.dead = true;
-                        закрыть.push(*handle);
+                        закрыть.push((*handle, CloseReason::NetworkLost));
                     }
                 }
             }
@@ -502,8 +519,16 @@ impl LanTransport {
             loop {
                 match peer.stream.read(&mut buf) {
                     Ok(0) => {
+                        // Ноль байт — это конец потока: напарник закрыл сокет
+                        // у себя. Отличается от ошибки чтения, и различие важно:
+                        // «он закрыл» и «сеть отвалилась» требуют разных правок.
+                        crate::android_log::инфо(&format!(
+                            "{} закрыл соединение {}",
+                            peer.remote, peer.handle
+                        ));
                         peer.dead = true;
-                        закрыть.push(*handle);
+                        закрыть.push((*handle, CloseReason::NetworkLost));
+                        закрыть.push((*handle, CloseReason::PeerClosed));
                         break;
                     }
                     Ok(n) => {
@@ -512,9 +537,13 @@ impl LanTransport {
                     }
                     Err(ref e) if e.kind() == ErrorKind::WouldBlock => break,
                     Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
-                    Err(_) => {
+                    Err(e) => {
+                        crate::android_log::ошибка(&format!(
+                            "чтение из {} не удалось: {e}",
+                            peer.remote
+                        ));
                         peer.dead = true;
-                        закрыть.push(*handle);
+                        закрыть.push((*handle, CloseReason::NetworkLost));
                         break;
                     }
                 }
@@ -523,11 +552,14 @@ impl LanTransport {
 
         self.peers = peers;
 
-        for handle in закрыть {
+        for (handle, reason) in закрыть {
             // Соединение закрыто: сессия внутри него тоже освобождается, иначе
             // она засоряла бы слоты при каждом обрыве.
             self.peers.remove(&handle);
-            self.events.push(TransportEvent::Closed { conn: handle });
+            self.events.push(TransportEvent::Closed {
+                conn: handle,
+                reason,
+            });
         }
     }
 
@@ -797,9 +829,16 @@ impl Channel for LanTransport {
         Ok(())
     }
 
+    /// Закрывает соединение по просьбе клиента.
+    ///
+    /// Причина — «по команде», а не «напарник закрыл»: различать их нужно,
+    /// иначе собственное действие выглядело бы как чужая поломка.
     fn close(&mut self, conn: u64) -> Result<(), TransportError> {
         self.peers.remove(&conn);
-        self.events.push(TransportEvent::Closed { conn });
+        self.events.push(TransportEvent::Closed {
+            conn,
+            reason: CloseReason::ByRequest,
+        });
         Ok(())
     }
 

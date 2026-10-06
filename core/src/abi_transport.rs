@@ -310,9 +310,13 @@ fn в_c(событие: &TransportEvent, смещение: usize) -> (FlTransEve
             запись.payload_len = body.len() as u32;
             (запись, body.as_slice())
         }
-        TransportEvent::Closed { conn } => {
+        TransportEvent::Closed { conn, reason } => {
             запись.event_type = FL_EV_CLOSED;
             запись.conn = *conn;
+            // Причина кладётся в поле ошибки: для события закрытия оно иначе
+            // не используется, а отдельное поле означало бы расширение раскладки
+            // события ради одного случая.
+            запись.error = reason.code() as i32;
             (запись, &[])
         }
         TransportEvent::Notice(e) => {

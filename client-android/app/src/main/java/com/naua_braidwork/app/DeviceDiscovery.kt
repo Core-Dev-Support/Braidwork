@@ -341,14 +341,17 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
                 // после сверки Hello, и это следующий шаг.
                 is BraidworkCore.TransportEvent.Connected -> {
                     val id = соединения[событие.conn] ?: continue
-                    записать("рукопожатие прошло с ")
+                    записать("рукопожатие прошло с $id")
                     прежние[id]?.let { прежние[id] = it.copy(connected = true) }
                 }
 
                 is BraidworkCore.TransportEvent.Closed -> {
                     val id = соединения.remove(событие.conn) ?: continue
-                    записать("соединение с  закрыто")
-                    прежние[id]?.let { прежние[id] = it.copy(connected = false) }
+                    // Причина обязательна: «соединение закрыто» ничего не
+                    // объясняло, а именно это и нужно было выяснить. Различие
+                    // между «напарник закрыл» и «обрыв сети» и есть ответ.
+                    записать("соединение $id закрыто: ${событие.reasonText()}")
+                    прежние[id]?.let { прежнее -> прежние[id] = прежнее.copy(connected = false) }
                 }
 
                 is BraidworkCore.TransportEvent.State ->

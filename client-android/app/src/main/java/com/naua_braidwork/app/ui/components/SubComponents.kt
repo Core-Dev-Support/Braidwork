@@ -299,6 +299,19 @@ fun SettingRowView(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+
+            // Журнал подключения: каждая запись на своей строке и целиком.
+            //
+            // В [RowEnd.Value] такие записи обрезались до обрывка вроде
+            // «соединение с», и прочитать их было нельзя. Обрезка здесь
+            // означала бы то же самое, только тише.
+            row.multiline?.forEach { строка ->
+                Text(
+                    text = строка,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
 
         when (val end = row.end) {
