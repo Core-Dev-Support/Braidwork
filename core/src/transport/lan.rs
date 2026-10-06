@@ -90,7 +90,35 @@ struct Peer {
     outbox: Vec<u8>,
     /// На той стороне закрыли соединение или сокет сломался. Писать больше
     /// нельзя, накопленное ждёт отправки.
+    ///
+    /// Наравне с ним обязателен [`Peer::причина`]: мёртвое соединение без
+    /// причины нечем объяснить клиенту, и без неё же нечем обосновать
+    /// удаление из таблицы. Поэтому мёртвые соединения заводятся только через
+    /// [`Peer::убить`], где причина и признак ставятся вместе.
     dead: bool,
+    /// Почему соединение закрыто. `None` в точности тогда, когда соединение
+    /// живо.
+    ///
+    /// Держится здесь, а не в отдельном списке обхода, потому что причины
+    /// возникают в разных местах — чтение, запись, разбор кадра, шаг
+    /// рукопожатия, — и список обязан был бы их все перечислять вручную.
+    /// Список перечислял не все: из десяти мест, где соединение умирало,
+    /// событие `Closed` отправляли три. Остальные семь оставляли сокет открытым
+    /// и запись в таблице, а клиент — с устройством, на которое он так и не
+    /// смог подключиться, и без единого события об этом.
+    причина: Option<CloseReason>,
+}
+
+impl Peer {
+    /// Помечает соединение закрытым и записывает, почему.
+    ///
+    /// **Первая** причина побеждает. Последующие — следствия первой: после
+    /// отказа рукопожатия сокет закроется напарником, и сетевая ошибка на
+    /// чтении скажет о другом, хотя настоящая причина была известна раньше.
+    fn убить(&mut self, причина: CloseReason) {
+        self.dead = true;
+        self.причина.get_or_insert(причина);
+    }
 }
 
 /// Транспорт локальной сети.
@@ -256,6 +284,7 @@ impl LanTransport {
             reader: FrameReader::new(),
             outbox: Vec::new(),
             dead: false,
+            причина: None,
         };
 
         // Первый шаг инициатора: «e».
@@ -397,6 +426,7 @@ impl LanTransport {
                     reader: FrameReader::new(),
                     outbox: Vec::new(),
                     dead: false,
+                    причина: None,
                 },
             );
 
@@ -495,11 +525,11 @@ impl LanTransport {
     }
 
     /// Пишет накопленное и читает входящее во всех соединениях.
+    ///
+    /// Соединения, умершие по любой причине, уходят из таблицы и порождают
+    /// событие `Closed` — см. обход в конце. Причина хранится в самом
+    /// соединении, [Peer::причина], и отдельного списка здесь нет.
     fn pump_peers(&mut self) {
-        // Хэндл и причина: разрыв по разным причинам выглядит снаружи одинаково,
-        // а чинится по-разному.
-        let mut закрыть: Vec<(u64, CloseReason, SocketAddr)> = Vec::new();
-
         // Таблица соединений вынимается на время обработки: разбор кадра
         // кладёт события в `self.events`, а держать заимствование на `self.peers`
         // и на `self` сразу нельзя. Соединений единицы, даже десятки — перенос
@@ -518,8 +548,7 @@ impl LanTransport {
                             "запись в {} вернула 0, соединение закрывается",
                             peer.remote
                         ));
-                        peer.dead = true;
-                        закрыть.push((*handle, CloseReason::NetworkLost, peer.remote));
+                        peer.убить(CloseReason::NetworkLost);
                     }
                     Ok(n) => {
                         peer.outbox.drain(..n);
@@ -534,8 +563,7 @@ impl LanTransport {
                             "запись в {} не удалась: {e}",
                             peer.remote
                         ));
-                        peer.dead = true;
-                        закрыть.push((*handle, CloseReason::NetworkLost, peer.remote));
+                        peer.убить(CloseReason::NetworkLost);
                     }
                 }
             }
@@ -547,13 +575,21 @@ impl LanTransport {
                         // Ноль байт — это конец потока: напарник закрыл сокет
                         // у себя. Отличается от ошибки чтения, и различие важно:
                         // «он закрыл» и «сеть отвалилась» требуют разных правок.
+                        //
+                        // Причина — именно `PeerClosed`, а не `NetworkLost`.
+                        //
+                        // Раньше здесь клались сразу две записи, `NetworkLost` и
+                        // `PeerClosed`, и первая всегда побеждала: журнал показывал
+                        // «сеть потеряна» там, где напарник спокойно закрыл сокет
+                        // у себя. Комментарий над этим местом требовал различать
+                        // «он закрыл» и «сеть отвалилась», а код различал наоборот —
+                        // и обе записи об одном соединении ещё и множили события
+                        // закрытия вдвое.
                         crate::android_log::инфо(&format!(
                             "{} закрыл соединение {}",
                             peer.remote, peer.handle
                         ));
-                        peer.dead = true;
-                        закрыть.push((*handle, CloseReason::NetworkLost, peer.remote));
-                        закрыть.push((*handle, CloseReason::PeerClosed, peer.remote));
+                        peer.убить(CloseReason::PeerClosed);
                         break;
                     }
                     Ok(n) => {
@@ -567,8 +603,7 @@ impl LanTransport {
                             "чтение из {} не удалось: {e}",
                             peer.remote
                         ));
-                        peer.dead = true;
-                        закрыть.push((*handle, CloseReason::NetworkLost, peer.remote));
+                        peer.убить(CloseReason::NetworkLost);
                         break;
                     }
                 }
@@ -577,15 +612,38 @@ impl LanTransport {
 
         self.peers = peers;
 
-        for (handle, reason, remote) in закрыть {
-            // Соединение закрыто: сессия внутри него тоже освобождается, иначе
-            // она засоряла бы слоты при каждом обрыве.
-            self.peers.remove(&handle);
-            self.events.push(TransportEvent::Closed {
-                conn: handle,
-                reason,
-                remote,
-            });
+        // Каждое соединение, помеченное мёртвым, обязано один раз уйти из
+        // таблицы и один раз породить `Closed`.
+        //
+        // Раньше здесь обходился отдельный список, который наполняли только
+        // обрывы чтения и записи, и обход шёл по нему. Соединения, умершие
+        // при разборе кадра, при шаге рукопожатия или при неудачной
+        // расшифровке, в список не попадали: сокет оставался открытым, запись в
+        // таблице жила, клиент не получал ничего. Сокеты накапливались, и
+        // `connect` рано или поздно падал с «слишком много открытых файлов» —
+        // то есть ровно с тем `FL_ERR_TRANSPORT`, который и видели в журнале.
+        //
+        // Теперь список не нужен: у каждого соединения есть собственная
+        // причина, и обход идёт по всем, а не по выборочно наполненному списку.
+        let закрытые = std::mem::take(&mut self.peers);
+        for (handle, peer) in закрытые {
+            match peer.причина {
+                Some(reason) => {
+                    crate::android_log::инфо(&format!(
+                        "соединение {} с {} закрыто: {:?}",
+                        handle, peer.remote, reason
+                    ));
+                    self.events.push(TransportEvent::Closed {
+                        conn: handle,
+                        reason,
+                        remote: peer.remote,
+                    });
+                }
+                // Живое соединение возвращается на место.
+                None => {
+                    self.peers.insert(handle, peer);
+                }
+            }
         }
     }
 
@@ -600,7 +658,13 @@ impl LanTransport {
                 Err(e) => {
                     // Плохой кадр — соединение разорвано: продолжать чтение
                     // нельзя, иначе напарник продолжит слать мусор.
-                    peer.dead = true;
+                    //
+                    // Причина обязана быть записана здесь же. Раньше тут стояло
+                    // голое `dead = true`, и обход в `pump_peers` отправлял
+                    // `Closed` только для обрывов чтения и записи, — а этот путь
+                    // не отправлял ничего: соединение исчезало, не сказав ни
+                    // слова ни клиенту, ни в журнал.
+                    peer.убить(CloseReason::BadFrame);
                     self.events
                         .push(TransportEvent::Notice(TransportError::Frame(e)));
                     return;
@@ -613,12 +677,27 @@ impl LanTransport {
                 if header.kind != MessageKind::KindHandshake as i32 {
                     // Ответчик не может начать с зашифрованного кадра:
                     // расшифровывать нечем.
-                    peer.dead = true;
+                    peer.убить(CloseReason::BadFrame);
+                    self.events
+                        .push(TransportEvent::Notice(TransportError::Other(format!(
+                            "в рукопожатии от {} пришёл кадр типа {} вместо рукопожатия",
+                            peer.remote, header.kind
+                        ))));
                     return;
                 }
                 self.шаг_рукопожатия(peer, &body);
             } else {
                 if header.kind != MessageKind::KindSealed as i32 {
+                    // Молча выбросить такой кадр нельзя: он ушёл бы в никуда, и
+                    // получатель потом неделю гадал бы, куда делись его данные.
+                    // Соединение при этом остаётся живым — тип кадра может
+                    // оказаться новым, а не ошибочным.
+                    self.events.push(TransportEvent::Notice(
+                        TransportError::Other(format!(
+                            "от {} в канале данных пришёл кадр типа {} вместо зашифрованного; кадр выброшен",
+                            peer.remote, header.kind
+                        )),
+                    ));
                     continue;
                 }
                 self.открыть_кадр(handle, peer, &body);
@@ -669,7 +748,10 @@ impl LanTransport {
                                 )));
                             }
                             Err(e) => {
-                                peer.dead = true;
+                                // Сессия не поднялась после объявления о готовности.
+                                // Причина обязана попасть в `Closed`, иначе клиент
+                                // навсегда оставит устройство «на связи».
+                                peer.убить(CloseReason::HandshakeFailed);
                                 self.events
                                     .push(TransportEvent::Notice(TransportError::Other(
                                         e.to_string(),
@@ -680,7 +762,10 @@ impl LanTransport {
                 }
             }
             Err(e) => {
-                peer.dead = true;
+                // Отказ самого Noise: не то сообщение, не тот порядок, подмена
+                // эфемерного ключа. Раньше причина терялась — соединение
+                // помечалось мёртвым и обрывалось без события.
+                peer.убить(CloseReason::HandshakeFailed);
                 self.events
                     .push(TransportEvent::Notice(TransportError::Other(e.to_string())));
             }
@@ -705,7 +790,7 @@ impl LanTransport {
                 let Ok((header, inner, _)) = frame::split(&payload) else {
                     // Канал сошёлся, а внутри — мусор. Значит ключи не те: тот,
                     // кто шифровал, использовал другие. Закрываем.
-                    peer.dead = true;
+                    peer.убить(CloseReason::BadFrame);
                     self.events
                         .push(TransportEvent::Notice(TransportError::Frame(
                             frame::FrameError::BadMagic,
@@ -721,7 +806,7 @@ impl LanTransport {
             Err(e) => {
                 // Нерасшифровалось: это не наш канал или подмена. Соединение
                 // закрывается — продолжать читать из него незачем.
-                peer.dead = true;
+                peer.убить(CloseReason::BadFrame);
                 self.events
                     .push(TransportEvent::Notice(TransportError::Other(e.to_string())));
             }
@@ -943,6 +1028,127 @@ mod tests {
             второй.port(),
             первый.port(),
             "второй должен был взять свободный порт"
+        );
+    }
+
+    #[test]
+    fn мёртвое_соединение_всегда_даёт_одно_событие_и_уходит_из_таблицы() {
+        let mut a = транспорт();
+        let b = транспорт();
+
+        let target = std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, b.port());
+        let handle = a.connect(target.into()).expect("соединение");
+
+        // Убиваем соединение через тот же путь, каким пользовались при разборе
+        // кадра: раньше он помечал соединение мёртвым, но не слал `Closed` и не
+        // убирал его из таблицы.
+        a.peers
+            .get_mut(&handle)
+            .expect("соединение на месте")
+            .убить(CloseReason::HandshakeFailed);
+
+        let mut закрытия = Vec::new();
+        for _ in 0..5 {
+            for событие in a.poll().expect("poll A") {
+                if let TransportEvent::Closed { reason, conn, .. } = событие {
+                    закрытия.push((conn, reason));
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert_eq!(
+            закрытия.len(),
+            1,
+            "ожидалось ровно одно событие Closed, а пришло {}: {закрытия:?}",
+            закрытия.len()
+        );
+        assert_eq!(закрытия[0].0, handle);
+        assert_eq!(
+            закрытия[0].1,
+            CloseReason::HandshakeFailed,
+            "причина потерялась или подменилась"
+        );
+        assert!(
+            a.peers.is_empty(),
+            "мёртвое соединение осталось в таблице: {:?}",
+            a.peers.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// Живое соединение обход не трогает.
+    ///
+    /// Обход идёт по всем соединениям, а не по списку закрытий, и ошибка в нём
+    /// была бы обратной: выбрасывание живого соединения с тихим `Closed`.
+    #[test]
+    fn живое_соединение_остаётся_в_таблице() {
+        let mut a = транспорт();
+        let mut b = транспорт();
+
+        let target = std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, b.port());
+        let handle = a.connect(target.into()).expect("соединение");
+
+        for _ in 0..3 {
+            for событие in a.poll().expect("poll A") {
+                assert!(
+                    !matches!(событие, TransportEvent::Closed { .. }),
+                    "живое соединение объявлено закрытым"
+                );
+            }
+            let _ = b.poll();
+        }
+
+        assert!(
+            a.peers.contains_key(&handle),
+            "живое соединение выброшено из таблицы"
+        );
+    }
+
+    /// Напарник закрыл сокет — причина «он закрыл», а не «сеть отвалилась».
+    ///
+    /// Раньше на конце потока клались сразу две причины, `NetworkLost` и
+    /// `PeerClosed`, и первая всегда побеждала: журнал годами показывал «сеть
+    /// потеряна» там, где напарник спокойно закрыл соединение у себя. Различие
+    /// между «он закрыл» и «сеть отвалилась» и было смыслом всего журнала.
+    #[test]
+    fn конец_потока_это_не_обрыв_сети() {
+        let mut a = транспорт();
+        let mut b = транспорт();
+
+        let target = std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, b.port());
+        let _handle = a.connect(target.into()).expect("соединение");
+
+        // Даём рукопожатию дойти до конца, чтобы на той стороне не осталось
+        // непрочитанного: иначе сокет закроется с resetting, и причина была бы
+        // другой по существу, хотя и той же по коду.
+        for _ in 0..50 {
+            let _ = a.poll();
+            let _ = b.poll();
+            if b.peers.values().any(|p| matches!(p.phase, Phase::Data(_))) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        drop(b);
+
+        let mut причины = Vec::new();
+        for _ in 0..50 {
+            for событие in a.poll().expect("poll A") {
+                if let TransportEvent::Closed { reason, .. } = событие {
+                    причины.push(reason);
+                }
+            }
+            if !причины.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert_eq!(
+            причины,
+            vec![CloseReason::PeerClosed],
+            "причина закрытия определена неверно"
         );
     }
 
