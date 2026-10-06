@@ -1569,7 +1569,7 @@ mod tests {
     #[test]
     fn очередь_уходит_за_один_проход() {
         let mut a = транспорт();
-        let mut b = транспорт();
+        let b = транспорт();
 
         let target = std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, b.port());
         let handle = a.connect(target.into()).expect("соединение");
