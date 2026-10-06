@@ -289,15 +289,31 @@ object BraidworkCore {
              * а не из настроек сети — устройство может быть многоинтерфейсным.
              */
             val ipv4: ByteArray,
+            /**
+             * Отпечаток ключа подписи: четыре группы по четыре символа.
+             *
+             * Ядро сверяет его с объявленным идентификатором и отбрасывает
+             * объявление, если ключ не даёт тот самый идентификатор. Поэтому
+             * пришедший отпечаток принадлежит именно тому устройству, что видно
+             * в списке.
+             *
+             * Пусто у устройства с более старым ядром. Это не «нет ключа» и не
+             * «ключ не пришёл»: такого ядра просто ещё не было, когда отпечаток
+             * начали класть в объявление.
+             */
+            val fingerprint: String,
         ) : TransportEvent() {
             // ByteArray в data class сравнивается по ссылке, а не по содержимому:
             // два одинаковых идентификатора выглядели бы разными. Список
             // устройств менялся бы при каждом объявлении, а выглядел бы так же.
             override fun equals(other: Any?) =
                 other is Discovered && deviceId.contentEquals(other.deviceId) &&
-                    port == other.port && name == other.name && ipv4.contentEquals(other.ipv4)
+                    port == other.port && name == other.name &&
+                    ipv4.contentEquals(other.ipv4) && fingerprint == other.fingerprint
 
-            override fun hashCode() = 31 * ((31 * deviceId.contentHashCode() + port) * 31 + name.hashCode()) + ipv4.contentHashCode()
+            override fun hashCode() =
+                31 * ((31 * (31 * deviceId.contentHashCode() + port) * 31 + name.hashCode()) * 31 +
+                    ipv4.contentHashCode()) * 31 + fingerprint.hashCode()
         }
 
         /** Пришло входящее соединение. Рукопожатие идёт, сверки ещё не было. */
@@ -449,16 +465,35 @@ object BraidworkCore {
             }
 
             события += when (типы[i]) {
-                EV_DISCOVERED -> TransportEvent.Discovered(
-                    deviceId = идентификаторы.copyOfRange(i * DEVICE_ID_BYTES, (i + 1) * DEVICE_ID_BYTES),
-                    port = вспомогательные[i],
-                    // Ядро гарантирует, что имя не пустое и без управляющих
-                    // символов, но разбор UTF-8 всё равно может не сойтись на
-                    // чужом устройстве: тогда показываем честную заглушку, а не
-                    // пустую строку, которая в плитке выглядит как поломка.
-                    name = payload.toString(Charsets.UTF_8).ifEmpty { "Устройство" },
-                    ipv4 = адреса.copyOfRange(i * 4, i * 4 + 4),
-                )
+                EV_DISCOVERED -> {
+                    // Ядро кладёт в тело объявления имя и отпечаток, разделённые нулевым
+                    // байтом. Разбор один: тело декодируется дважды, а это
+                    // лишняя работа на каждом объявлении, а их приходит по
+                    // одному от каждого устройства каждые две секунды.
+                    //
+                    // Разделитель — нулевой байт, а не пробел: в отпечатке
+                    // пробелы есть, «ABCD EFGH IJKL MNOP», и деление по пробелу
+                    // разрезало бы его на части.
+                    //
+                    // Нулевой байт безопасен и в ядре, и здесь: имя очищено от
+                    // управляющих символов ещё в транспорте, и разделитель в
+                    // него попасть не может.
+                    val объявление = payload.toString(Charsets.UTF_8).split('\u0000')
+                        TransportEvent.Discovered(
+                        deviceId = идентификаторы.copyOfRange(i * DEVICE_ID_BYTES, (i + 1) * DEVICE_ID_BYTES),
+                        port = вспомогательные[i],
+                        // Ядро гарантирует непустое имя, но разбор UTF-8 всё равно
+                        // может не сойтись на чужом устройстве. Тогда показываем
+                        // честную заглушку, а не пустую строку: та в плитке читается
+                        // как поломка.
+                        name = объявление.getOrNull(0)?.ifEmpty { "Устройство" } ?: "Устройство",
+                        // Пустой отпечаток означает устройство с более старым ядром.
+                        // Выдуманное значение было бы хуже прочеркивания: человек
+                        // сверил бы с тем, что никто не сверяет.
+                        fingerprint = объявление.getOrNull(1).orEmpty(),
+                        ipv4 = адреса.copyOfRange(i * 4, i * 4 + 4),
+                    )
+                }
 
                 EV_INCOMING -> TransportEvent.Incoming(conn, адреса.copyOfRange(i * 4, i * 4 + 4))
                 EV_CONNECTED -> TransportEvent.Connected(conn, адреса.copyOfRange(i * 4, i * 4 + 4))

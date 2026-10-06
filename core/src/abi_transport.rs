@@ -249,7 +249,7 @@ pub unsafe extern "C" fn fl_transport_poll(
 }
 
 /// Переводит событие в структуру для клиента и отдаёт его тело отдельно.
-fn в_c(событие: &TransportEvent, смещение: usize) -> (FlTransEvent, &[u8]) {
+fn в_c(событие: &TransportEvent, смещение: usize) -> (FlTransEvent, Vec<u8>) {
     let mut запись = FlTransEvent {
         payload_off: смещение as u32,
         ..Default::default()
@@ -259,12 +259,13 @@ fn в_c(событие: &TransportEvent, смещение: usize) -> (FlTransEve
         TransportEvent::State(s) => {
             запись.event_type = FL_EV_STATE;
             запись.state = код_состояния(*s);
-            (запись, &[])
+            (запись, Vec::new())
         }
         TransportEvent::Discovered {
             device_id,
             addr,
             name,
+            fingerprint,
         } => {
             запись.event_type = FL_EV_DISCOVERED;
             запись.port = addr.port();
@@ -284,13 +285,21 @@ fn в_c(событие: &TransportEvent, смещение: usize) -> (FlTransEve
                 запись.device_id[i] = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
             }
 
-            // Имя кладём в слот тела, а не в отдельное поле структуры. Причина
-            // та же, по которой тела кадров не в структуре: переменная длина в
-            // фиксированной раскладке означала бы либо обрезку, либо вторую
-            // копию раскладки в клиенте.
+            // Имя и отпечаток кладутся в слот тела, а не в отдельные поля
+            // структуры. Причина та же, по которой тела кадров не в структуре:
+            // переменная длина в фиксированной раскладке означала бы либо
+            // обрезку, либо вторую копию раскладки в клиенте.
+            //
+            // Разделитель — нулевой байт. В имя он попасть не может:
+            // `пригодное_имя` выбрасывает управляющие символы, и нулевой байт не
+            // исключение. Проверять его отсутствие отдельно не нужно.
+            let mut блоб = String::with_capacity(name.len() + 1 + fingerprint.len());
+            блоб.push_str(name);
+            блоб.push('\0');
+            блоб.push_str(fingerprint);
             запись.payload_off = смещение as u32;
-            запись.payload_len = name.len() as u32;
-            (запись, name.as_bytes())
+            запись.payload_len = блоб.len() as u32;
+            (запись, блоб.into_bytes())
         }
         TransportEvent::Incoming(c) => {
             запись.event_type = FL_EV_INCOMING;
@@ -304,7 +313,7 @@ fn в_c(событие: &TransportEvent, смещение: usize) -> (FlTransEve
                 запись.ipv4 = ip.octets();
             }
             запись.port = c.remote.port();
-            (запись, &[])
+            (запись, Vec::new())
         }
         TransportEvent::Connected(c) => {
             запись.event_type = FL_EV_CONNECTED;
@@ -313,7 +322,7 @@ fn в_c(событие: &TransportEvent, смещение: usize) -> (FlTransEve
                 запись.ipv4 = ip.octets();
             }
             запись.port = c.remote.port();
-            (запись, &[])
+            (запись, Vec::new())
         }
         TransportEvent::Frame { conn, header, body } => {
             запись.event_type = FL_EV_FRAME;
@@ -321,7 +330,7 @@ fn в_c(событие: &TransportEvent, смещение: usize) -> (FlTransEve
             запись.kind = header.kind as u32;
             запись.flags = header.flags;
             запись.payload_len = body.len() as u32;
-            (запись, body.as_slice())
+            (запись, body.to_vec())
         }
         TransportEvent::Closed {
             conn,
@@ -338,12 +347,12 @@ fn в_c(событие: &TransportEvent, смещение: usize) -> (FlTransEve
                 запись.ipv4 = ip.octets();
             }
             запись.port = remote.port();
-            (запись, &[])
+            (запись, Vec::new())
         }
         TransportEvent::Notice(e) => {
             запись.event_type = FL_EV_NOTICE;
             запись.error = код_ошибки(e);
-            (запись, &[])
+            (запись, Vec::new())
         }
     }
 }
@@ -697,9 +706,10 @@ mod tests {
                 device_id: vec![0xABu8; длина],
                 addr: SocketAddr::from(([192, 168, 1, 5], 42424)),
                 name: "Устройство".to_owned(),
+                fingerprint: "ABCD EFGH IJKL MNOP".to_owned(),
             };
             let (запись, тело) = в_c(&событие, 0);
-            assert_eq!(тело, "Устройство".as_bytes());
+            assert_eq!(тело, "Устройство\0ABCD EFGH IJKL MNOP".as_bytes());
             assert_eq!(запись.event_type, FL_EV_DISCOVERED);
             assert_eq!(запись.port, 42424);
             // Всё, что поместилось, — правильные байты; лишнее — нули.
@@ -710,18 +720,23 @@ mod tests {
         }
     }
 
-    /// Имя доходит до клиента в теле, а не отдельным полем структуры.
+    /// Имя и отпечаток доходят до клиента в теле, а не отдельными полями.
+    ///
+    /// Отпечаток отделён от имени нулевым байтом. Разделитель безопасен: имя
+    /// очищено от управляющих символов ещё в транспорте, и нулевой байт туда
+    /// попасть не может, — а проверить это в клиенте нечем.
     #[test]
-    fn имя_идёт_в_теле_события() {
+    fn имя_и_отпечаток_идут_в_теле_события() {
         let событие = TransportEvent::Discovered {
             device_id: vec![7u8; 16],
             addr: SocketAddr::from(([192, 168, 1, 5], 42424)),
             name: "Redmi Note 12".to_owned(),
+            fingerprint: "ABCD EFGH IJKL MNOP".to_owned(),
         };
         let (запись, тело) = в_c(&событие, 24);
 
-        assert_eq!(тело, "Redmi Note 12".as_bytes());
-        assert_eq!(запись.payload_off, 24, "смещение имени передаётся наружу");
+        assert_eq!(тело, "Redmi Note 12\0ABCD EFGH IJKL MNOP".as_bytes());
+        assert_eq!(запись.payload_off, 24, "смещение тела передаётся наружу");
         assert_eq!(запись.payload_len, тело.len() as u32);
     }
 
@@ -907,6 +922,7 @@ mod tests {
             device_id: vec![7u8; 16],
             addr: SocketAddr::from(([192, 168, 1, 42], 42424)),
             name: "Телефон".to_owned(),
+            fingerprint: "ABCD EFGH IJKL MNOP".to_owned(),
         };
         let (запись, _) = в_c(&событие, 0);
 

@@ -44,17 +44,33 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
         val connected: Boolean,
         /** Когда видели в последний раз, миллисекунды системного времени. */
         val lastSeenMs: Long,
+        /**
+         * Отпечаток ключа подписи: четыре группы по четыре символа.
+         *
+         * Приходит из объявления, где ядро уже сверило его с идентификатором.
+         * Поэтому он годится для показа и сверки, а идентификатор из
+         * объявления — нет: тот проверен лишь на соответствие ключу.
+         *
+         * Пусто у устройства с более старым ядром.
+         */
+        val fingerprint: String = "",
     ) {
+        // `lastSeenMs` в сравнение не входит: он меняется при каждом объявлении,
+        // и с ним устройство никогда не было бы «тем же самым». Список
+        // перерисовывался бы каждые две секунды ради ничего не изменившегося.
         override fun equals(other: Any?) =
             other is Device &&
                 deviceId.contentEquals(other.deviceId) &&
                 port == other.port &&
                 name == other.name &&
                 ipv4.contentEquals(other.ipv4) &&
+                fingerprint == other.fingerprint &&
                 connected == other.connected
 
         override fun hashCode(): Int =
-            31 * (31 * (31 * (31 * deviceId.contentHashCode() + port) + name.hashCode()) + ipv4.contentHashCode()) + connected.hashCode()
+            31 * ((31 * (31 * (31 * (31 * deviceId.contentHashCode() + port) +
+                name.hashCode()) + ipv4.contentHashCode()) * 31 + fingerprint.hashCode()) * 31 +
+                connected.hashCode())
     }
 
     /** Состояние для интерфейса. */
@@ -370,6 +386,12 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
                         port = событие.port,
                         name = событие.name,
                         ipv4 = событие.ipv4,
+                        // Отпечаток выведен из ключа, а не назван, поэтому он не
+                        // меняется от объявления к объявлению. Пустая строка —
+                        // ядро у напарника старше, и показывать нечего.
+                        fingerprint = событие.fingerprint.ifEmpty {
+                            было?.fingerprint.orEmpty()
+                        },
                         connected = было?.connected ?: false,
                         lastSeenMs = теперь,
                     )

@@ -278,6 +278,7 @@ fun SubScreen(
                                 ?: "—",
                             port = найденное?.port ?: 0,
                             trail = trail,
+                            fingerprint = найденное?.fingerprint.orEmpty(),
                         ),
                         onBack = onBack,
                         // «Ещё» пока некуда вести: меню за ним не собрано.

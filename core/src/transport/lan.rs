@@ -513,7 +513,7 @@ impl LanTransport {
     /// известен. Поэтому объявление годится, чтобы показать «устройство
     /// рядом», и не годится, чтобы пустить в дом.
     fn read_discovery(&mut self) {
-        let mut найдено: Vec<(Vec<u8>, SocketAddr, String)> = Vec::new();
+        let mut найдено: Vec<(Vec<u8>, SocketAddr, String, String)> = Vec::new();
         let mut сбой: Option<TransportError> = None;
 
         if let Some(discovery) = &self.discovery {
@@ -547,6 +547,31 @@ impl LanTransport {
                     continue;
                 }
 
+                // Ключ подписи нужен не только для отпечатка. Идентификатор —
+                // это хэш ключа, и объявление присылает оба, значит заявление
+                // проверяется прямо здесь, без соединения.
+                //
+                // Раньше ключ только проверялся на существование и выбрасывался,
+                // а идентификатор принимался как есть. Устройство из подсети могло
+                // назваться чужим идентификатором, и в списке это выглядело
+                // как обычное устройство — отличить его было нечем.
+                let Some(ключ) = identity
+                    .signing
+                    .as_ref()
+                    .and_then(|s| <[u8; 32]>::try_from(&s.key[..]).ok())
+                else {
+                    continue;
+                };
+                let отпечаток = crate::crypto::fingerprint_from_signing(&ключ);
+                if !crate::crypto::device_id_matches_signing(&identity.device_id, &ключ) {
+                    crate::android_log::предостережение(&format!(
+                        "объявление с {}: идентификатор {} не соответствует ключу {отпечаток}, отброшено",
+                        откуда,
+                        пригодное_имя(&String::from_utf8_lossy(&identity.device_id))
+                    ));
+                    continue;
+                }
+
                 // Порт данных объявлен в самом сообщении. Портом отправки
                 // подставлять нельзя: UDP-объявление уходит с порта обнаружения,
                 // и клиент подключался бы туда, где никто не слушает.
@@ -575,6 +600,7 @@ impl LanTransport {
                     id,
                     SocketAddr::from((ip, порт)),
                     пригодное_имя(&identity.display_name),
+                    отпечаток,
                 ));
             }
         }
@@ -582,11 +608,12 @@ impl LanTransport {
         if let Some(e) = сбой {
             self.events.push(TransportEvent::Notice(e));
         }
-        for (device_id, addr, name) in найдено {
+        for (device_id, addr, name, fingerprint) in найдено {
             self.events.push(TransportEvent::Discovered {
                 device_id,
                 addr,
                 name,
+                fingerprint,
             });
         }
     }
@@ -1188,6 +1215,81 @@ mod tests {
             причины,
             vec![CloseReason::PeerClosed],
             "причина закрытия определена неверно"
+        );
+    }
+
+    /// Собственное объявление проходит сверку идентификатора с ключом.
+    ///
+    /// Проверка живёт в `read_discovery` и без неё отбросила бы всё подряд,
+    /// включая честные устройства. Тест на собственном объявлении ловит именно это:
+    /// ошибку в самой проверке, а не в подделке.
+    #[test]
+    fn своё_объявление_проходит_сверку() {
+        let t = транспорт();
+        let msg = t.build_announcement(1, 1).expect("объявление");
+        let (_, body, _) = frame::split(&msg).expect("кадр объявления");
+        let hello = Hello::decode(body).expect("hello");
+        let identity = hello.identity.as_ref().expect("идентичность");
+        let ключ: [u8; 32] = identity.signing.as_ref().expect("ключ подписи").key[..]
+            .try_into()
+            .expect("ключ на 32 байта");
+
+        assert!(
+            crate::crypto::device_id_matches_signing(&identity.device_id, &ключ),
+            "честное объявление не прошло бы сверку и было бы отброшено"
+        );
+    }
+
+    /// Объявление с чужим идентификатором отвергается.
+    ///
+    /// Устройство из подсети может прислать любой идентификатор с любым ключом.
+    /// Раньше объявление принималось как есть, и подделка не отличалась от
+    /// обычного устройства ничем.
+    #[test]
+    fn подделанный_идентификатор_отвергается() {
+        let честное = транспорт();
+        let чужое = транспорт();
+        let msg = чужое.build_announcement(1, 1).expect("объявление");
+        let (_, body, _) = frame::split(&msg).expect("кадр объявления");
+        let mut hello = Hello::decode(body).expect("hello");
+
+        // Подставляем чужой идентификатор, оставляя ключ прежним.
+        let чужой_id = честное.device_id();
+        // Идентификатор на проводе — 16 сырых байт, а `device_id()` отдаёт текст,
+        // поэтому подставляем текст целиком: длина в проверке не оговорена, а
+        // несовпадение всё равно обязано обнаружиться.
+        if let Some(identity) = hello.identity.as_mut() {
+            identity.device_id = prost::bytes::Bytes::from(чужой_id);
+        }
+
+        let identity = hello.identity.as_ref().expect("идентичность");
+        let ключ: [u8; 32] = identity.signing.as_ref().expect("ключ подписи").key[..]
+            .try_into()
+            .expect("ключ на 32 байта");
+
+        assert!(
+            !crate::crypto::device_id_matches_signing(&identity.device_id, &ключ),
+            "объявление с чужим идентификатором прошло сверку"
+        );
+    }
+
+    /// Отпечаток в объявлении выводится из ключа, а не из имени.
+    #[test]
+    fn отпечаток_считается_из_объявления() {
+        let t = транспорт();
+        let msg = t.build_announcement(1, 1).expect("объявление");
+        let (_, body, _) = frame::split(&msg).expect("кадр объявления");
+        let hello = Hello::decode(body).expect("hello");
+        let identity = hello.identity.as_ref().expect("идентичность");
+        let ключ: [u8; 32] = identity.signing.as_ref().expect("ключ подписи").key[..]
+            .try_into()
+            .expect("ключ на 32 байта");
+
+        let отпечаток = crate::crypto::fingerprint_from_signing(&ключ);
+        assert_eq!(отпечаток.len(), 19, "получилось «{отпечаток}»");
+        assert_ne!(
+            отпечаток, identity.display_name,
+            "отпечаток не должен совпадать с именем"
         );
     }
 

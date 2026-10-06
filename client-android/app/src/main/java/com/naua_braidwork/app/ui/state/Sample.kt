@@ -639,6 +639,7 @@ object Sample {
         address: String,
         port: Int,
         trail: List<String> = emptyList(),
+        fingerprint: String = "",
     ): DeviceDetailState = DeviceDetailState(
         name = device.name,
         statusLine = when (device.presence) {
@@ -669,9 +670,25 @@ object Sample {
                     // от платформы и заряда, которые придут только с кадрами.
                     add(SubRow("id", "Идентификатор", "", RowEnd.Value(device.id.take(8).uppercase())))
                     add(SubRow("address", "Адрес", "", RowEnd.Value("$address:$port")))
+                    // Платформа и версия ядра остаются прочеркиванием: их напарник не присылает,
+                    // а выдумывать значения нельзя. Придут с кадрами — тогда и
+                    // появятся.
                     add(SubRow("platform", "Платформа", "", RowEnd.Value("—")))
                     add(SubRow("core", "Версия ядра", "", RowEnd.Value("—")))
-                    add(SubRow("fingerprint", "Отпечаток ключа", "", RowEnd.Value("—")))
+                    // Отпечаток настоящий: ядро вывело его из ключа подписи и
+                    // сверило с идентификатором, отбросив объявление при
+                    // несовпадении. Сверять его можно — в отличие от имени.
+                    //
+                    // Пусто только у устройства с более старым ядром, которое
+                    // отпечаток ещё не присылает.
+                    add(
+                        SubRow(
+                            "fingerprint",
+                            "Отпечаток ключа",
+                            "",
+                            RowEnd.Value(fingerprint.ifEmpty { "—" }),
+                        )
+                    )
                     add(SubRow("trust", "Доверие", "", RowEnd.Chevron))
                 },
             ),
