@@ -295,9 +295,9 @@ object BraidworkCore {
             // устройств менялся бы при каждом объявлении, а выглядел бы так же.
             override fun equals(other: Any?) =
                 other is Discovered && deviceId.contentEquals(other.deviceId) &&
-                    port == other.port && name == other.name
+                    port == other.port && name == other.name && ipv4.contentEquals(other.ipv4)
 
-            override fun hashCode() = (31 * deviceId.contentHashCode() + port) * 31 + name.hashCode()
+            override fun hashCode() = 31 * ((31 * deviceId.contentHashCode() + port) * 31 + name.hashCode()) + ipv4.contentHashCode()
         }
 
         /** Пришло входящее соединение. Рукопожатие идёт, сверки ещё не было. */

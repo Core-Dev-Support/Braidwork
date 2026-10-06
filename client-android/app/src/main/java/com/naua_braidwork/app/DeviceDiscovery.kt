@@ -46,9 +46,15 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
         val lastSeenMs: Long,
     ) {
         override fun equals(other: Any?) =
-            other is Device && deviceId.contentEquals(other.deviceId)
+            other is Device &&
+                deviceId.contentEquals(other.deviceId) &&
+                port == other.port &&
+                name == other.name &&
+                ipv4.contentEquals(other.ipv4) &&
+                connected == other.connected
 
-        override fun hashCode() = deviceId.contentHashCode()
+        override fun hashCode(): Int =
+            31 * (31 * (31 * (31 * deviceId.contentHashCode() + port) + name.hashCode()) + ipv4.contentHashCode()) + connected.hashCode()
     }
 
     /** Состояние для интерфейса. */

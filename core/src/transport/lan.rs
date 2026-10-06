@@ -119,6 +119,32 @@ impl Peer {
         self.dead = true;
         self.причина.get_or_insert(причина);
     }
+
+    /// Отправляет накопившуюся очередь в сокет.
+    ///
+    /// Неблокирующий сокет может принять данные только частично. Если записано
+    /// 0 байт (буфер отправки полон), прерываем запись без закрытия сокета —
+    /// это штатное состояние для неблокирующего ввода-вывода.
+    fn сбросить_очередь(&mut self) {
+        while !self.outbox.is_empty() && !self.dead {
+            match self.stream.write(&self.outbox) {
+                Ok(0) => break,
+                Ok(n) => {
+                    self.outbox.drain(..n);
+                }
+                Err(ref e) if e.kind() == ErrorKind::WouldBlock => break,
+                Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
+                Err(e) => {
+                    crate::android_log::ошибка(&format!(
+                        "запись в {} не удалась: {e}",
+                        self.remote
+                    ));
+                    self.убить(CloseReason::NetworkLost);
+                    break;
+                }
+            }
+        }
+    }
 }
 
 /// Транспорт локальной сети.
@@ -295,6 +321,7 @@ impl LanTransport {
             .step(&[])
             .map_err(|e| TransportError::Other(e.to_string()))?;
         queue_handshake_step(&mut peer.outbox, step)?;
+        peer.сбросить_очередь();
 
         self.peers.insert(handle, peer);
 
@@ -537,36 +564,7 @@ impl LanTransport {
         let mut peers = std::mem::take(&mut self.peers);
 
         for (handle, peer) in peers.iter_mut() {
-            if !peer.outbox.is_empty() && !peer.dead {
-                match peer.stream.write(&peer.outbox) {
-                    Ok(0) => {
-                        // Ok(0) у неблокирующего сокета — это не конец
-                        // потока, а «сейчас писать некуда». Обрывать по нему
-                        // соединение нельзя: при отправке файла это случается
-                        // штатно, и соединение умерло бы на середине передачи.
-                        crate::android_log::предостережение(&format!(
-                            "запись в {} вернула 0, соединение закрывается",
-                            peer.remote
-                        ));
-                        peer.убить(CloseReason::NetworkLost);
-                    }
-                    Ok(n) => {
-                        peer.outbox.drain(..n);
-                    }
-                    Err(ref e) if e.kind() == ErrorKind::WouldBlock => {}
-                    Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
-                    Err(e) => {
-                        // Причина обрыва записывается: «напарник молча закрыл
-                        // сокет» и «сеть отвалилась» чинятся по-разному, а
-                        // снаружи обе выглядят одинаково.
-                        crate::android_log::ошибка(&format!(
-                            "запись в {} не удалась: {e}",
-                            peer.remote
-                        ));
-                        peer.убить(CloseReason::NetworkLost);
-                    }
-                }
-            }
+            peer.сбросить_очередь();
 
             let mut buf = [0u8; READ_CHUNK];
             loop {
@@ -608,6 +606,7 @@ impl LanTransport {
                     }
                 }
             }
+            peer.сбросить_очередь();
         }
 
         self.peers = peers;
@@ -1520,5 +1519,38 @@ mod tests {
         }
 
         assert!(принято, "ответчик отверг первое сообщение незнакомого");
+    }
+
+    /// Ответные сообщения рукопожатия сбрасываются в сокет сразу при обработке,
+    /// не дожидаясь следующего вызова poll.
+    #[test]
+    fn рукопожатие_проходит_без_задержки_в_очереди() {
+        let mut a = LanTransport::bind(DeviceKeys::generate(), "A".to_owned(), 0).expect("порт A");
+        let mut b = LanTransport::bind(DeviceKeys::generate(), "B".to_owned(), 0).expect("порт B");
+
+        let target = std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, b.port());
+        let handle = a.connect(target.into()).expect("соединение");
+
+        // Проход 1: B принимает TCP и читает msg1 (отправленный сразу в connect),
+        // генерирует msg2 и сразу сбрасывает его в сокет.
+        let _ = b.poll().expect("poll B 1");
+
+        // Проход 2: A читает msg2, генерирует msg3, сразу сбрасывает его в сокет
+        // и переходит в Data.
+        let _ = a.poll().expect("poll A 1");
+
+        // Проход 3: B читает msg3 и переходит в Data.
+        let _ = b.poll().expect("poll B 2");
+
+        assert!(
+            a.peers
+                .get(&handle)
+                .is_some_and(|p| matches!(p.phase, Phase::Data(_))),
+            "инициатор не перешёл в режим данных"
+        );
+        assert!(
+            b.peers.values().any(|p| matches!(p.phase, Phase::Data(_))),
+            "ответчик не перешёл в режим данных"
+        );
     }
 }
