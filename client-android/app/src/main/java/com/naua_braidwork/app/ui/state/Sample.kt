@@ -648,9 +648,17 @@ object Sample {
         },
         online = device.online,
         features = listOf(
-            DeviceFeature("clip", "Буфер", IcwClipboard, false),
+            // Идентификатор плитки — это маршрут подэкрана, ровно такой же
+            // строкой, какие использует `QuickAction` на главном.
+            //
+            // Раньше здесь стояли «clip» и «notif», а маршруты называются
+            // «clipboard» и «notifs». Расхождение было коварным: две из четырёх
+            // плиток совпадали с маршрутами, и нажатие на них работало, а две
+            // молчали. Это вторая таблица соответствия, которая разъехалась с
+            // первой при первом же переименовании.
+            DeviceFeature("clipboard", "Буфер", IcwClipboard, false),
             DeviceFeature("files", "Файлы", IcwFolder, false),
-            DeviceFeature("notif", "Уведомления", IcwBell, false),
+            DeviceFeature("notifs", "Уведомления", IcwBell, false),
             DeviceFeature("mirror", "Зеркало", IcwMirror, false),
         ),
         groups = listOf(
