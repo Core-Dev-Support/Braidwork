@@ -18,7 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.naua_braidwork.app.toHex
+import com.naua_braidwork.app.идентификатор
 import com.naua_braidwork.app.ui.components.BackButton
 import com.naua_braidwork.app.ui.components.SubBody
 import com.naua_braidwork.app.ui.components.SubGroupCard
@@ -270,7 +270,7 @@ fun SubScreen(
                     // собрали для показа, — это второй источник правды о том же
                     // устройстве, и они разошлись бы при первом же изменении
                     // формата подписи.
-                    val найденное = devices.firstOrNull { it.deviceId.toHex() == device.id }
+                    val найденное = devices.firstOrNull { it.deviceId.идентификатор() == device.id }
                     DeviceDetailScreen(
                         state = Sample.deviceDetailState(
                             device = device,

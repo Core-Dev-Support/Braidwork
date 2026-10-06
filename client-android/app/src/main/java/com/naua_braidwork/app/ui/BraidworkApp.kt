@@ -44,7 +44,7 @@ import com.naua_braidwork.app.ui.icons.IcwSync
 import com.naua_braidwork.app.DeviceDiscovery
 import com.naua_braidwork.app.LinkService
 import com.naua_braidwork.app.SettingsStore
-import com.naua_braidwork.app.toHex
+import com.naua_braidwork.app.идентификатор
 import com.naua_braidwork.app.ui.components.tapNoRipple
 import com.naua_braidwork.app.ui.screens.DevicesScreen
 import com.naua_braidwork.app.ui.screens.FamilyScreen
@@ -79,7 +79,7 @@ private const val ОПРОС_СНИМКА_МС = 1000L
  * список пересобирается каждые две секунды, а копия — нет.
  */
 private fun описание(найденное: DeviceDiscovery.Device) = DeviceSummary(
-    id = найденное.deviceId.toHex(),
+    id = найденное.deviceId.идентификатор(),
     // Имя приходит из объявления напарника. Оно ещё не проверено подписью — та
     // сверяется на соединении, — но «Устройство» в плитке хуже: в общей
     // квартире чужой телефон рядом со своим, и отличить их можно только по
@@ -181,7 +181,7 @@ fun BraidworkApp(
     // функция на оба: своя копия разъехалась бы при первом же изменении, и
     // противоречие вернулось бы в другой форме.
     val выбранное: DeviceSummary? = снимок.value.devices
-        .firstOrNull { it.deviceId.toHex() == выбранныйId }
+        .firstOrNull { it.deviceId.идентификатор() == выбранныйId }
         ?.let(::описание)
 
     val devicesState = remember(снимок.value, filter) {
@@ -360,7 +360,7 @@ fun BraidworkApp(
                             // имени выглядят правильно.
                             поиск.value?.let { канал ->
                                 снимок.value.devices
-                                    .firstOrNull { it.deviceId.toHex() == device.id }
+                                    .firstOrNull { it.deviceId.идентификатор() == device.id }
                                     ?.let { канал.connect(it) }
                             }
                         },
