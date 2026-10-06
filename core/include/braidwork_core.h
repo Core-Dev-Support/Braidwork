@@ -312,7 +312,7 @@ typedef struct fl_trans_event {
   uint64_t conn;         /* хэндл соединения, 0 там, где соединения нет */
   uint32_t payload_len;  /* длина тела в буфере ответов */
   uint32_t payload_off;  /* смещение тела от начала буфера ответов */
-  uint32_t device_id[4]; /* 16 байт для FL_EV_DISCOVERED */
+  uint32_t device_id[8]; /* до FL_DEVICE_ID_MAX байт, FL_EV_DISCOVERED; остальное нули */
   uint16_t port;         /* порт напарника для FL_EV_DISCOVERED */
   int32_t  error;        /* код ошибки для FL_EV_NOTICE */
   /* Адрес напарника для FL_EV_DISCOVERED, четыре байта в сетевом порядке. */

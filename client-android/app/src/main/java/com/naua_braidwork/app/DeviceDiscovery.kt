@@ -219,7 +219,7 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
      * соединение у первого.
      */
     fun connect(устройство: Device) {
-        val id = устройство.deviceId.toHex()
+        val id = устройство.deviceId.идентификатор()
 
         // Повторные нажатия в журнал не пишутся: это обычное дело пользователя,
         // а не событие. Пять нажатий подряд давали пять одинаковых строк и
@@ -239,7 +239,7 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
     private fun выполнить_просьбы(h: Long) {
         while (true) {
             val устройство = просьбы.poll() ?: return
-            val id = устройство.deviceId.toHex()
+            val id = устройство.deviceId.идентификатор()
 
             try {
                 val conn = BraidworkCore.transportConnect(h, устройство.ipv4, устройство.port)
@@ -353,7 +353,7 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
         val id = известные.values
             .firstOrNull { it.ipv4.contentEquals(адрес) }
             ?.deviceId
-            ?.toHex()
+            ?.идентификатор()
             ?: return null
 
         соединения[conn] = id
@@ -365,7 +365,7 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
         val события = BraidworkCore.transportPoll(h, максимум_событий, запас_под_кадры)
 
         val прежние = LinkedHashMap<String, Device>()
-        for (d in снимки.get().devices) прежние[d.deviceId.toHex()] = d
+        for (d in снимки.get().devices) прежние[d.deviceId.идентификатор()] = d
 
         val теперь = System.currentTimeMillis()
         var порт = снимки.get().port
@@ -380,8 +380,8 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
                     // переживает паузу в сети и обрывается только по событию
                     // FL_EV_CLOSED. Иначе плитка мигала бы «подключено» и
                     // «не подключено» каждые две секунды.
-                    val было = прежние[id.toHex()]
-                    прежние[id.toHex()] = Device(
+                    val было = прежние[id.идентификатор()]
+                    прежние[id.идентификатор()] = Device(
                         deviceId = id,
                         port = событие.port,
                         name = событие.name,
@@ -566,13 +566,22 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
 fun ByteArray.адрес(): String =
     if (size == 4) joinToString(".") { (it.toInt() and 0xFF).toString() } else "?"
 
-/** Идентификатор в виде строки для показа пользователю и сравнения. */
-fun ByteArray.toHex(): String {
-    val out = StringBuilder(size * 2)
-    for (b in this) {
-        val v = b.toInt() and 0xFF
-        out.append("0123456789ABCDEF"[v ushr 4])
-        out.append("0123456789ABCDEF"[v and 0x0F])
-    }
-    return out.toString()
-}
+/**
+ * Идентификатор устройства в том виде, в каком он приходит из ядра.
+ *
+ * Идентификатор — это base32-**текст**: 26 символов верхнего регистра и цифр.
+ * Раньше он приходил обрезанным до 16 байт, а здесь переводился в
+ * шестнадцатеричный вид: получалось 64 символа, из которых читалась ничего
+ * не значившая каша, а рядом с отпечатком ключа два числа об одном
+ * устройстве выглядели независимыми.
+ *
+ * Теперь это просто текст без преобразования: сравнивать и показывать можно
+ * как есть, а кодировать надо там, где кодируют, — в ядре.
+ *
+ * Нули в хвосте — заполнение фиксированного поля в структуре события, а не
+ * часть идентификатора. Отрезаются: иначе на конце каждого идентификатора
+ * в списке и в журнале висели бы нули.
+ */
+fun ByteArray.идентификатор(): String =
+    toString(Charsets.UTF_8).trimEnd(' ', [char]0)
+

@@ -388,7 +388,7 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTranspor
     let mut коннекты = vec![0i64; максимум];
     let mut виды = vec![0i32; максимум];
     let mut вспомогательные = vec![0i32; максимум];
-    let mut идентификаторы = vec![0i8; максимум * 16];
+    let mut идентификаторы = vec![0i8; максимум * DEVICE_ID_BYTES];
     let mut адреса = vec![0i8; максимум * 4];
     let mut смещения = vec![0i32; максимум];
     let mut длины = vec![0i32; максимум];
@@ -442,10 +442,14 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTranspor
         смещения[i] = событие.payload_off as i32;
         длины[i] = событие.payload_len as i32;
 
-        // Идентификатор в структуре лежит четырьмя u32 в младшем порядке.
-        // Раскладку знает только этот файл: в Kotlin её нет.
-        let блок = i * 16;
-        for k in 0..4usize {
+        // Идентификатор в структуре лежит u32 в младшем порядке, по четыре
+        // байта на каждый. Раскладку знает только этот файл: в Kotlin её нет.
+        //
+        // Размеры взяты у DEVICE_ID_BYTES, а не написаны числами: при
+        // расширении поля здесь и в Kotlin разошлись бы молча, а ошибка
+        // была бы в данных, а не в сборке.
+        let блок = i * DEVICE_ID_BYTES;
+        for k in 0..(DEVICE_ID_BYTES / 4) {
             let октет = событие.device_id[k].to_le_bytes();
             for j in 0..4usize {
                 идентификаторы[блок + k * 4 + j] = октет[j] as i8;
@@ -460,7 +464,7 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTranspor
     // а при закрытии нечего показать, кроме «соединение закрыто». Нули у
     // событий, у которых адреса нет вовсе, и клиент это различает.
     if env
-        .set_byte_array_region(&out_device, 0, &идентификаторы[..count * 16])
+        .set_byte_array_region(&out_device, 0, &идентификаторы[..count * DEVICE_ID_BYTES])
         .is_err()
         || env
             .set_byte_array_region(&out_ip, 0, &адреса[..count * 4])
