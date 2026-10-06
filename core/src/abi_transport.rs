@@ -295,11 +295,24 @@ fn в_c(событие: &TransportEvent, смещение: usize) -> (FlTransEve
         TransportEvent::Incoming(c) => {
             запись.event_type = FL_EV_INCOMING;
             запись.conn = c.handle;
+            // Адрес напарника заполняется и здесь, хотя поле называется как
+            // для обнаружения: знать, **от кого** пришло соединение, нужно не
+            // меньше, чем знать, что оно пришло. Без адреса входящее соединение
+            // невозможно связать с устройством из списка, и на экране оно
+            // выглядит как чужое.
+            if let IpAddr::V4(ip) = c.remote.ip() {
+                запись.ipv4 = ip.octets();
+            }
+            запись.port = c.remote.port();
             (запись, &[])
         }
         TransportEvent::Connected(c) => {
             запись.event_type = FL_EV_CONNECTED;
             запись.conn = c.handle;
+            if let IpAddr::V4(ip) = c.remote.ip() {
+                запись.ipv4 = ip.octets();
+            }
+            запись.port = c.remote.port();
             (запись, &[])
         }
         TransportEvent::Frame { conn, header, body } => {
@@ -310,13 +323,21 @@ fn в_c(событие: &TransportEvent, смещение: usize) -> (FlTransEve
             запись.payload_len = body.len() as u32;
             (запись, body.as_slice())
         }
-        TransportEvent::Closed { conn, reason } => {
+        TransportEvent::Closed {
+            conn,
+            reason,
+            remote,
+        } => {
             запись.event_type = FL_EV_CLOSED;
             запись.conn = *conn;
             // Причина кладётся в поле ошибки: для события закрытия оно иначе
             // не используется, а отдельное поле означало бы расширение раскладки
             // события ради одного случая.
             запись.error = reason.code() as i32;
+            if let IpAddr::V4(ip) = remote.ip() {
+                запись.ipv4 = ip.octets();
+            }
+            запись.port = remote.port();
             (запись, &[])
         }
         TransportEvent::Notice(e) => {

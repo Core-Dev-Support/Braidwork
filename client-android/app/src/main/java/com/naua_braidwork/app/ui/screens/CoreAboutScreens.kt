@@ -655,11 +655,41 @@ fun DeviceDetailScreen(
                     title = group.title,
                     modifier = Modifier.padding(start = 24.dp, top = 20.dp),
                 )
-                SubGroupCard(
-                    rows = group.rows,
-                    onRow = onRow,
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
+
+                // Журнал подключения рисуется отдельным блоком, а не строкой
+                // настроек.
+                //
+                // В строке текст справа обрезается по ширине, и журнал
+                // превращался в «соединение с» — то есть в нечто, из чего
+                // нельзя понять ничего. Здесь записи занимают всю ширину и
+                // переносятся: обрезанный диагноз бесполезен.
+                val журнал = group.rows.firstOrNull { it.multiline != null }
+                if (журнал?.multiline != null) {
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp),
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            журнал.multiline.forEach { строка ->
+                                Text(
+                                    text = строка,
+                                    fontSize = 13.sp,
+                                    lineHeight = 19.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    SubGroupCard(
+                        rows = group.rows,
+                        onRow = onRow,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
             }
         }
     }

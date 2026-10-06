@@ -473,7 +473,7 @@ impl LanTransport {
     fn pump_peers(&mut self) {
         // Хэндл и причина: разрыв по разным причинам выглядит снаружи одинаково,
         // а чинится по-разному.
-        let mut закрыть: Vec<(u64, CloseReason)> = Vec::new();
+        let mut закрыть: Vec<(u64, CloseReason, SocketAddr)> = Vec::new();
 
         // Таблица соединений вынимается на время обработки: разбор кадра
         // кладёт события в `self.events`, а держать заимствование на `self.peers`
@@ -494,7 +494,7 @@ impl LanTransport {
                             peer.remote
                         ));
                         peer.dead = true;
-                        закрыть.push((*handle, CloseReason::NetworkLost));
+                        закрыть.push((*handle, CloseReason::NetworkLost, peer.remote));
                     }
                     Ok(n) => {
                         peer.outbox.drain(..n);
@@ -510,7 +510,7 @@ impl LanTransport {
                             peer.remote
                         ));
                         peer.dead = true;
-                        закрыть.push((*handle, CloseReason::NetworkLost));
+                        закрыть.push((*handle, CloseReason::NetworkLost, peer.remote));
                     }
                 }
             }
@@ -527,8 +527,8 @@ impl LanTransport {
                             peer.remote, peer.handle
                         ));
                         peer.dead = true;
-                        закрыть.push((*handle, CloseReason::NetworkLost));
-                        закрыть.push((*handle, CloseReason::PeerClosed));
+                        закрыть.push((*handle, CloseReason::NetworkLost, peer.remote));
+                        закрыть.push((*handle, CloseReason::PeerClosed, peer.remote));
                         break;
                     }
                     Ok(n) => {
@@ -543,7 +543,7 @@ impl LanTransport {
                             peer.remote
                         ));
                         peer.dead = true;
-                        закрыть.push((*handle, CloseReason::NetworkLost));
+                        закрыть.push((*handle, CloseReason::NetworkLost, peer.remote));
                         break;
                     }
                 }
@@ -552,13 +552,14 @@ impl LanTransport {
 
         self.peers = peers;
 
-        for (handle, reason) in закрыть {
+        for (handle, reason, remote) in закрыть {
             // Соединение закрыто: сессия внутри него тоже освобождается, иначе
             // она засоряла бы слоты при каждом обрыве.
             self.peers.remove(&handle);
             self.events.push(TransportEvent::Closed {
                 conn: handle,
                 reason,
+                remote,
             });
         }
     }
@@ -834,10 +835,22 @@ impl Channel for LanTransport {
     /// Причина — «по команде», а не «напарник закрыл»: различать их нужно,
     /// иначе собственное действие выглядело бы как чужая поломка.
     fn close(&mut self, conn: u64) -> Result<(), TransportError> {
-        self.peers.remove(&conn);
+        // Адрес читается **до** удаления соединения: иначе в событии не осталось
+        // бы ничего, кроме хэндла, и в журнале нельзя было бы понять, чьё это
+        // было соединение.
+        let remote = match self.peers.remove(&conn) {
+            Some(peer) => peer.remote,
+            None => {
+                // Соединения уже нет: событие всё равно нужно, иначе клиент
+                // ждал бы закрытия, которого не будет.
+                return Err(TransportError::NotRunning);
+            }
+        };
+
         self.events.push(TransportEvent::Closed {
             conn,
             reason: CloseReason::ByRequest,
+            remote,
         });
         Ok(())
     }

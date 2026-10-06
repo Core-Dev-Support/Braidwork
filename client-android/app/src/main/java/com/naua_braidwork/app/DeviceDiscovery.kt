@@ -341,16 +341,22 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
                 // после сверки Hello, и это следующий шаг.
                 is BraidworkCore.TransportEvent.Connected -> {
                     val id = соединения[событие.conn] ?: continue
-                    записать("рукопожатие прошло с $id")
+                    записать("рукопожатие прошло с $id на ${событие.ipv4.адрес()}")
                     прежние[id]?.let { прежние[id] = it.copy(connected = true) }
                 }
 
-                is BraidworkCore.TransportEvent.Closed -> {
+// Входящее соединение — половина картины. Раньше оно молчало,
+                                // и на втором телефоне журнал выглядел пустым, хотя именно там
+                                // видно, кто инициировал.
+                                is BraidworkCore.TransportEvent.Incoming ->
+                                    записать("входящее соединение  от ")
+                
+                                is BraidworkCore.TransportEvent.Closed -> {
                     val id = соединения.remove(событие.conn) ?: continue
                     // Причина обязательна: «соединение закрыто» ничего не
                     // объясняло, а именно это и нужно было выяснить. Различие
                     // между «напарник закрыл» и «обрыв сети» и есть ответ.
-                    записать("соединение $id закрыто: ${событие.reasonText()}")
+                    записать("соединение $id закрыто: ${событие.reasonText()}, ${событие.ipv4.адрес()}")
                     прежние[id]?.let { прежнее -> прежние[id] = прежнее.copy(connected = false) }
                 }
 
@@ -454,6 +460,16 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
         const val повтор_через_мс = 5000L
     }
 }
+
+/**
+ * Адрес в виде строки для журнала и показа.
+ *
+ * Четыре байта в сетевом порядке, как их отдаёт ядро. Знак байта приводится
+ * явно: `toInt() and 0xFF` вместо `toInt()`, иначе адрес 192.168.3.140
+ * напечатался бы как «-64.-88.-3.140».
+ */
+fun ByteArray.адрес(): String =
+    if (size == 4) joinToString(".") { (it.toInt() and 0xFF).toString() } else "?"
 
 /** Идентификатор в виде строки для показа пользователю и сравнения. */
 fun ByteArray.toHex(): String {

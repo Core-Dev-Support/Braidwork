@@ -301,10 +301,31 @@ object BraidworkCore {
         }
 
         /** Пришло входящее соединение. Рукопожатие идёт, сверки ещё не было. */
-        data class Incoming(val conn: Long) : TransportEvent()
+        /**
+         * Пришло входящее соединение. Рукопожатие идёт, сверки ещё не было.
+         *
+         * [ipv4] — четыре байта отправителя. Без них входящее соединение
+         * невозможно связать с устройством из списка, и на экране оно
+         * выглядит как чужое.
+         */
+        data class Incoming(val conn: Long, val ipv4: ByteArray) : TransportEvent() {
+            override fun equals(other: Any?) = other is Incoming && conn == other.conn
+
+            override fun hashCode() = conn.hashCode()
+        }
 
         /** Соединение открыто нами. */
-        data class Connected(val conn: Long) : TransportEvent()
+        /**
+         * Соединение открыто, рукопожатие прошло.
+         *
+         * [ipv4] — четыре байта напарника: по ним видно, с кем соединение, и
+         * при нескольких устройствах в сети события не путаются местами.
+         */
+        data class Connected(val conn: Long, val ipv4: ByteArray) : TransportEvent() {
+            override fun equals(other: Any?) = other is Connected && conn == other.conn
+
+            override fun hashCode() = conn.hashCode()
+        }
 
         /** Пришёл целый кадр в расшифрованном виде. */
         data class Frame(val conn: Long, val kind: Int, val body: ByteArray) : TransportEvent() {
@@ -322,7 +343,7 @@ object BraidworkCore {
          * снаружи выглядят одинаково, а правятся по-разному. Без различения
          * пришлось бы угадывать, что именно сломалось.
          */
-        data class Closed(val conn: Long, val reason: Int) : TransportEvent() {
+        data class Closed(val conn: Long, val reason: Int, val ipv4: ByteArray) : TransportEvent() {
             /** Причина по-русски, для показа в журнале подключения. */
             fun reasonText(): String = when (reason) {
                 CLOSE_PEER -> "напарник закрыл соединение у себя"
@@ -439,9 +460,13 @@ object BraidworkCore {
                     ipv4 = адреса.copyOfRange(i * 4, i * 4 + 4),
                 )
 
-                EV_INCOMING -> TransportEvent.Incoming(conn)
-                EV_CONNECTED -> TransportEvent.Connected(conn)
-                EV_CLOSED -> TransportEvent.Closed(conn, вспомогательные[i])
+                EV_INCOMING -> TransportEvent.Incoming(conn, адреса.copyOfRange(i * 4, i * 4 + 4))
+                EV_CONNECTED -> TransportEvent.Connected(conn, адреса.copyOfRange(i * 4, i * 4 + 4))
+                EV_CLOSED -> TransportEvent.Closed(
+                    conn,
+                    вспомогательные[i],
+                    адреса.copyOfRange(i * 4, i * 4 + 4),
+                )
                 EV_NOTICE -> TransportEvent.Notice(вспомогательные[i])
                 EV_STATE -> TransportEvent.State(виды[i])
                 EV_FRAME -> TransportEvent.Frame(conn, виды[i], payload)
