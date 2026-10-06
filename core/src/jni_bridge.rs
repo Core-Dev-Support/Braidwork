@@ -15,11 +15,18 @@ use jni::objects::{JByteArray, JClass, JIntArray, JLongArray};
 use jni::sys::{jint, jlong};
 use jni::JNIEnv;
 
+use crate::abi_transport::DEVICE_ID_BYTES;
 use crate::{
     fl_device_id, fl_init, fl_keys_blob_len, fl_keys_create, fl_keys_device_id, fl_keys_load,
     fl_transport_lan_start, fl_transport_poll, fl_transport_port, fl_verify_signature, FlHandle,
     FlTransEvent, FL_EV_STATE, FL_OK, PUBLIC_KEYS_LEN,
 };
+
+// Длина идентификатора приходит из bi_transport, а не пишется числом.
+//
+// clippy для хоста его **не проверяют**: ошибка всплыла бы только на CI.
+// Расхождение с числом в структуре события дало бы не ошибку сборки, а тихо
+// испорченные данные — худший вид поломки.
 
 /// `jni` работает со знаковыми байтами: это тип Android, а не наш выбор.
 ///
