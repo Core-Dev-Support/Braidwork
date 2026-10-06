@@ -583,5 +583,5 @@ fun ByteArray.адрес(): String =
  * в списке и в журнале висели бы нули.
  */
 fun ByteArray.идентификатор(): String =
-    toString(Charsets.UTF_8).trimEnd(' ', [char]0)
+    toString(Charsets.UTF_8).trimEnd(' ', Char(0))
 
