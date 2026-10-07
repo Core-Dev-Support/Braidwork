@@ -20,7 +20,8 @@ package com.naua_braidwork.app
  * транспорт, и второй путь к тому же рукопожатию разошёлся бы с первым.
  *
  * Статусы ядра: 0 — успех, 1 — неверный аргумент, 2 — не хватило места,
- * 3 — криптография, 4 — не доверяем, 8 — паника ядра, 9 — хранилище.
+ * 3 — криптография, 4 — не доверяем, 6 — канал не готов, 8 — паника ядра,
+ * 9 — хранилище.
  */
 object BraidworkCore {
 
@@ -45,8 +46,34 @@ object BraidworkCore {
     const val STATUS_NO_MEMORY = 2
     const val STATUS_CRYPTO = 3
     const val STATUS_NOT_TRUSTED = 4
+
+    /**
+     * Канал не в состоянии принять: рукопожатие не завершено, соединения нет.
+     *
+     * Отдельное значение, а не «ошибка», потому что человек ничего не может с
+     * ним сделать: нужно просто дождаться соединения. Показывать ему такую же
+     * ошибку, как при обрыве сокета, значит заставить переподключаться зря.
+     */
+    const val STATUS_TRANSPORT = 6
+
     const val STATUS_PANIC = 8
     const val STATUS_STORAGE = 9
+
+    /** Буфер под кадр `Heartbeat`. Обязан совпадать с `FL_HEARTBEAT_FRAME_MAX`. */
+    const val HEARTBEAT_FRAME_MAX = 256
+
+    /** Предел содержимого буфера обмена. Обязан совпадать с `FL_CLIPBOARD_MAX`. */
+    const val CLIPBOARD_MAX = 65536
+
+    /**
+     * Буфер под тип содержимого, например `text/plain`.
+     *
+     * Типы содержимого задаются системой, а не приложением, и длиннее
+     * `text/plain; charset=utf-8` не бывает. 64 байта — с запасом на этот
+     * параметр; обрезанный тип был бы «неизвестным», и получатель не понял бы,
+     * как с содержимым.
+     */
+    const val MIME_MAX = 64
 
     // =====================================================================
     // Типы событий транспорта
@@ -614,6 +641,117 @@ object BraidworkCore {
         return nativeTransportAlive(handle) == 1
     }
 
+    /**
+     * Отправляет готовый кадр в соединение.
+     *
+     * Первая отправка через шифрованный канал. Раньше отправлять было нечем:
+     * `fl_transport_send` жил в C ABI, но до клиента не доходил, и канал
+     * поднимался, оставаясь пустым.
+     *
+     * На входе **целый кадр** из [heartbeatFrame] или [clipboardFrame], а не тело.
+     * Тип сообщения объявляется один раз, в своём заголовке: иначе получателю
+     * пришлось бы угадывать его по содержимому.
+     */
+    fun transportSend(handle: Long, conn: Long, frame: ByteArray) {
+        require(frame.isNotEmpty()) { "пустой кадр отправлять нечем" }
+        ensureLoaded()
+
+        val status = nativeTransportSend(handle, conn, frame)
+        if (status != STATUS_OK) {
+            // Рукопожатие не завершено — самая частая причина, и человеку
+            // сказать «не удалось отправить» бесполезно: он ничего не сможет
+            // с этим сделать. Поэтому в сообщении названа причина.
+            throw BraidworkException(
+                status,
+                if (status == STATUS_TRANSPORT) {
+                    "канал ещё не готов: рукопожатие не завершено"
+                } else {
+                    "не удалось отправить в соединение"
+                },
+            )
+        }
+    }
+
+    /**
+     * Собирает кадр `Heartbeat` из настоящих значений устройства.
+     *
+     * Считает ядро, а не клиент: время, заряд и зарядку человек сверяет с экраном
+     * своего телефона, и вторая реализация разъехалась бы с ядром при первом же
+     * изменении схемы — и показала бы чужое значение как своё.
+     */
+    fun heartbeatFrame(unixTimeMs: Long, batteryPercent: Int, charging: Boolean): ByteArray {
+        ensureLoaded()
+
+        val out = ByteArray(HEARTBEAT_FRAME_MAX)
+        val len = IntArray(1)
+        val status = nativeHeartbeatBuild(unixTimeMs, batteryPercent, charging, out, len)
+        if (status != STATUS_OK) {
+            // Заряд выше сотни — ошибка того, кто зовёт, а не устройства.
+            throw BraidworkException(status, "заряд вне диапазона 0..100: $batteryPercent")
+        }
+        return out.copyOf(len[0])
+    }
+
+    /** Что прислал напарник в `Heartbeat`. */
+    data class Heartbeat(
+        /** Время напарника в миллисекундах Unix. */
+        val unixTimeMs: Long,
+        /** Заряд в процентах, 0 означает «разряжен», а не «неизвестно». */
+        val batteryPercent: Int,
+        /** На зарядке ли напарник. */
+        val charging: Boolean,
+    )
+
+    /**
+     * Разбирает тело `Heartbeat`.
+     *
+     * `null` — тело не то: это не ошибка связи, а незнакомое или повреждённое
+     * сообщение. Исключение здесь было бы хуже: один чужой кадр уронил бы цикл
+     * опроса событий, а с ним и всю связь.
+     */
+    fun readHeartbeat(body: ByteArray): Heartbeat? {
+        ensureLoaded()
+
+        val out = LongArray(3)
+        val status = nativeHeartbeatRead(body, out)
+        if (status != STATUS_OK) return null
+        return Heartbeat(out[0], out[1].toInt(), out[2] != 0L)
+    }
+
+    /** Собирает кадр `ClipboardContent`. */
+    fun clipboardFrame(content: String, mimeType: String): ByteArray {
+        ensureLoaded()
+
+        val out = ByteArray(CLIPBOARD_MAX)
+        val len = IntArray(1)
+        val status = nativeClipboardBuild(content.toByteArray(Charsets.UTF_8), mimeType, out, len)
+        if (status != STATUS_OK) {
+            throw BraidworkException(status, "содержимое не проходит: не текст или слишком велико")
+        }
+        return out.copyOf(len[0])
+    }
+
+    /**
+     * Разбирает тело `ClipboardContent`.
+     *
+     * `null` — тело не то. Разбор живёт в ядре: второй разборщик протокола на
+     * стороне приложения разъехался бы с ядром, и человек вставил бы в буфер
+     * обмена чужой текст, ничего не проверив.
+     */
+    fun readClipboard(body: ByteArray): Pair<String, String>? {
+        ensureLoaded()
+
+        val content = ByteArray(CLIPBOARD_MAX)
+        val contentLen = IntArray(1)
+        val mime = ByteArray(MIME_MAX)
+        val mimeLen = IntArray(1)
+        val status =
+            nativeClipboardRead(body, content, contentLen, mime, mimeLen)
+        if (status != STATUS_OK) return null
+        return String(content, 0, contentLen[0], Charsets.UTF_8) to
+            String(mime, 0, mimeLen[0], Charsets.UTF_8)
+    }
+
     /** Останавливает транспорт: сокеты закрыты, состояние сброшено. */
     fun transportStop(handle: Long) {
         ensureLoaded()
@@ -694,6 +832,37 @@ object BraidworkCore {
         ipv4: ByteArray,
         port: Int,
         outConn: LongArray,
+    ): Int
+
+    private external fun nativeTransportSend(
+        handle: Long,
+        conn: Long,
+        frame: ByteArray,
+    ): Int
+
+    private external fun nativeHeartbeatBuild(
+        unixTimeMs: Long,
+        batteryPercent: Int,
+        charging: Boolean,
+        out: ByteArray,
+        outLen: IntArray,
+    ): Int
+
+    private external fun nativeHeartbeatRead(body: ByteArray, out: LongArray): Int
+
+    private external fun nativeClipboardBuild(
+        content: ByteArray,
+        mimeType: String,
+        out: ByteArray,
+        outLen: IntArray,
+    ): Int
+
+    private external fun nativeClipboardRead(
+        body: ByteArray,
+        outContent: ByteArray,
+        outContentLen: IntArray,
+        outMime: ByteArray,
+        outMimeLen: IntArray,
     ): Int
     private external fun nativeTransportStop(handle: Long): Int
     private external fun nativeTransportFree(handle: Long): Int

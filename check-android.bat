@@ -69,7 +69,7 @@ for %%M in (nativeInit nativeDeviceId nativeVerifySignature nativeKeysCreate nat
   )
 )
 
-for %%F in (fl_init fl_device_id fl_verify_signature fl_abi_version fl_free fl_keys_blob_len fl_keys_create fl_keys_load fl_keys_device_id fl_keys_fingerprint fl_session_create fl_session_step fl_session_ready fl_session_finish fl_session_seal fl_session_open fl_session_free fl_hello_build fl_hello_verify fl_frame_encode fl_transport_lan_start fl_transport_poll fl_transport_connect fl_transport_send fl_transport_conn_close fl_transport_port fl_transport_stop fl_transport_free fl_transport_event_size) do (
+for %%F in (fl_init fl_device_id fl_verify_signature fl_abi_version fl_free fl_keys_blob_len fl_keys_create fl_keys_load fl_keys_device_id fl_keys_fingerprint fl_session_create fl_session_step fl_session_ready fl_session_finish fl_session_seal fl_session_open fl_session_free fl_hello_build fl_hello_verify fl_heartbeat_build fl_heartbeat_read fl_clipboard_build fl_clipboard_read fl_frame_encode fl_transport_lan_start fl_transport_poll fl_transport_connect fl_transport_send fl_transport_conn_close fl_transport_port fl_transport_stop fl_transport_free fl_transport_event_size) do (
   findstr /C:"%%F" "%SO%" >nul || (
     echo FAIL: no C ABI symbol %%F
     set "OK=0"

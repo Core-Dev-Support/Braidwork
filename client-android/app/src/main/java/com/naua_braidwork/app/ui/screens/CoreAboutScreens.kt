@@ -47,7 +47,7 @@ import com.naua_braidwork.app.ui.icons.IcwMore
 import com.naua_braidwork.app.ui.icons.IcwPlay
 import com.naua_braidwork.app.ui.icons.IcwRefresh
 import com.naua_braidwork.app.ui.icons.IcwSync
-import com.naua_braidwork.app.ui.icons.IcwUpload
+import com.naua_braidwork.app.ui.icons.IcwClipboard
 import com.naua_braidwork.app.ui.state.AboutState
 import com.naua_braidwork.app.ui.state.CoreState
 import com.naua_braidwork.app.ui.state.CoreTest
@@ -644,7 +644,10 @@ fun DeviceDetailScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         PillButton(
-                            "Отправить файл", IcwUpload, filled = true,
+                            // Не «Отправить файл»: файлы отправлять нечем, и
+                            // кнопка вела бы на экран-заготовку. Здесь то, что
+                            // действительно уходит по каналу сейчас.
+                            "Отправить буфер", IcwClipboard, filled = true,
                             onClick = onSend, modifier = Modifier.weight(1f),
                         )
                         PillButton(

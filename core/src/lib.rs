@@ -38,9 +38,10 @@ pub mod pb {
 }
 
 pub use abi_session::{
-    fl_hello_build, fl_hello_verify, fl_session_create, fl_session_finish, fl_session_free,
-    fl_session_open, fl_session_ready, fl_session_seal, fl_session_step, FL_ROLE_INITIATOR,
-    FL_ROLE_RESPONDER, FL_STEP_COMPLETE, FL_STEP_SEND, FL_STEP_WAIT,
+    fl_clipboard_build, fl_clipboard_read, fl_heartbeat_build, fl_heartbeat_read, fl_hello_build,
+    fl_hello_verify, fl_session_create, fl_session_finish, fl_session_free, fl_session_open,
+    fl_session_ready, fl_session_seal, fl_session_step, CLIPBOARD_MAX, FL_ROLE_INITIATOR,
+    FL_ROLE_RESPONDER, FL_STEP_COMPLETE, FL_STEP_SEND, FL_STEP_WAIT, HEARTBEAT_FRAME_MAX,
 };
 #[cfg(feature = "transport-lan")]
 pub use abi_transport::{

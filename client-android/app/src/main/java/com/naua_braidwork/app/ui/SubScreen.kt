@@ -16,6 +16,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.naua_braidwork.app.TrustStore
@@ -143,6 +144,15 @@ fun SubScreen(
      * из подписи — значит завести второй источник правды о том же устройстве.
      */
     devices: List<com.naua_braidwork.app.DeviceDiscovery.Device> = emptyList(),
+
+    /**
+     * Канал, чтобы отправлять по нему прямо отсюда.
+     *
+     * Передаётся данными, а не берётся из `LinkService`: пока его нет, кнопка
+     * отправки должна быть нажатием в пустоту без всякого смысла, а не искать
+     * сервис по своему усмотрению.
+     */
+    discovery: com.naua_braidwork.app.DeviceDiscovery? = null,
 
     /** Ход подключения для показа в карточке. Пустой список — событий не было. */
     trail: List<String> = emptyList(),
@@ -362,7 +372,22 @@ fun SubScreen(
                         // имена с маршрутами случайно совпадали.
                         onMore = {},
                         onFeature = { onRow(it) },
-                        onSend = { onRow(Route.FILES) },
+                        // Кнопка отправляет настоящее содержимое буфера, а не
+                        // открывает экран файлов. Файлы ещё не сделаны: экран есть,
+                        // но отправлять нечего, и кнопка вела бы в заготовку.
+                        // Работающая отправка честнее ссылки на неготовую функцию.
+                        onSend = {
+                            val буфер = LocalClipboardManager.current
+                            // Пустой буфер и отсутствие соединения разбираются
+                            // внутри канала и попадают в журнал: он уже показан на
+                            // этой же карточке. Свой отдельный экран отказа был бы
+                            // вторым местом, где об одном и том же написано по-
+                            // разному.
+                            discovery?.послатьБуферУстройству(
+                                device.id,
+                                буфер.getText()?.toString().orEmpty(),
+                            )
+                        },
                         onMirror = { onRow(Route.MIRROR) },
                         onRow = { onRow(it.id) },
                         // Доверие ведёт на экран сопряжения. Идентификатор

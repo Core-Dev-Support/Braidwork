@@ -24,6 +24,9 @@ use crate::{
     guard, status_from_crypto, DeviceKeys, FlHandle, FlStatus, SessionError, DEVICE_ID_MAX,
     FL_ERR_CRYPTO, FL_ERR_INVALID_ARG, FL_ERR_STORAGE, FL_OK,
 };
+// Нужен ради `decode` в разборе сердцебиения и буфера обмена. Без него вызов
+// не находится: prost генерирует `decode` трейтом, а не inherent-методом.
+use prost::Message as _;
 
 /// Сторона рукопожатия в C ABI.
 pub const FL_ROLE_INITIATOR: u32 = 0;
@@ -530,9 +533,281 @@ pub unsafe extern "C" fn fl_hello_verify(
     })
 }
 
+// =============================================================================
+// Первые данные: сердцебиение и буфер обмена
+//
+// Разбор сообщений живёт здесь, а не в клиенте. Вторая реализация protobuf на
+// стороне Kotlin разъехалась бы с ядром при первом же изменении схемы, и тогда
+// клиент показал бы человеку неверные значения содержимого — то есть сказал бы
+// «это то, что у соседа в буфере», показав чужое. Разборщик должен быть один.
+// =============================================================================
+
+/// Предел содержимого буфера обмена.
+///
+/// Число взято не из расчёта, а из возможностей клиента: Android держит в
+/// буфере обмена крупный текст, а протокол на первом канале не дробит сообщения
+/// и не жмёт их. Отправка большего должна упасть с честной ошибкой, а не
+/// разрезаться молча наполовину.
+pub const CLIPBOARD_MAX: usize = 64 * 1024;
+
+/// Буфер под кадр `Heartbeat`: заголовок плюс пять небольших полей.
+///
+/// Взят с запасом. Тело сообщения — это время, процент, флажок и два целых
+/// числа: оно не растёт вместе с текстом. Если бы размер зависел от чего-то
+/// внешнего, константа разъехалась бы с ним тихо, и клиент получил бы кадр,
+/// обрезанный на середине.
+pub const HEARTBEAT_FRAME_MAX: usize = 256;
+
+/// Собирает кадр `Heartbeat` — первое, что уходит по установленному каналу.
+///
+/// Канал данных поднят, а по нему не уходило ни одного кадра. Сердцебиение
+/// выбрано потому, что несёт настоящие значения: время, заряд, зарядку. Ни
+/// одного выдуманного поля.
+///
+/// `measured_kbps` остаётся нулём: скорость не измеряется, и ноль здесь означает
+/// «не измерено», а не «нулевая скорость». Заполнять его средним значением или
+/// скоростью входящего соединения — значило бы показать человеку правдоподобное
+/// число, измеренное не тем методом.
+///
+/// Тип канала проставляет ядро: клиент знает, каким он его запустил, но не
+/// обязан знать, как этот канал называется в протоколе.
+///
+/// # Safety
+/// `out_data` — буфер не менее [`HEARTBEAT_FRAME_MAX`] байт, `out_len` — на
+/// `usize`. Указатели валидны.
+#[no_mangle]
+pub unsafe extern "C" fn fl_heartbeat_build(
+    unix_time_ms: u64,
+    battery_percent: u32,
+    charging: bool,
+    out_data: *mut u8,
+    out_len: *mut usize,
+) -> FlStatus {
+    guard(|| {
+        if out_data.is_null() || out_len.is_null() {
+            return FL_ERR_INVALID_ARG;
+        }
+        // Заряд выше сотни означает ошибку на стороне клиента, а не устройство
+        // с двумя батареями. Обрезать молча нельзя: в журнале появилось бы
+        // «заряд 100 %» у телефона, который на самом деле разряжен.
+        if battery_percent > 100 {
+            return FL_ERR_INVALID_ARG;
+        }
+
+        let тело = crate::pb::Heartbeat {
+            unix_time_ms,
+            battery_percent,
+            charging,
+            transport: crate::pb::TransportKind::TransportLan as i32,
+            measured_kbps: 0,
+        };
+
+        let кадр =
+            match crate::frame::encode(crate::pb::MessageKind::KindHeartbeat as i32, 0, &тело) {
+                Ok(f) => f,
+                Err(_) => return crate::FL_ERR_INTERNAL,
+            };
+
+        copy_out(&кадр, out_data, out_len)
+    })
+}
+
+/// Разбирает тело `Heartbeat` в значения для показа.
+///
+/// Возвращает ровно то, что прислал напарник, без округлений и подстановок:
+/// человек сравнивает эти числа с экраном своего телефона, и любая правда «для
+/// ровности» была бы враньём.
+///
+/// # Safety
+/// `body` — `body_len` байт расшифрованного тела; выходы валидны.
+#[no_mangle]
+pub unsafe extern "C" fn fl_heartbeat_read(
+    body: *const u8,
+    body_len: usize,
+    out_unix_ms: *mut u64,
+    out_battery: *mut u32,
+    out_charging: *mut u32,
+) -> FlStatus {
+    guard(|| {
+        if body.is_null()
+            || out_unix_ms.is_null()
+            || out_battery.is_null()
+            || out_charging.is_null()
+        {
+            return FL_ERR_INVALID_ARG;
+        }
+        let bytes = if body_len == 0 {
+            &[][..]
+        } else {
+            std::slice::from_raw_parts(body, body_len)
+        };
+
+        let разобранное = match crate::pb::Heartbeat::decode(bytes) {
+            Ok(h) => h,
+            Err(_) => return FL_ERR_INVALID_ARG,
+        };
+
+        *out_unix_ms = разобранное.unix_time_ms;
+        *out_battery = разобранное.battery_percent;
+        // `bool` в C — это `u32`: отдельный тип не пережил бы границу ABI.
+        *out_charging = u32::from(разобранное.charging);
+
+        FL_OK
+    })
+}
+
+/// Собирает кадр `ClipboardContent` из содержимого буфера.
+///
+/// Хэш содержимого считает ядро. Клиент его не передаёт намеренно: посчитанный
+/// на стороне приложения хэш нечем сверить, а молчащее несовпадение хэшей было
+/// бы хуже их отсутствия.
+///
+/// # Safety
+/// `content` — `content_len` байт UTF-8, `mime_type` — `mime_len` байт;
+/// `out_data` — буфер не менее [`CLIPBOARD_MAX`], `out_len` — на `usize`.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fl_clipboard_build(
+    content: *const u8,
+    content_len: usize,
+    mime_type: *const u8,
+    mime_len: usize,
+    out_data: *mut u8,
+    out_len: *mut usize,
+) -> FlStatus {
+    guard(|| {
+        if out_data.is_null() || out_len.is_null() {
+            return FL_ERR_INVALID_ARG;
+        }
+        if content.is_null() || content_len > CLIPBOARD_MAX {
+            return FL_ERR_INVALID_ARG;
+        }
+        if mime_type.is_null() && mime_len > 0 {
+            return FL_ERR_INVALID_ARG;
+        }
+
+        let содержимое = std::slice::from_raw_parts(content, content_len);
+        // Содержимое обязано быть UTF-8: клиент показывает его человеку, и
+        // содержимое с невалидными байтами превратилось бы в «�» посреди
+        // текста, который человек собирается прочитать.
+        let текст = match std::str::from_utf8(содержимое) {
+            Ok(t) => t,
+            Err(_) => return FL_ERR_INVALID_ARG,
+        };
+
+        let mime = if mime_len == 0 {
+            ""
+        } else {
+            match std::str::from_utf8(std::slice::from_raw_parts(mime_type, mime_len)) {
+                Ok(m) => m,
+                Err(_) => return FL_ERR_INVALID_ARG,
+            }
+        };
+
+        let тело = crate::pb::ClipboardContent {
+            content_hash: prost::bytes::Bytes::copy_from_slice(&хэш_содержимого(
+                содержимое,
+            )),
+            content: prost::bytes::Bytes::copy_from_slice(текст.as_bytes()),
+            mime_type: mime.to_string(),
+        };
+
+        let кадр = match crate::frame::encode(
+            crate::pb::MessageKind::KindClipboardContent as i32,
+            0,
+            &тело,
+        ) {
+            Ok(f) => f,
+            Err(_) => return crate::FL_ERR_INTERNAL,
+        };
+
+        copy_out(&кадр, out_data, out_len)
+    })
+}
+
+/// Разбирает тело `ClipboardContent` в содержимое и тип.
+///
+/// Хэш содержимого наружу не отдаётся: он нужен для отсечения повторов между
+/// устройствами, а не для показа. Возвращать его значило бы заставлять клиент
+/// сравнивать то, с чем он ничего не может сделать.
+///
+/// # Safety
+/// `body` — `body_len` байт расшифрованного тела; `out_content` — не менее
+/// `content_cap` байт, `out_mime` — не менее `mime_cap`. Нулевая ёмкость при
+/// ненулевом выходном указателе означает «узнай размер»: длины заполняются,
+/// содержимое не копируется.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fl_clipboard_read(
+    body: *const u8,
+    body_len: usize,
+    out_content: *mut u8,
+    content_cap: usize,
+    out_content_len: *mut usize,
+    out_mime: *mut u8,
+    mime_cap: usize,
+    out_mime_len: *mut usize,
+) -> FlStatus {
+    guard(|| {
+        if body.is_null() || out_content_len.is_null() || out_mime_len.is_null() {
+            return FL_ERR_INVALID_ARG;
+        }
+        let bytes = if body_len == 0 {
+            &[][..]
+        } else {
+            std::slice::from_raw_parts(body, body_len)
+        };
+
+        let разобранное = match crate::pb::ClipboardContent::decode(bytes) {
+            Ok(c) => c,
+            Err(_) => return FL_ERR_INVALID_ARG,
+        };
+
+        // Нулевая ёмкость означает «только узнай размер»: длина заполняется, а
+        // содержимое не копируется. Так клиент узнаёт, сколько выделить, не
+        // заводя отдельного вызова ради размера.
+        //
+        // Ненулевая, но недостаточная ёмкость — ошибка вызывающего, а не
+        // напарника: отправить было можно. Отдельного кода «буфер мал» в
+        // контракте нет и не заводится ради одного случая.
+        let места_хватает = |нужно: usize, есть: usize| есть == 0 || нужно <= есть;
+        if !места_хватает(разобранное.content.len(), content_cap)
+            || !места_хватает(разобранное.mime_type.len(), mime_cap)
+        {
+            return FL_ERR_INVALID_ARG;
+        }
+        // Пустой выходной указатель законен ровно при нулевой ёмкости: копировать
+        // нечего. При ненулевой ёмкости он означал бы запись по адресу, которого
+        // нет, — это ошибка вызывающего, а не напарника.
+        if (content_cap > 0 && out_content.is_null()) || (mime_cap > 0 && out_mime.is_null()) {
+            return FL_ERR_INVALID_ARG;
+        }
+
+        if content_cap > 0 && !разобранное.content.is_empty() {
+            std::slice::from_raw_parts_mut(out_content, разобранное.content.len())
+                .copy_from_slice(&разобранное.content);
+        }
+        *out_content_len = разобранное.content.len();
+
+        let mime = разобранное.mime_type.as_bytes();
+        if mime_cap > 0 && !mime.is_empty() {
+            std::slice::from_raw_parts_mut(out_mime, mime.len()).copy_from_slice(mime);
+        }
+        *out_mime_len = mime.len();
+
+        FL_OK
+    })
+}
+
+/// Хэш содержимого буфера для дедупликации.
+fn хэш_содержимого(bytes: &[u8]) -> [u8; 32] {
+    *blake3::hash(bytes).as_bytes()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pb::MessageKind;
     use crate::registry::HANDLE_INVALID;
     // Используется только в проверках, поэтому импорт здесь: иначе сборка без
     // тестов ругается на неиспользованный.
@@ -908,5 +1183,294 @@ mod tests {
             )
         };
         assert_ne!(code, FL_OK);
+    }
+
+    // =========================================================================
+    // Сердцебиение
+    // =========================================================================
+
+    /// Собирает кадр сердцебиения и возвращает его вместе с телом.
+    fn собрать_сердцебиение(
+        ms: u64, заряд: u32, зарядка: bool
+    ) -> Vec<u8> {
+        let mut кадр = vec![0u8; HEARTBEAT_FRAME_MAX];
+        let mut длина = 0usize;
+        let код = unsafe {
+            fl_heartbeat_build(
+                ms,
+                заряд,
+                зарядка,
+                кадр.as_mut_ptr(),
+                &mut длина as *mut usize,
+            )
+        };
+        assert_eq!(код, FL_OK, "сердцебиение собрано");
+
+        let (заголовок, тело, _) = crate::frame::split(&кадр[..длина])
+            .expect("кадр разобран тем же кодом, что и на приёме");
+        assert_eq!(заголовок.kind, MessageKind::KindHeartbeat as i32);
+        тело.to_vec()
+    }
+
+    /// Сердцебиение доходит в том виде, в каком было собрано.
+    ///
+    /// Человек сравнивает эти числа с экраном своего телефона. Если сборка и
+    /// разбор разошлись бы — например, из-за другого формата времени или знака
+    /// процента, — на экране соседа появилось бы правдоподобное, но не то
+    /// значение, и человек решил бы, что у него разряжается чужой телефон.
+    #[test]
+    fn сердцебиение_доходит_таким_как_собрано() {
+        let тело = собрать_сердцебиение(1_700_000_000_000, 77, true);
+
+        let mut время = 0u64;
+        let mut заряд = 0u32;
+        let mut зарядка = 0u32;
+        let код = unsafe {
+            fl_heartbeat_read(
+                тело.as_ptr(),
+                тело.len(),
+                &mut время as *mut u64,
+                &mut заряд as *mut u32,
+                &mut зарядка as *mut u32,
+            )
+        };
+
+        assert_eq!(код, FL_OK);
+        assert_eq!(время, 1_700_000_000_000);
+        assert_eq!(заряд, 77);
+        assert_eq!(зарядка, 1);
+    }
+
+    /// Заряд выше сотни — ошибка клиента, а не устройства с двумя батареями.
+    ///
+    /// Обрезать молча нельзя: в журнале появилось бы «заряд 100 %» у телефона,
+    /// который на самом деле разряжен, и человек снял бы его с зарядки зря.
+    #[test]
+    fn заряд_выше_сотни_не_проходит() {
+        let mut кадр = vec![0u8; 256];
+        let mut длина = 0usize;
+        let код = unsafe {
+            fl_heartbeat_build(1, 101, false, кадр.as_mut_ptr(), &mut длина as *mut usize)
+        };
+        assert_eq!(код, FL_ERR_INVALID_ARG, "заряд 101 отвергнут");
+        assert_eq!(длина, 0, "в кадр ничего не записано");
+    }
+
+    /// Разряженный телефон — это ноль, а не «нет данных».
+    ///
+    /// Ноль заряда и «заряд неизвестен» выглядят на экране одинаково, а значат
+    /// разное: первый телефон можно заряжать прямо сейчас.
+    #[test]
+    fn нулевой_заряд_это_ноль_а_не_пустота() {
+        let тело = собрать_сердцебиение(1, 0, false);
+
+        let mut время = 0u64;
+        let mut заряд = 99u32;
+        let mut зарядка = 7u32;
+        let код = unsafe {
+            fl_heartbeat_read(
+                тело.as_ptr(),
+                тело.len(),
+                &mut время as *mut u64,
+                &mut заряд as *mut u32,
+                &mut зарядка as *mut u32,
+            )
+        };
+
+        assert_eq!(код, FL_OK);
+        assert_eq!(заряд, 0, "ноль заряда доехал как ноль");
+        assert_eq!(зарядка, 0, "зарядки нет");
+    }
+
+    // =========================================================================
+    // Буфер обмена
+    // =========================================================================
+
+    /// Собирает кадр буфера и возвращает его вместе с телом.
+    fn собрать_буфер(текст: &str, mime: &str) -> Vec<u8> {
+        let mut кадр = vec![0u8; CLIPBOARD_MAX];
+        let mut длина = 0usize;
+        let код = unsafe {
+            fl_clipboard_build(
+                текст.as_ptr(),
+                текст.len(),
+                mime.as_ptr(),
+                mime.len(),
+                кадр.as_mut_ptr(),
+                &mut длина as *mut usize,
+            )
+        };
+        assert_eq!(код, FL_OK, "кадр буфера собран");
+
+        let (заголовок, _, _) =
+            crate::frame::split(&кадр[..длина]).expect("кадр разобран тем же кодом");
+        assert_eq!(заголовок.kind, MessageKind::KindClipboardContent as i32);
+
+        let (_, тело, _) = crate::frame::split(&кадр[..длина]).expect("тело выделено");
+        тело.to_vec()
+    }
+
+    /// Текст буфера доходит в том виде, в каком был отправлен.
+    ///
+    /// Это первая настоящая передача содержимого между устройствами. Если сборка
+    /// и разбор разошлись бы, человек получил бы в буфер обмена чужой текст,
+    /// то есть вставил бы его куда-нибудь, ничего не проверив.
+    #[test]
+    fn текст_буфера_доходит_таким_как_отправлен() {
+        let текст = "Пароль от Wi-Fi:домпрощание";
+        let тело = собрать_буфер(текст, "text/plain");
+
+        let mut содержимое = vec![0u8; CLIPBOARD_MAX];
+        let mut mime = vec![0u8; 64];
+        let mut длина = 0usize;
+        let mut mime_len = 0usize;
+        let код = unsafe {
+            fl_clipboard_read(
+                тело.as_ptr(),
+                тело.len(),
+                содержимое.as_mut_ptr(),
+                содержимое.len(),
+                &mut длина as *mut usize,
+                mime.as_mut_ptr(),
+                mime.len(),
+                &mut mime_len as *mut usize,
+            )
+        };
+
+        assert_eq!(код, FL_OK);
+        assert_eq!(&содержимое[..длина], текст.as_bytes());
+        assert_eq!(&mime[..mime_len], b"text/plain");
+    }
+
+    /// Клиент узнаёт размер содержимого до того, как выделил под него буфер.
+    ///
+    /// Нулевая ёмкость означает «только размер». Если бы проверка ёмкости
+    /// отвергала такой вызов, клиент не смог бы узнать длину и был бы обязан
+    /// угадать буфер — то есть отправка работала бы только на коротком тексте.
+    #[test]
+    fn размер_содержимого_узнаётся_без_буфера() {
+        let текст = "очень длинный текст, который не влезет в guess";
+        let тело = собрать_буфер(текст, "text/plain");
+
+        let mut длина = 0usize;
+        let mut mime_len = 0usize;
+        let код = unsafe {
+            fl_clipboard_read(
+                тело.as_ptr(),
+                тело.len(),
+                std::ptr::null_mut(),
+                0,
+                &mut длина as *mut usize,
+                std::ptr::null_mut(),
+                0,
+                &mut mime_len as *mut usize,
+            )
+        };
+
+        assert_eq!(код, FL_OK, "размер отдан без копирования");
+        assert_eq!(длина, текст.len());
+        assert_eq!(mime_len, b"text/plain".len());
+    }
+
+    /// Буфер меньше содержимого — ошибка вызывающего, и она честная.
+    ///
+    /// Молча обрезать нельзя: человек получил бы половину пароля и счёл бы его
+    /// неверным, а отправитель не узнал бы, что что-то потерялось.
+    #[test]
+    fn маленький_буфер_не_обрезает_молча() {
+        let текст = "Пароль от Wi-Fi:домпрощание";
+        let тело = собрать_буфер(текст, "text/plain");
+
+        let mut содержимое = vec![0u8; 4];
+        let mut mime = vec![0u8; 64];
+        let mut длина = 0usize;
+        let mut mime_len = 0usize;
+        let код = unsafe {
+            fl_clipboard_read(
+                тело.as_ptr(),
+                тело.len(),
+                содержимое.as_mut_ptr(),
+                содержимое.len(),
+                &mut длина as *mut usize,
+                mime.as_mut_ptr(),
+                mime.len(),
+                &mut mime_len as *mut usize,
+            )
+        };
+
+        assert_eq!(код, FL_ERR_INVALID_ARG);
+        assert_eq!(длина, 0, "половинный текст не показан");
+    }
+
+    /// Пустой буфер обмена — законное состояние, а не ошибка.
+    ///
+    /// Буфер может оказаться пустым у кого угодно, и в этом нет ничего
+    /// необычного. Отвергать такое — значит отказать отправке с сообщением
+    /// «содержимое нечитаемо», хотя с отправляемым всё в порядке.
+    #[test]
+    fn пустой_буфер_это_законное_состояние() {
+        let тело = собрать_буфер("", "");
+
+        let mut содержимое = vec![0u8; CLIPBOARD_MAX];
+        let mut mime = vec![0u8; 64];
+        let mut длина = 0usize;
+        let mut mime_len = 0usize;
+        let код = unsafe {
+            fl_clipboard_read(
+                тело.as_ptr(),
+                тело.len(),
+                содержимое.as_mut_ptr(),
+                содержимое.len(),
+                &mut длина as *mut usize,
+                mime.as_mut_ptr(),
+                mime.len(),
+                &mut mime_len as *mut usize,
+            )
+        };
+
+        assert_eq!(код, FL_OK);
+        assert_eq!(длина, 0, "пустота доехала как пустота");
+    }
+
+    /// Не-UTF-8 в буфере не отправляется.
+    ///
+    /// Такой текст нечего показывать человеку: на экране он превратился бы в
+    /// «�» посреди строки, которую человек собирается прочитать.
+    #[test]
+    fn не_utf8_не_отправляется() {
+        let мусор = [0xffu8, 0xfe, 0x41];
+        let mut кадр = vec![0u8; CLIPBOARD_MAX];
+        let mut длина = 0usize;
+        let код = unsafe {
+            fl_clipboard_build(
+                мусор.as_ptr(),
+                мусор.len(),
+                b"text/plain".as_ptr(),
+                b"text/plain".len(),
+                кадр.as_mut_ptr(),
+                &mut длина as *mut usize,
+            )
+        };
+        assert_eq!(код, FL_ERR_INVALID_ARG);
+    }
+
+    /// Больше предела не отправляется, а не режется наполовину.
+    #[test]
+    fn больше_предела_не_отправляется() {
+        let длинный = vec![b'a'; CLIPBOARD_MAX + 1];
+        let mut кадр = vec![0u8; CLIPBOARD_MAX];
+        let mut длина = 0usize;
+        let код = unsafe {
+            fl_clipboard_build(
+                длинный.as_ptr(),
+                длинный.len(),
+                std::ptr::null(),
+                0,
+                кадр.as_mut_ptr(),
+                &mut длина as *mut usize,
+            )
+        };
+        assert_eq!(код, FL_ERR_INVALID_ARG);
+        assert_eq!(длина, 0);
     }
 }

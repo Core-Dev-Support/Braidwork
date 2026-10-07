@@ -216,6 +216,51 @@ fl_status fl_keys_load(const uint8_t *blob, size_t blob_len, uint8_t *out_public
 fl_status fl_keys_fingerprint(const uint8_t *blob, size_t blob_len,
                               uint8_t *out_fp, size_t *out_len);
 
+/* Буфер под кадр Heartbeat и предел содержимого буфера обмена. Обязаны
+ * совпадать с HEARTBEAT_FRAME_MAX и CLIPBOARD_MAX в ядре: расхождение не даёт
+ * ошибки сборки, а тихо обрезанный кадр или текст. */
+#define FL_HEARTBEAT_FRAME_MAX 256u
+#define FL_CLIPBOARD_MAX 65536u
+
+/* Собирает кадр Heartbeat — первое, что уходит по установленному каналу.
+ * Несёт настоящие значения: время, заряд, зарядку. measured_kbps остаётся
+ * нулём и означает «не измерено», а не «нулевая скорость»: подставлять
+ * правдоподобное число, измеренное не тем методом, нельзя.
+ *
+ * Заряд выше 100 отвергается, а не обрезается.
+ * out_data — не менее FL_HEARTBEAT_FRAME_MAX байт. Длина кадра в out_len. */
+fl_status fl_heartbeat_build(uint64_t unix_time_ms, uint32_t battery_percent,
+                              uint8_t charging, uint8_t *out_data, size_t *out_len);
+
+/* Разбирает тело Heartbeat в значения для показа. Возвращает ровно то, что
+ * прислал напарник, без округлений и подстановок: человек сверяет эти числа
+ * со своим экраном. charging — 0 или 1. */
+fl_status fl_heartbeat_read(const uint8_t *body, size_t body_len,
+                             uint64_t *out_unix_ms, uint32_t *out_battery,
+                             uint32_t *out_charging);
+
+/* Собирает кадр ClipboardContent. Хэш содержимого считает ядро: клиент его не
+ * передаёт, потому что посчитанный на стороне приложения хэш нечем сверить, а
+ * молчащее несовпадение хэшей хуже их отсутствия.
+ *
+ * Содержимое обязано быть UTF-8 и не длиннее FL_CLIPBOARD_MAX: иначе клиент
+ * показал бы человеку «�» посреди текста, который тот собирается прочитать.
+ * Больше предела отвергается, а не режется наполовину.
+ * out_data — не менее FL_CLIPBOARD_MAX байт. Длина кадра в out_len. */
+fl_status fl_clipboard_build(const uint8_t *content, size_t content_len,
+                             const uint8_t *mime_type, size_t mime_len,
+                             uint8_t *out_data, size_t *out_len);
+
+/* Разбирает тело ClipboardContent в содержимое и тип.
+ *
+ * Нулевая ёмкость при пустом указателе означает «узнай размер»: длины
+ * заполняются, содержимое не копируется. Ненулевая, но недостаточная ёмкость —
+ * ошибка вызывающего, молча обрезать нельзя: человек получил бы половину
+ * пароля и счёл бы его неверным. */
+fl_status fl_clipboard_read(const uint8_t *body, size_t body_len,
+                            uint8_t *out_content, size_t content_cap, size_t *out_content_len,
+                            uint8_t *out_mime, size_t mime_cap, size_t *out_mime_len);
+
 fl_status fl_keys_device_id(const uint8_t *blob, size_t blob_len,
                             uint8_t *out_id, size_t *out_len);
 

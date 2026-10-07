@@ -73,7 +73,9 @@ class LinkService : Service() {
         // нет, канал не поднимается: транспорт без ключей — это устройство без
         // личности, которое не сможет себя подтвердить.
         val store = DeviceIdentityStore(filesDir)
-        val поиск = DeviceDiscovery { store.loadOrCreateBlob() }
+        // `applicationContext`, а не сервис: контекст переживает сам сервис, а
+        // состояние батареи нужно читать и после его остановки системой.
+        val поиск = DeviceDiscovery({ store.loadOrCreateBlob() }, applicationContext)
         отдать(поиск)
 
         runCatching { поиск.start() }

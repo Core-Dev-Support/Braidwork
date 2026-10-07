@@ -11,8 +11,8 @@
 //!
 //! Модуль собирается только под Android: на десктопе его не существует.
 
-use jni::objects::{JByteArray, JClass, JIntArray, JLongArray};
-use jni::sys::{jint, jlong};
+use jni::objects::{JByteArray, JClass, JIntArray, JLongArray, JString};
+use jni::sys::{jboolean, jint, jlong};
 use jni::JNIEnv;
 
 use crate::abi_transport::DEVICE_ID_BYTES;
@@ -616,6 +616,282 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTranspor
     FL_OK
 }
 
+/// Отправляет готовый кадр в соединение.
+///
+/// Первая отправка через шифрованный канал. До сих пор `fl_transport_send`
+/// существовал в C ABI, но до клиента не доходил: отправлять было нечем, и
+/// канал поднимался, оставаясь пустым.
+///
+/// На входе целый кадр из `fl_heartbeat_build` или `fl_clipboard_build`, а не
+/// тело. Тип сообщения объявляется один раз, в своём заголовке: иначе
+/// получателю пришлось бы угадывать его по содержимому.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTransportSend<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    conn: jlong,
+    frame: JByteArray<'local>,
+) -> jint {
+    let bytes = match env.convert_byte_array(&frame) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+
+    unsafe {
+        crate::fl_transport_send(
+            FlHandle(handle as u64),
+            conn as u64,
+            bytes.as_ptr(),
+            bytes.len(),
+        )
+    }
+}
+
+/// Собирает кадр `Heartbeat` из настоящих значений устройства.
+///
+/// Ошибка возвращается кодом, а не пустым массивом: молчаливая пустота была бы
+/// неотличима от «сообщение не собралось», и отправка выглядела бы успешной.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeHeartbeatBuild<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    unix_time_ms: jlong,
+    battery_percent: jint,
+    charging: jboolean,
+    out: JByteArray<'local>,
+    out_len: JIntArray<'local>,
+) -> jint {
+    if out_len.is_null() {
+        return crate::FL_ERR_INVALID_ARG;
+    }
+    // Заряд вне 0..100 отвергается в ядре, а не здесь: проверка в двух местах
+    // разъехалась бы при первом же изменении границы.
+    let mut мест = match env.get_array_length(&out) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+    let mut буфер = vec![0u8; мест.max(1)];
+
+    let status = unsafe {
+        crate::fl_heartbeat_build(
+            unix_time_ms as u64,
+            // Отрицательный заряд превращается в огромное число и отвергается
+            // ядром тем же правилом, что и 101. Подстраховывать здесь нечем:
+            // проверка в двух местах разъехалась бы при первом же изменении
+            // границы, и одна из них осталась бы старой.
+            battery_percent as u32,
+            // `jboolean` — это `u8`, и `bool::from(u8)` не существует.
+            // Ненулевое значение означает истину, как и в самом JNI.
+            charging != 0,
+            буфер.as_mut_ptr(),
+            &mut мест,
+        )
+    };
+    if status != FL_OK {
+        return status;
+    }
+
+    let срез = буфер[..мест.min(буфер.len())].to_vec();
+    if env
+        .set_byte_array_region(&out, 0, &to_signed(&срез))
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+    if env
+        .set_int_array_region(&out_len, 0, &[мест as jint])
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    FL_OK
+}
+
+/// Разбирает тело `Heartbeat` в значения для показа.
+///
+/// Кладёт в `out` три числа: время, заряд, зарядка (1 или 0). Непризнанное тело
+/// даёт ненулевой код, а не исключение: чужое сообщение не должно ронять цикл
+/// опроса событий, иначе одно незнакомое сообщение остановило бы всю связь.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeHeartbeatRead<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    body: JByteArray<'local>,
+    out: JLongArray<'local>,
+) -> jint {
+    let bytes = match env.convert_byte_array(&body) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+
+    let mut время = 0u64;
+    let mut заряд = 0u32;
+    let mut зарядка = 0u32;
+    let status = unsafe {
+        crate::fl_heartbeat_read(
+            bytes.as_ptr(),
+            bytes.len(),
+            &mut время,
+            &mut заряд,
+            &mut зарядка,
+        )
+    };
+    if status != FL_OK {
+        return status;
+    }
+
+    let числа = [время as jlong, заряд as jlong, зарядка as jlong];
+    if env.set_long_array_region(&out, 0, &числа).is_err() {
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    FL_OK
+}
+
+/// Собирает кадр `ClipboardContent` из содержимого буфера.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeClipboardBuild<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    content: JByteArray<'local>,
+    mime_type: JString<'local>,
+    out: JByteArray<'local>,
+    out_len: JIntArray<'local>,
+) -> jint {
+    if out_len.is_null() {
+        return crate::FL_ERR_INVALID_ARG;
+    }
+    let текст = match env.convert_byte_array(&content) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+    // Тип содержимого — ASCII по определению («text/plain»), поэтому
+    // преобразование в строку безопасно. Содержимое сюда не попадает: оно идёт
+    // байтами и проверяется на UTF-8 в ядре.
+    let mime: String = match env.get_string(&mime_type) {
+        Ok(s) => s.into(),
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+
+    let mut мест = match env.get_array_length(&out) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+    let mut буфер = vec![0u8; мест.max(1)];
+
+    let status = unsafe {
+        crate::fl_clipboard_build(
+            текст.as_ptr(),
+            текст.len(),
+            mime.as_ptr(),
+            mime.len(),
+            буфер.as_mut_ptr(),
+            &mut мест,
+        )
+    };
+    if status != FL_OK {
+        return status;
+    }
+
+    let срез = буфер[..мест.min(буфер.len())].to_vec();
+    if env
+        .set_byte_array_region(&out, 0, &to_signed(&срез))
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+    if env
+        .set_int_array_region(&out_len, 0, &[мест as jint])
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    FL_OK
+}
+
+/// Разбирает тело `ClipboardContent` в содержимое и тип.
+///
+/// Буферы выделяет клиент, длины приходят в отдельные массивы. Ненулевой код
+/// означает «тело не то», а не «связь плохая».
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeClipboardRead<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    body: JByteArray<'local>,
+    out_content: JByteArray<'local>,
+    out_content_len: JIntArray<'local>,
+    out_mime: JByteArray<'local>,
+    out_mime_len: JIntArray<'local>,
+) -> jint {
+    if out_content_len.is_null() || out_mime_len.is_null() {
+        return crate::FL_ERR_INVALID_ARG;
+    }
+    let bytes = match env.convert_byte_array(&body) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+
+    let содержимое_cap = match env.get_array_length(&out_content) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+    let mime_cap = match env.get_array_length(&out_mime) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+    let mut содержимое = vec![0u8; содержимое_cap.max(1)];
+    let mut mime = vec![0u8; mime_cap.max(1)];
+    let mut длина = 0usize;
+    let mut mime_len = 0usize;
+
+    let status = unsafe {
+        crate::fl_clipboard_read(
+            bytes.as_ptr(),
+            bytes.len(),
+            содержимое.as_mut_ptr(),
+            содержимое_cap,
+            &mut длина,
+            mime.as_mut_ptr(),
+            mime_cap,
+            &mut mime_len,
+        )
+    };
+    if status != FL_OK {
+        return status;
+    }
+
+    let тело = содержимое[..длина.min(содержимое.len())].to_vec();
+    let тип = mime[..mime_len.min(mime.len())].to_vec();
+    if env
+        .set_byte_array_region(&out_content, 0, &to_signed(&тело))
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+    if env
+        .set_byte_array_region(&out_mime, 0, &to_signed(&тип))
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+    if env
+        .set_int_array_region(out_content_len, 0, &[длина as jint])
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+    if env
+        .set_int_array_region(out_mime_len, 0, &[mime_len as jint])
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    FL_OK
+}
 /// Собирает кадр из готового protobuf-тела.
 ///
 /// Клиент не собирает заголовок сам: раскладку заголовка знает только ядро, а

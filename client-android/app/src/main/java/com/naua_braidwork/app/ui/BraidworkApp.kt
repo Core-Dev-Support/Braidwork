@@ -324,6 +324,7 @@ fun BraidworkApp(
                     trust = trust,
                     fingerprint = fingerprint,
                     devices = снимок.value.devices,
+                    discovery = поиск.value,
                     trail = поиск.value?.trail() ?: emptyList(),
                 )
             } else {
