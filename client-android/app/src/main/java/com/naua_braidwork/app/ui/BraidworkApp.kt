@@ -125,6 +125,14 @@ enum class Tab(val route: String, val label: String, val icon: ImageVector) {
 @Composable
 fun BraidworkApp(
     deviceId: String,
+    /**
+     * Собственный отпечаток ключа.
+     *
+     * Показывается в настройках, чтобы человек сверил его с отпечатком этого
+     * же устройства на экране сопряжения у соседа. Без него сверка невыполнима:
+     * у соседа отпечаток есть, а у себя его негде посмотреть.
+     */
+    fingerprint: String = "",
     settings: SettingsStore,
 ) {
     // Имя устройства пока задано здесь, а не приходит из ядра: оно не входит в
@@ -313,7 +321,8 @@ fun BraidworkApp(
                     onOpenSystemSettings = openSystemSettings,
                     onOpenListenerSettings = openListenerSettings,
                     selectedDevice = выбранное,
-                trust = trust,
+                    trust = trust,
+                    fingerprint = fingerprint,
                     devices = снимок.value.devices,
                     trail = поиск.value?.trail() ?: emptyList(),
                 )
@@ -397,6 +406,7 @@ fun BraidworkApp(
                         // Показываем начало и конец, а не полный идентификатор:
                         // на экране его достаточно для сверки, целиком он не нужен.
                         deviceIdShort = shortenId(deviceId),
+            fingerprint = fingerprint,
                         // Открываем только те подэкраны, которые уже собраны.
                         // Остальные строки пока не ведут никуда: лучше ничего,
                         // чем экран-заглушка на месте настоящего.

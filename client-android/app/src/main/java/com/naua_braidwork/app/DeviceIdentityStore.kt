@@ -24,6 +24,14 @@ class DeviceIdentityStore(private val directory: File) {
         val deviceId: String,
         val signing: ByteArray,
         val staticKey: ByteArray,
+        /**
+         * Собственный отпечаток ключа подписи.
+         *
+         * Нужен, чтобы человек мог сверить его с отпечатком этого же
+         * устройства на экране сопряжения у соседа. Без него сверка физически
+         * невозможна: у соседа отпечаток есть, а у себя его негде посмотреть.
+         */
+        val fingerprint: String = "",
     )
 
     /**
@@ -65,6 +73,7 @@ class DeviceIdentityStore(private val directory: File) {
                         deviceId = id,
                         signing = public.signing,
                         staticKey = public.staticKey,
+                        fingerprint = BraidworkCore.fingerprintFromBlob(bytes),
                     ),
                 )
             } catch (e: BraidworkException) {
@@ -85,6 +94,7 @@ class DeviceIdentityStore(private val directory: File) {
                 deviceId = BraidworkCore.deviceIdFromBlob(created.blob),
                 signing = created.public.signing,
                 staticKey = created.public.staticKey,
+                fingerprint = BraidworkCore.fingerprintFromBlob(created.blob),
             ),
         )
     }

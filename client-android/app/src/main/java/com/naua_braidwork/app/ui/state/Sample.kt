@@ -205,13 +205,27 @@ object Sample {
      * на устройстве и в канал уходят только подписью. Остальные переключатели
      * показывают замысел, а биометрия честно помечена как неподключённая.
      */
-    fun securityState(deviceId: String): SecurityState {
+    fun securityState(deviceId: String, fingerprint: String = ""): SecurityState {
         val groups = listOf(
             SubGroup(
                 title = "Ключи",
                 rows = listOf(
                     SubRow("id", "Идентификатор устройства", "", RowEnd.Value(shortTag(deviceId))),
-                    SubRow("fingerprint", "Отпечаток ключа", "", RowEnd.Chevron),
+                    // Свой отпечаток — во всю ширину, тем же приёмом, что и
+                    // на экране сопряжения: значение здесь обрезается
+                    // многоточием, и половину строки не сверишь.
+                    //
+                    // Шеврона нет: раньше он был и вёл в никуда, то есть строка
+                    // выглядела готовой и была пустой.
+                    SubRow(
+                        "fingerprint",
+                        "Отпечаток ключа",
+                        "",
+                        RowEnd.None,
+                        multiline = listOf(
+                            fingerprint.ifBlank { "ядро не сообщило отпечаток" },
+                        ),
+                    ),
                     SubRow("rotation", "Ротация ключей", "", RowEnd.Value("Выключена")),
                 ),
             ),
@@ -260,6 +274,7 @@ object Sample {
 
         return SecurityState(
             deviceIdShort = shortTag(deviceId),
+            fingerprint = fingerprint,
             groups = groups,
         )
     }

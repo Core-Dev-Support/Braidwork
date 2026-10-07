@@ -17,9 +17,10 @@ use jni::JNIEnv;
 
 use crate::abi_transport::DEVICE_ID_BYTES;
 use crate::{
-    fl_device_id, fl_init, fl_keys_blob_len, fl_keys_create, fl_keys_device_id, fl_keys_load,
-    fl_transport_lan_start, fl_transport_poll, fl_transport_port, fl_verify_signature, FlHandle,
-    FlTransEvent, FL_EV_STATE, FL_OK, PUBLIC_KEYS_LEN,
+    fl_device_id, fl_init, fl_keys_blob_len, fl_keys_create, fl_keys_device_id,
+    fl_keys_fingerprint, fl_keys_load, fl_transport_lan_start, fl_transport_poll,
+    fl_transport_port, fl_verify_signature, FlHandle, FlTransEvent, FL_EV_STATE, FL_OK,
+    PUBLIC_KEYS_LEN,
 };
 
 // Длина идентификатора приходит из bi_transport, а не пишется числом.
@@ -146,6 +147,49 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeKeysLoad
 
     if env
         .set_byte_array_region(&out_public, 0, &to_signed(&public))
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    FL_OK
+}
+
+/// Собственный отпечаток ключа подписи: см. `fl_keys_fingerprint` в `lib.rs`.
+///
+/// Приватные ключи наружу не отдаются: наружу уходит только строка, которую
+/// человек читает вслух соседу.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeKeysFingerprint<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    blob: JByteArray<'local>,
+    out_fp: JByteArray<'local>,
+    out_len: JIntArray<'local>,
+) -> jint {
+    let stored = match env.convert_byte_array(&blob) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_STORAGE,
+    };
+
+    let mut buffer = vec![0u8; crate::FINGERPRINT_MAX];
+    let mut len = 0usize;
+
+    let status = unsafe {
+        fl_keys_fingerprint(stored.as_ptr(), stored.len(), buffer.as_mut_ptr(), &mut len)
+    };
+    if status != FL_OK {
+        return status;
+    }
+
+    if env
+        .set_byte_array_region(&out_fp, 0, &to_signed(&buffer[..len]))
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+    if env
+        .set_int_array_region(&out_len, 0, &[len as jint])
         .is_err()
     {
         return crate::FL_ERR_INTERNAL;

@@ -90,6 +90,9 @@ object BraidworkCore {
      */
     const val DEVICE_ID_BYTES = 32
 
+    /** Размер буфера под отпечаток. Обязан совпадать с FL_FINGERPRINT_MAX. */
+    const val FINGERPRINT_MAX = 32
+
     /**
      * Запас на заголовок кадра: 10 байт плюс запись varint на длину.
      *
@@ -199,6 +202,27 @@ object BraidworkCore {
 
     /** Размер файла ключей: значение фиксировано, вызывается один раз. */
     fun keysBlobLen(): Int = PUBLIC_KEYS_BLOB_LEN
+
+    /**
+     * Собственный отпечаток ключа: четыре группы по четыре символа.
+     *
+     * Считает ядро, а не клиент. Отпечаток у соседа на экране сопряжения и
+     * отпечаток устройства у себя — одна и та же строка, и человек сравнивает их
+     * глазами. Вторая реализация в клиенте разъехалась бы с ядром при первом же
+     * изменении формата, и сверка всегда давала бы «не совпало» — то есть
+     * выглядела бы так, будто обманывают.
+     */
+    fun fingerprintFromBlob(blob: ByteArray): String {
+        require(blob.size == keysBlobLen()) { "файл ключей другой длины: ${blob.size}" }
+        ensureLoaded()
+
+        val out = ByteArray(FINGERPRINT_MAX)
+        val len = IntArray(1)
+        val status = nativeKeysFingerprint(blob, out, len)
+        if (status != STATUS_OK) throw BraidworkException(status, "файл ключей нечитаем")
+
+        return String(out, 0, len[0], Charsets.UTF_8)
+    }
 
     private fun parsePublic(buffer: ByteArray) = PublicKeys(
         signing = buffer.copyOfRange(0, 32),
@@ -637,6 +661,8 @@ object BraidworkCore {
     private external fun nativeKeysCreate(outBlob: ByteArray, outPublic: ByteArray): Int
     private external fun nativeKeysLoad(blob: ByteArray, outPublic: ByteArray): Int
     private external fun nativeKeysDeviceId(blob: ByteArray, outId: ByteArray, outLen: IntArray): Int
+
+    private external fun nativeKeysFingerprint(blob: ByteArray, outFp: ByteArray, outLen: IntArray): Int
     private external fun nativeDeviceId(signingPublic: ByteArray, outId: ByteArray, outLen: IntArray): Int
     private external fun nativeVerifySignature(signingPublic: ByteArray, tape: ByteArray, signature: ByteArray): Int
 

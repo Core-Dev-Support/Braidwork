@@ -162,6 +162,13 @@ data class NetworkState(
 /** Состояние «Безопасности и ключей». */
 data class SecurityState(
     val deviceIdShort: String,
+    /**
+     * Собственный отпечаток ключа.
+     *
+     * Показывается рядом с идентификатором, а не вместо него: без него
+     * сверка с соседом невыполнима.
+     */
+    val fingerprint: String = "",
     val groups: List<SubGroup>,
 )
 

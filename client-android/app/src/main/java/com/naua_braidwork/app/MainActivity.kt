@@ -88,10 +88,18 @@ class MainActivity : ComponentActivity() {
                         }
                         when (val loaded = identity) {
                             is DeviceIdentityStore.Result.Ready ->
-                                BraidworkApp(deviceId = loaded.identity.deviceId, settings)
+                                BraidworkApp(
+                                    deviceId = loaded.identity.deviceId,
+                                    fingerprint = loaded.identity.fingerprint,
+                                    settings = settings,
+                                )
 
                             is DeviceIdentityStore.Result.Created ->
-                                BraidworkApp(deviceId = loaded.identity.deviceId, settings)
+                                BraidworkApp(
+                                    deviceId = loaded.identity.deviceId,
+                                    fingerprint = loaded.identity.fingerprint,
+                                    settings = settings,
+                                )
 
                             // Повреждённый файл ключей — не повод создать новые.
                             // Пользователь должен узнать об этом иначе, решив,

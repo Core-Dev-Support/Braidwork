@@ -28,6 +28,9 @@ extern "C" {
 /* Количество байт, которое занимает device_id. */
 #define FL_DEVICE_ID_MAX 32u
 
+/* Буфер под отпечаток ключа: 16 символов и три пробела. */
+#define FL_FINGERPRINT_MAX 32u
+
 /* Результат операции. */
 typedef int32_t fl_status;
 
@@ -205,6 +208,14 @@ fl_status fl_keys_load(const uint8_t *blob, size_t blob_len, uint8_t *out_public
  * публичный signing-ключ. Нужен там, где ключи в памяти держать незачем, —
  * например для сверки по QR при сопряжении.
  */
+/* Отпечаток ключа подписи этого устройства: "ABCD EFGH IJKL MNOP".
+ * Нужен клиенту, чтобы показать человеку СВОЙ отпечаток для сверки с отпечатком
+ * соседа. Считать его на стороне клиента нельзя: вторая реализация разъедется с
+ * ядром при первом же изменении формата, и сверка станет всегда «не совпало».
+ * out_fp — не менее FL_FINGERPRINT_MAX байт. Возвращает длину в out_len. */
+fl_status fl_keys_fingerprint(const uint8_t *blob, size_t blob_len,
+                              uint8_t *out_fp, size_t *out_len);
+
 fl_status fl_keys_device_id(const uint8_t *blob, size_t blob_len,
                             uint8_t *out_id, size_t *out_len);
 

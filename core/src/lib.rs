@@ -125,6 +125,13 @@ pub const PUBLIC_KEYS_LEN: usize = 96;
 /// Максимальная длина `device_id` в байтах.
 pub const DEVICE_ID_MAX: usize = 32;
 
+/// Буфер под отпечаток ключа: 16 символов и три пробела.
+///
+/// С запасом, как и [DEVICE_ID_MAX]. Отпечаток получится длиннее при смене
+/// алфавита или длины хэша, и обрезание повторилось бы — тихо, посреди строки,
+/// которую человек читает вслух соседу.
+pub const FINGERPRINT_MAX: usize = 32;
+
 // =============================================================================
 // Хранилище ключей устройства
 // =============================================================================
@@ -250,6 +257,53 @@ pub unsafe extern "C" fn fl_keys_device_id(
         let raw = id.as_bytes();
         let out = std::slice::from_raw_parts_mut(out_id, DEVICE_ID_MAX);
         let n = raw.len().min(DEVICE_ID_MAX);
+        out[..n].copy_from_slice(&raw[..n]);
+        *out_len = n;
+
+        FL_OK
+    })
+}
+
+/// Отпечаток ключа подписи этого устройства: четыре группы по четыре символа.
+///
+/// Отдельная функция, а не вычисление на стороне клиента. Клиенту нужен
+/// **собственный** отпечаток, чтобы показать его человеку для сверки с
+/// отпечатком соседа, и единственный способ узнать его тот же, что и
+/// [crate::crypto::fingerprint_from_signing].
+///
+/// Считать его в клиенте — значит завести вторую реализацию. Такие разъезжаются
+/// при первом же изменении формата, и тогда сверка перестаёт работать тихо:
+/// отпечаток у соседа и отпечаток у себя окажутся разными, и человек решит, что
+/// его обманывают.
+///
+/// # Safety
+/// `blob` указывает на `blob_len` байт, `out_fp` — на буфер не менее
+/// `FINGERPRINT_MAX` байт, `out_len` — на `usize`. Указатели валидны.
+#[no_mangle]
+pub unsafe extern "C" fn fl_keys_fingerprint(
+    blob: *const u8,
+    blob_len: usize,
+    out_fp: *mut u8,
+    out_len: *mut usize,
+) -> FlStatus {
+    guard(|| {
+        if blob.is_null() || out_fp.is_null() || out_len.is_null() {
+            return FL_ERR_INVALID_ARG;
+        }
+        if blob_len != DEVICE_KEYS_BLOB_LEN {
+            return FL_ERR_STORAGE;
+        }
+
+        let bytes = std::slice::from_raw_parts(blob, blob_len);
+        let keys = match DeviceKeys::import(bytes) {
+            Ok(k) => k,
+            Err(e) => return status_from_crypto(&e),
+        };
+
+        let отпечаток = crate::crypto::fingerprint_from_signing(&keys.signing_public());
+        let raw = отпечаток.as_bytes();
+        let out = std::slice::from_raw_parts_mut(out_fp, FINGERPRINT_MAX);
+        let n = raw.len().min(FINGERPRINT_MAX);
         out[..n].copy_from_slice(&raw[..n]);
         *out_len = n;
 
@@ -535,5 +589,35 @@ mod tests {
             unsafe { fl_keys_create(public.as_mut_ptr(), std::ptr::null_mut()) },
             FL_ERR_INVALID_ARG
         );
+    }
+    /// Отпечаток устройства совпадает с тем, что видит сосед.
+    ///
+    /// Ровно эта пара сравнивается человеком: отпечаток соседа на экране
+    /// сопряжения и отпечаток устройства у себя. Если бы они считались разными
+    /// способами, сверка всегда давала бы «не совпало» — и выглядело бы так,
+    /// будто обманывают.
+    #[test]
+    fn отпечаток_устройства_совпадает_с_чужим_взглядом() {
+        let keys = DeviceKeys::generate();
+        let blob = keys.export();
+
+        let mut буфер = [0u8; FINGERPRINT_MAX];
+        let mut длина = 0usize;
+        let статус = unsafe {
+            fl_keys_fingerprint(
+                blob.as_ptr(),
+                blob.len(),
+                буфер.as_mut_ptr(),
+                &mut длина as *mut usize,
+            )
+        };
+        assert_eq!(статус, FL_OK);
+
+        let полученный = std::str::from_utf8(&буфер[..длина]).expect("отпечаток в UTF-8");
+        assert_eq!(
+            полученный,
+            crate::crypto::fingerprint_from_signing(&keys.signing_public())
+        );
+        assert_eq!(полученный.len(), 19, "получилось «{полученный}»");
     }
 }

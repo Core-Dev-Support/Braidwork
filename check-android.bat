@@ -31,9 +31,26 @@ set "AR_aarch64_linux_android=%BIN%\llvm-ar.exe"
 
 pushd "%~dp0core" || exit /b 1
 
+rem Where cargo puts artifacts. Honour CARGO_TARGET_DIR because this script
+rem also has to work from a path cargo can link at: ld.lld cannot open a file
+rem under a non-ASCII directory, so the build is run through a junction and the
+rem target directory is kept at an ASCII path.
+if defined CARGO_TARGET_DIR (
+  set "TARGET_DIR=%CARGO_TARGET_DIR%"
+) else (
+  set "TARGET_DIR=%CD%\target"
+)
+
+rem Delete the library before building. Otherwise a failed build leaves the
+rem previous one in place, the "if not exist" check passes, and the symbol dump
+rem describes a library that no longer matches the sources. That is a green
+rem result for a stale binary: it is how a real defect reaches a phone as
+rem UnsatisfiedLinkError after forty minutes of CI.
+set "SO=%TARGET_DIR%\aarch64-linux-android\debug\libbraidwork_core.so"
+if exist "%SO%" del /q "%SO%"
+
 cargo build --target aarch64-linux-android --no-default-features --features transport-lan,transport-ble,transport-usb,transport-softap || goto fail
 
-set "SO=target\aarch64-linux-android\debug\libbraidwork_core.so"
 if not exist "%SO%" (
   echo NOT FOUND: %SO%
   goto fail
@@ -45,14 +62,14 @@ echo === Exported symbols ===
 echo.
 
 set "OK=1"
-for %%M in (nativeInit nativeDeviceId nativeVerifySignature nativeKeysCreate nativeKeysLoad nativeKeysDeviceId nativeTransportStart nativeTransportPoll nativeTransportPort nativeTransportStop nativeTransportFree nativeTransportAlive nativeFrameEncode) do (
+for %%M in (nativeInit nativeDeviceId nativeVerifySignature nativeKeysCreate nativeKeysLoad nativeKeysDeviceId nativeKeysFingerprint nativeTransportStart nativeTransportPoll nativeTransportPort nativeTransportStop nativeTransportFree nativeTransportAlive nativeFrameEncode) do (
   findstr /C:"Java_com_naua_1braidwork_app_BraidworkCore_%%M" "%SO%" >nul || (
     echo FAIL: no symbol for %%M
     set "OK=0"
   )
 )
 
-for %%F in (fl_init fl_device_id fl_verify_signature fl_abi_version fl_free fl_keys_blob_len fl_keys_create fl_keys_load fl_keys_device_id fl_session_create fl_session_step fl_session_ready fl_session_finish fl_session_seal fl_session_open fl_session_free fl_hello_build fl_hello_verify fl_frame_encode fl_transport_lan_start fl_transport_poll fl_transport_connect fl_transport_send fl_transport_conn_close fl_transport_port fl_transport_stop fl_transport_free fl_transport_event_size) do (
+for %%F in (fl_init fl_device_id fl_verify_signature fl_abi_version fl_free fl_keys_blob_len fl_keys_create fl_keys_load fl_keys_device_id fl_keys_fingerprint fl_session_create fl_session_step fl_session_ready fl_session_finish fl_session_seal fl_session_open fl_session_free fl_hello_build fl_hello_verify fl_frame_encode fl_transport_lan_start fl_transport_poll fl_transport_connect fl_transport_send fl_transport_conn_close fl_transport_port fl_transport_stop fl_transport_free fl_transport_event_size) do (
   findstr /C:"%%F" "%SO%" >nul || (
     echo FAIL: no C ABI symbol %%F
     set "OK=0"
