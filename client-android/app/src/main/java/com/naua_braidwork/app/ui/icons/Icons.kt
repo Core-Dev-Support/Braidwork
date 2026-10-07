@@ -239,6 +239,10 @@ val IcwId: ImageVector by lazy {
     bwIcon("id", "M3 5.5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM7 8.5h4M7 12h10M7 15.5h6")
 }
 
+val IcwPulse: ImageVector by lazy {
+    bwIcon("pulse", "M3 12h3.5l2-6l3.5 12l2.5-6H21")
+}
+
 /**
  * Адрес в сети: метка на карте.
  *

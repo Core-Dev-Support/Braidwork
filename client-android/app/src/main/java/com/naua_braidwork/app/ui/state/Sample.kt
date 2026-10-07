@@ -19,6 +19,7 @@ import com.naua_braidwork.app.ui.icons.IcwMirror
 import com.naua_braidwork.app.ui.icons.IcwMoon
 import com.naua_braidwork.app.ui.icons.IcwPhone
 import com.naua_braidwork.app.ui.icons.IcwPower
+import com.naua_braidwork.app.ui.icons.IcwPulse
 import com.naua_braidwork.app.ui.icons.IcwShield
 import com.naua_braidwork.app.ui.icons.IcwTablet
 import com.naua_braidwork.app.ui.icons.IcwWifi
@@ -756,6 +757,14 @@ object Sample {
         peerBattery: Pair<Int, Boolean>? = null,
         /** Когда пришло сердцебиение, для подписи строки. */
         peerPulseAt: String = "",
+        /**
+         * Идут ли данные прямо сейчас.
+         *
+         * Отдельный признак от [peerPulseAt]: время прихода само по себе говорит
+         * «когда было», а человеку нужно «живо ли сейчас». Точка это различие не
+         * показывала — на девяти точках глазом не читается.
+         */
+        peerPulseFresh: Boolean = false,
     ): DeviceDetailState = DeviceDetailState(
         name = device.name,
         statusLine = when (device.presence) {
@@ -821,14 +830,39 @@ object Sample {
                             smallIcon = IcwPhone,
                         )
                     )
-                    // Заряд соседа — из сердцебиения, то есть из настоящего
-                    // сообщения по каналу. Объявление о батарее не говорит ничего,
-                    // а выдуманный процент человек принял бы за показание.
+                    // Заряд соседа — из сердцебиения, то есть из настоящего сообщения
+                    // по каналу. Объявление о батарее не говорит ничего, а
+                    // выдуманный процент человек принял бы за показание.
                     //
-                    // Строка есть только при соединении. У офлайн-устройства
-                    // показывать «заряд соседа» незачем: канала нет, замеров нет,
-                    // и человек увидел бы пустое место там, где ждёт данных.
+                    // Обе строки — только при соединении. У офлайн-устройства
+                    // канала нет и показывать нечего: человек увидел бы пустое
+                    // место там, где ждёт данных.
                     if (device.online) {
+                        // Живость выражена **словами**, а не только точкой.
+                        //
+                        // Владелец проверял на двух устройствах — с включёнными
+                        // и с отключёнными анимациями — и не увидел сердцебиения
+                        // нигде. Точка в девять точек признаком быть не может:
+                        // разница в размере и оттенке на таком маленьком пятне
+                        // глазом не читается.
+                        //
+                        // Текст читается при любом шрифте, на любом экране и при
+                        // выключенных анимациях.
+                        add(
+                            SubRow(
+                                "peer_pulse",
+                                "Пульс соседа",
+                                if (peerPulseAt.isEmpty()) {
+                                    "ожидается первый"
+                                } else {
+                                    "пришло в $peerPulseAt"
+                                },
+                                RowEnd.Value(
+                                    if (peerPulseFresh) "данные идут" else "молчит"
+                                ),
+                                smallIcon = IcwPulse,
+                            )
+                        )
                         add(
                             SubRow(
                                 "peer_battery",

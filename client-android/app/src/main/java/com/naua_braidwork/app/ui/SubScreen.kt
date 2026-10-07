@@ -379,6 +379,7 @@ fun SubScreen(
                             trustText = текстДоверия,
                             peerBattery = пульс?.let { it.заряд to it.зарядка },
                             peerPulseAt = когдаПульс,
+                            peerPulseFresh = живойПульс,
                         ),
                         trust = trust,
                         onTrust = onTrust,
