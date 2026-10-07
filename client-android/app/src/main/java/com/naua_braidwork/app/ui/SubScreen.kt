@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.naua_braidwork.app.BuildConfig
 import com.naua_braidwork.app.TrustStore
 import com.naua_braidwork.app.идентификатор
 import com.naua_braidwork.app.ui.components.BackButton
@@ -267,7 +268,10 @@ fun SubScreen(
             )
 
             Route.CORE -> CoreScreen(
-                state = Sample.coreState(if (testsRan) true else null),
+                state = Sample.coreState(
+                    testsPassed = if (testsRan) true else null,
+                    coreVersion = BuildConfig.VERSION_NAME,
+                ),
                 toggles = coreToggles,
                 ran = testsRan,
                 onRun = { testsRan = true },
@@ -277,7 +281,10 @@ fun SubScreen(
             )
 
             Route.ABOUT -> AboutScreen(
-                state = Sample.aboutState(),
+                state = Sample.aboutState(
+                    appVersion = BuildConfig.VERSION_NAME,
+                    coreVersion = BuildConfig.VERSION_NAME,
+                ),
                 onBack = onBack,
                 onLink = { link ->
                     // Единственная ссылка, которая ведёт внутрь приложения.

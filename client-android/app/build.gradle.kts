@@ -103,6 +103,10 @@ android {
 
     buildFeatures {
         compose = true
+        // `BuildConfig` в AGP 8 выключен по умолчанию. Без этого включения на
+        // экране «О приложении» нечем показать `versionName`: он уже
+        // вычислен выше из тега, но попасть на экран не может.
+        buildConfig = true
     }
 
     packaging {

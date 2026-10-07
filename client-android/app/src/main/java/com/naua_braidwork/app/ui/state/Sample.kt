@@ -559,13 +559,30 @@ object Sample {
      * двух устройств ещё не запускались, поэтому у них нет результата — не
      * «успешно» и не «провал», а пусто.
      */
-    fun coreState(testsPassed: Boolean?): CoreState = CoreState(
+    /**
+     * Ядро и диагностика.
+     *
+     * [coreVersion] приходит из `versionName`, который Gradle вычислил из тега.
+     * Ядро не спрашивается, и это не недосмотр: приложение и библиотека
+     * собираются одним прогоном из одного коммита, а CI требует, чтобы версия в
+     * `Cargo.toml` совпадала с тегом. Значит цифры совпадают по построению, и
+     * спрашивать у ядра значило бы завести второй источник без новой информации.
+     *
+     * Раньше здесь стоял зашитый `0.1.0-step0`: правдоподобная и совершенно
+     * неверная цифра, из-за которой человек перестал бы верить обеим.
+     */
+    fun coreState(testsPassed: Boolean?, coreVersion: String = ""): CoreState = CoreState(
         step = "Шаг 0",
         buildGroups = listOf(
             SubGroup(
                 title = "Сборка",
                 rows = listOf(
-                    SubRow("core_version", "Версия ядра", "", RowEnd.Value("0.1.0-step0")),
+                    SubRow(
+                        "core_version",
+                        "Версия ядра",
+                        "",
+                        RowEnd.Value(coreVersion.ifBlank { "неизвестно" }),
+                    ),
                     SubRow("proto", "Версия протокола", "", RowEnd.Value("v1 (Protobuf)")),
                     SubRow("format", "Формат сборки", "", RowEnd.Value("cdylib + rlib")),
                     SubRow("panic", "Обработка паник", "", RowEnd.Value("unwind (D-008)")),
@@ -597,10 +614,29 @@ object Sample {
         ),
     )
 
-    /** О приложении: версии, платформы и их шаги по плану. */
-    fun aboutState(): AboutState = AboutState(
-        appVersion = "Версия 0.1.0 · ядро 0.1.0-step0",
-        coreVersion = "0.1.0-step0",
+    /**
+     * О приложении: версии, платформы и их шаги по плану.
+     *
+     * Обе версии — из `versionName`, вычисленного Gradle из тега. Раньше здесь стоял
+     * собранный вручную текст «Версия 0.1.0 · ядро 0.1.0-step0», который перестал
+     * соответствовать релизу ещё в v0.7.0 и молчал дальше: сборка знала
+     * правильную версию, а экран показывал зашитую.
+     *
+     * [coreVersion] совпадает с [appVersion] по построению — см. [coreState]. Ядро
+     * об этом не спрашивается: отдельная цифра оттуда не дала бы ничего нового,
+     * а стоила бы ещё одну функцию в контракте.
+     */
+    fun aboutState(
+        appVersion: String = "",
+        coreVersion: String = "",
+    ): AboutState = AboutState(
+        appVersion = buildString {
+            append("Версия ")
+            append(appVersion.ifBlank { "неизвестна" })
+            append(" · ядро ")
+            append(coreVersion.ifBlank { "неизвестно" })
+        },
+        coreVersion = coreVersion.ifBlank { "неизвестно" },
         platforms = listOf(
             PlatformEntry(IcwPhone, Tone.Green, "Android 6 и новее", "Kotlin", "Шаг 3"),
             PlatformEntry(IcwMirror, Tone.Blue, "Windows", "WinUI 3", "Шаг 5"),

@@ -120,14 +120,6 @@ object BraidworkCore {
     /** Размер буфера под отпечаток. Обязан совпадать с FL_FINGERPRINT_MAX. */
     const val FINGERPRINT_MAX = 32
 
-    /**
-     * Запас на заголовок кадра: 10 байт плюс запись varint на длину.
-     *
-     * Тело уже готово, поэтому длина известна, и её запись в protobuf занимает
-     * не больше 5 байт для тела до 2 ГиБ. Значение округлено с запасом.
-     */
-    const val FRAME_MAX_OVERHEAD = 16
-
     @Volatile
     private var loaded = false
 
