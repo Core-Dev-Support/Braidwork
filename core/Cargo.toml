@@ -10,7 +10,7 @@ name = "braidwork-core"
 # Поэтому проверка на CI, а не договорённость: см. шаг «Версия ядра совпадает с
 # тегом» в `.github/workflows/core.yml`. Тег одно место истины, Cargo.toml
 # следует за ним.
-version = "0.9.13"
+version = "0.9.14"
 edition = "2021"
 rust-version = "1.75"
 description = "Braidwork core: device identity, family trust, encrypted sessions, multi-transport, no server"
