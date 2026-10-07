@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,6 +35,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -156,10 +158,19 @@ fun BackButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
  * навигация. Это заметно на «Зеркале» и «О приложении», где внизу таблица.
  */
 @Composable
-fun SubBody(content: @Composable () -> Unit) {
+fun ColumnScope.SubBody(content: @Composable () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            // Вес обязателен. Без него прокручиваемая колонка измеряется на
+            // всю высоту родителя, а не на остаток после шапки, и уезжает под
+            // нижний край экрана: прокручиваешь до упора, а низ всё равно не
+            // виден. Заголовок при этом на месте, и поломка выглядит как
+            // «страница не долистывается».
+            //
+            // Функция — расширение `ColumnScope` именно ради этого веса: `weight`
+            // доступен только внутри `Column`, иначе он падал бы в рантайме.
+            .weight(1f)
             .verticalScroll(rememberScrollState()),
     ) {
         content()
@@ -317,11 +328,26 @@ fun SettingRowView(
         when (val end = row.end) {
             is RowEnd.Value -> {
                 Spacer(Modifier.width(10.dp))
+                // Вес с `fill = false`: значение занимает свою настоящую
+                // ширину, но не больше своей доли.
+                //
+                // Без этого строка «Идентификатор» превращалась в
+                // «Идентифик…»: значение в 26 символов брало всю ширину, а
+                // колонка с названием сжималась до нуля. Длинным ужиматься должно
+                // значение — название строки обрезать нельзя, по нему строка и
+                // опознаётся.
+                //
+                // Три точки у значения допустимы: полный идентификатор виден
+                // в блоке «Что происходит», где каждая запись идёт своей
+                // строкой и не обрезается.
                 Text(
                     text = end.text,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
             }
 
