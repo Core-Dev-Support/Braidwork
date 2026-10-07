@@ -54,6 +54,10 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
          * Пусто у устройства с более старым ядром.
          */
         val fingerprint: String = "",
+        /** Имя системы напарника, например «Android 13». Пусто у старого ядра. */
+        val platform: String = "",
+        /** Версия ядра напарника. Пусто у старого ядра. */
+        val coreVersion: String = "",
     ) {
         // `lastSeenMs` в сравнение не входит: он меняется при каждом объявлении,
         // и с ним устройство никогда не было бы «тем же самым». Список
@@ -65,12 +69,14 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
                 name == other.name &&
                 ipv4.contentEquals(other.ipv4) &&
                 fingerprint == other.fingerprint &&
+                platform == other.platform &&
+                coreVersion == other.coreVersion &&
                 connected == other.connected
 
         override fun hashCode(): Int =
-            31 * ((31 * (31 * (31 * (31 * deviceId.contentHashCode() + port) +
+            31 * ((31 * (31 * (31 * (31 * (31 * deviceId.contentHashCode() + port) +
                 name.hashCode()) + ipv4.contentHashCode()) * 31 + fingerprint.hashCode()) * 31 +
-                connected.hashCode())
+                platform.hashCode()) * 31 + coreVersion.hashCode()) * 31 + connected.hashCode()
     }
 
     /** Состояние для интерфейса. */
@@ -308,7 +314,7 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
             // объявления, и при перезапуске сервиса произвольный порт уезжал,
             // подключение падало с «недоступно», а в журнале не было ни слова
             // о том, что у напарника просто другой порт.
-            val h = BraidworkCore.transportStart(blob, имя, ПОРТ_ДАННЫХ)
+            val h = BraidworkCore.transportStart(blob, имя, платформа(), ПОРТ_ДАННЫХ)
             хэндл.set(h)
 
             val port = BraidworkCore.transportPort(h)
@@ -392,6 +398,12 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
                         fingerprint = событие.fingerprint.ifEmpty {
                             было?.fingerprint.orEmpty()
                         },
+                        // Платформа и версия приходят из того же объявления и
+                        // меняться не могут, но на всякий случай берётся прежнее
+                        // значение, если новое пустое: краткие объявления обрезаются
+                        // целиком.
+                        platform = событие.platform.ifEmpty { было?.platform.orEmpty() },
+                        coreVersion = событие.coreVersion.ifEmpty { было?.coreVersion.orEmpty() },
                         connected = было?.connected ?: false,
                         lastSeenMs = теперь,
                     )
@@ -520,6 +532,22 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
 
         val с_запасом = основа.ifEmpty { "Устройство" }
         return с_запасом.take(48)
+    }
+
+    /**
+     * Своя платформа для объявления: «Android 13».
+     *
+     * Идёт в объявление без подписи и показывается на карточке напарника.
+     * Точность здесь не нужна: строку на чужом телефоне читают глазами, а
+     * сверять по ней нечем.
+     *
+     * Пустой результат законен и не подменяется: ядро о системе ничего не
+     * знает, и выдумывать «неизвестно» от его имени было бы враньём.
+     */
+    private fun платформа(): String {
+        val релиз = Build.VERSION.RELEASE?.trim().orEmpty()
+        if (релиз.isEmpty()) return "
+        return "Android ".take(48)
     }
 
     private companion object {

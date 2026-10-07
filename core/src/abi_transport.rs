@@ -142,13 +142,16 @@ fn код_состояния(s: TransportState) -> u16 {
 ///
 /// # Safety
 /// `keys_blob` — указатель на `keys_len` байт файла ключей, `display_name` —
-/// на `name_len` байт UTF-8. Оба указателя валидны и не пересекаются.
+/// на `name_len` байт UTF-8, `platform` — на `platform_len` байт UTF-8.
+/// Все три указателя валидны и не пересекаются.
 #[no_mangle]
 pub unsafe extern "C" fn fl_transport_lan_start(
     keys_blob: *const u8,
     keys_len: usize,
     display_name: *const u8,
     name_len: usize,
+    platform: *const u8,
+    platform_len: usize,
     port: u16,
     out_handle: *mut FlHandle,
 ) -> FlStatus {
@@ -165,8 +168,19 @@ pub unsafe extern "C" fn fl_transport_lan_start(
             Ok(s) => s.to_owned(),
             Err(_) => return FL_ERR_INVALID_ARG,
         };
+        // Пустая платформа законна: клиент о системе может не знать, а ядро
+        // знает о ней и подальше. Тогда строка на карточке останется пустой,
+        // и это честнее, чем подставлять «неизвестно» от ядра.
+        let платформа = if platform.is_null() {
+            String::new()
+        } else {
+            match std::str::from_utf8(std::slice::from_raw_parts(platform, platform_len)) {
+                Ok(s) => s.to_owned(),
+                Err(_) => return FL_ERR_INVALID_ARG,
+            }
+        };
 
-        match LanTransport::bind(keys, имя, port) {
+        match LanTransport::bind(keys, имя, платформа, port) {
             Ok(t) => {
                 *out_handle = реестр().insert(t);
                 FL_OK
@@ -276,6 +290,8 @@ fn в_c(событие: &TransportEvent, смещение: usize) -> (FlTransEve
             addr,
             name,
             fingerprint,
+            platform,
+            core_version,
         } => {
             запись.event_type = FL_EV_DISCOVERED;
             запись.port = addr.port();
@@ -303,10 +319,16 @@ fn в_c(событие: &TransportEvent, смещение: usize) -> (FlTransEve
             // Разделитель — нулевой байт. В имя он попасть не может:
             // `пригодное_имя` выбрасывает управляющие символы, и нулевой байт не
             // исключение. Проверять его отсутствие отдельно не нужно.
-            let mut блоб = String::with_capacity(name.len() + 1 + fingerprint.len());
+            let mut блоб = String::with_capacity(
+                name.len() + fingerprint.len() + platform.len() + core_version.len() + 3,
+            );
             блоб.push_str(name);
             блоб.push('\0');
             блоб.push_str(fingerprint);
+            блоб.push('\0');
+            блоб.push_str(platform);
+            блоб.push('\0');
+            блоб.push_str(core_version);
             запись.payload_off = смещение as u32;
             запись.payload_len = блоб.len() as u32;
             (запись, блоб.into_bytes())
@@ -558,6 +580,7 @@ pub extern "C" fn fl_transport_event_size() -> usize {
 mod tests {
     use super::*;
     use crate::crypto::DEVICE_KEYS_BLOB_LEN;
+    use std::ptr;
 
     /// Две пары ключей для тестов: у каждой свой файл.
     fn пара() -> (DeviceKeys, Vec<u8>) {
@@ -574,6 +597,8 @@ mod tests {
             blob.len(),
             "Устройство".as_ptr(),
             "Устройство".len(),
+            ptr::null(),
+            0,
             0,
             &mut h,
         );
@@ -607,7 +632,16 @@ mod tests {
         let mut h = FlHandle(0);
         let мусор = [0u8; 16];
         let status = unsafe {
-            fl_transport_lan_start(мусор.as_ptr(), мусор.len(), "X".as_ptr(), 1, 0, &mut h)
+            fl_transport_lan_start(
+                мусор.as_ptr(),
+                мусор.len(),
+                "X".as_ptr(),
+                1,
+                ptr::null(),
+                0,
+                0,
+                &mut h,
+            )
         };
         assert_eq!(status, crate::FL_ERR_STORAGE);
     }
@@ -618,8 +652,18 @@ mod tests {
         // отказывать в канале.
         let (_, blob) = пара();
         let mut h = FlHandle(0);
-        let status =
-            unsafe { fl_transport_lan_start(blob.as_ptr(), blob.len(), "".as_ptr(), 0, 0, &mut h) };
+        let status = unsafe {
+            fl_transport_lan_start(
+                blob.as_ptr(),
+                blob.len(),
+                "".as_ptr(),
+                0,
+                ptr::null(),
+                0,
+                0,
+                &mut h,
+            )
+        };
         assert_eq!(status, FL_OK);
         fl_transport_free(h);
     }
@@ -688,6 +732,10 @@ mod tests {
                     blob.len(),
                     "x".as_ptr(),
                     1,
+                    // Платформа в этом вызове не проверяется: нулевой указатель на
+                    // неё законен, а проверяется нулевой указатель на хранилище.
+                    std::ptr::null(),
+                    0,
                     0,
                     std::ptr::null_mut(),
                 )
@@ -696,7 +744,16 @@ mod tests {
         );
         assert_eq!(
             unsafe {
-                fl_transport_lan_start(blob.as_ptr(), blob.len(), std::ptr::null(), 0, 0, &mut h)
+                fl_transport_lan_start(
+                    blob.as_ptr(),
+                    blob.len(),
+                    std::ptr::null(),
+                    0,
+                    std::ptr::null(),
+                    0,
+                    0,
+                    &mut h,
+                )
             },
             FL_ERR_INVALID_ARG
         );
@@ -717,9 +774,14 @@ mod tests {
                 addr: SocketAddr::from(([192, 168, 1, 5], 42424)),
                 name: "Устройство".to_owned(),
                 fingerprint: "ABCD EFGH IJKL MNOP".to_owned(),
+                platform: "Android 13".to_owned(),
+                core_version: "0.9.2".to_owned(),
             };
             let (запись, тело) = в_c(&событие, 0);
-            assert_eq!(тело, "Устройство\0ABCD EFGH IJKL MNOP".as_bytes());
+            assert_eq!(
+                тело,
+                "Устройство\x00ABCD EFGH IJKL MNOP\x00Android 13\x000.9.2".as_bytes()
+            );
             assert_eq!(запись.event_type, FL_EV_DISCOVERED);
             assert_eq!(запись.port, 42424);
             // Всё, что поместилось, — правильные байты; лишнее — нули.
@@ -753,6 +815,8 @@ mod tests {
             name: "Xiaomi 23021RAA2Y".to_owned(),
             // Отпечаток — первые 16 символов того же идентификатора.
             fingerprint: "AYZN D56Q WD2K TU3F".to_owned(),
+            platform: "Android 13".to_owned(),
+            core_version: "0.9.2".to_owned(),
         };
 
         let (запись, тело) = в_c(&событие, 0);
@@ -767,16 +831,22 @@ mod tests {
         let id_из_структуры = id_сырой.trim_end_matches('\0');
         assert_eq!(id_из_структуры, String::from_utf8_lossy(&id));
 
-        // Отпечаток из тела: клиент делит тело по нулевому байту и берёт второе.
+        // Отпечаток из тела: клиент делит тело по нулевому байту.
+        //
+        // Поля идут по порядку и жёстко: имя, отпечаток, платформа, версия.
+        // Порядок проверяется числом частей, а содержимое — по индексам, и
+        // перестановка полей местами сломала бы обе проверки.
         let части: Vec<&[u8]> = тело.split(|b| *b == 0).collect();
         assert_eq!(
             части.len(),
-            2,
-            "ожидались имя и отпечаток, получилось {}",
+            4,
+            "ожидались имя, отпечаток, платформа и версия, получилось {}",
             части.len()
         );
         let отпечаток = String::from_utf8_lossy(части[1]).into_owned();
         assert_eq!(отпечаток, "AYZN D56Q WD2K TU3F");
+        assert_eq!(String::from_utf8_lossy(части[2]), "Android 13");
+        assert_eq!(String::from_utf8_lossy(части[3]), "0.9.2");
 
         // И главное: отпечаток — начало идентификатора.
         let слитно: String = отпечаток.chars().filter(|c| *c != ' ').collect();
@@ -793,10 +863,15 @@ mod tests {
             addr: SocketAddr::from(([192, 168, 1, 5], 42424)),
             name: "Redmi Note 12".to_owned(),
             fingerprint: "ABCD EFGH IJKL MNOP".to_owned(),
+            platform: "Android 13".to_owned(),
+            core_version: "0.9.2".to_owned(),
         };
         let (запись, тело) = в_c(&событие, 24);
 
-        assert_eq!(тело, "Redmi Note 12\0ABCD EFGH IJKL MNOP".as_bytes());
+        assert_eq!(
+            тело,
+            "Redmi Note 12\x00ABCD EFGH IJKL MNOP\x00Android 13\x000.9.2".as_bytes()
+        );
         assert_eq!(запись.payload_off, 24, "смещение тела передаётся наружу");
         assert_eq!(запись.payload_len, тело.len() as u32);
     }
@@ -984,6 +1059,8 @@ mod tests {
             addr: SocketAddr::from(([192, 168, 1, 42], 42424)),
             name: "Телефон".to_owned(),
             fingerprint: "ABCD EFGH IJKL MNOP".to_owned(),
+            platform: "Android 13".to_owned(),
+            core_version: "0.9.2".to_owned(),
         };
         let (запись, _) = в_c(&событие, 0);
 

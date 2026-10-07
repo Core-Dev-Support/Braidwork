@@ -338,6 +338,11 @@ typedef struct fl_trans_event {
  */
 fl_status fl_transport_lan_start(const uint8_t *blob, size_t blob_len,
                                  const uint8_t *display_name, size_t name_len,
+                                 /* NULL или пусто: клиент о системе не знает.
+                                  * Объявление отправится без платформы, и строка
+                                  * на карточке останется пустой — честнее, чем
+                                  * подставлять «неизвестно» от ядра. */
+                                 const uint8_t *platform, size_t platform_len,
                                  uint16_t port,
                                  uint64_t *out_handle);
 

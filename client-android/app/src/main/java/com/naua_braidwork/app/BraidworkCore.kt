@@ -309,6 +309,15 @@ object BraidworkCore {
              * начали класть в объявление.
              */
             val fingerprint: String,
+            /**
+             * Своё имя системы напарника, например «Android 13».
+             *
+             * Приходит без подписи, сверить нельзя. Пусто у устройства с более
+             * старым ядром, которое таких полей ещё не присылает.
+             */
+            val platform: String = "",
+            /** Версия ядра напарника. Тоже без подписи и тоже может быть пустой. */
+            val coreVersion: String = "",
         ) : TransportEvent() {
             // ByteArray в data class сравнивается по ссылке, а не по содержимому:
             // два одинаковых идентификатора выглядели бы разными. Список
@@ -316,11 +325,13 @@ object BraidworkCore {
             override fun equals(other: Any?) =
                 other is Discovered && deviceId.contentEquals(other.deviceId) &&
                     port == other.port && name == other.name &&
-                    ipv4.contentEquals(other.ipv4) && fingerprint == other.fingerprint
+                    ipv4.contentEquals(other.ipv4) && fingerprint == other.fingerprint &&
+                    platform == other.platform && coreVersion == other.coreVersion
 
             override fun hashCode() =
-                31 * ((31 * (31 * deviceId.contentHashCode() + port) * 31 + name.hashCode()) * 31 +
-                    ipv4.contentHashCode()) * 31 + fingerprint.hashCode()
+                31 * ((31 * (31 * (31 * (31 * deviceId.contentHashCode() + port) * 31 +
+                    name.hashCode()) + ipv4.contentHashCode()) * 31 + fingerprint.hashCode()) * 31 +
+                    platform.hashCode()) * 31 + coreVersion.hashCode()
         }
 
         /** Пришло входящее соединение. Рукопожатие идёт, сверки ещё не было. */
@@ -394,18 +405,29 @@ object BraidworkCore {
      *
      * [port] = 0 означает «выбери свободный». Настоящий порт — [transportPort].
      *
+     * [platform] уходит в объявление и показывается на карточке напарника.
+     * Пустая строка законна: тогда строка на карточке останется пустой, и это
+     * правда, а не пробел. Подписью платформа не защищена, и сверить по ней
+     * нечего.
+     *
      * При `STATUS_STORAGE` файл ключей нечитаем. Вызывающий обязан показать это
      * пользователю и не создавать новые ключи молча.
      */
-    fun transportStart(keysBlob: ByteArray, displayName: String, port: Int = 0): Long {
+    fun transportStart(
+        keysBlob: ByteArray,
+        displayName: String,
+        platform: String = "",
+        port: Int = 0,
+    ): Long {
         require(keysBlob.size == PUBLIC_KEYS_BLOB_LEN) {
             "файл ключей другой длины: ${keysBlob.size}"
         }
         ensureLoaded()
 
         val name = displayName.toByteArray(Charsets.UTF_8)
+        val платформа = platform.toByteArray(Charsets.UTF_8)
         val handle = LongArray(1)
-        val status = nativeTransportStart(keysBlob, name, port, handle)
+        val status = nativeTransportStart(keysBlob, name, платформа, port, handle)
         if (status != STATUS_OK) {
             throw BraidworkException(status, "не удалось поднять канал локальной сети")
         }
@@ -498,6 +520,11 @@ object BraidworkCore {
                         // Выдуманное значение было бы хуже прочеркивания: человек
                         // сверил бы с тем, что никто не сверяет.
                         fingerprint = объявление.getOrNull(1).orEmpty(),
+                        // Платформа присылается без подписи и может быть
+                        // пустой: клиент о системе не знает. Тогда на карточке
+                        // останется прочеркивание, и это правда, а не пробел.
+                        platform = объявление.getOrNull(2).orEmpty(),
+                        coreVersion = объявление.getOrNull(3).orEmpty(),
                         ipv4 = адреса.copyOfRange(i * 4, i * 4 + 4),
                     )
                 }
@@ -616,6 +643,7 @@ object BraidworkCore {
     private external fun nativeTransportStart(
         keysBlob: ByteArray,
         displayName: ByteArray,
+        platform: ByteArray,
         port: Int,
         outHandle: LongArray,
     ): Int

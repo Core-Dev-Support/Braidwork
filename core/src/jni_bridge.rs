@@ -294,6 +294,7 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTranspor
     _class: JClass<'local>,
     blob: JByteArray<'local>,
     name: JByteArray<'local>,
+    platform: JByteArray<'local>,
     port: jint,
     out_handle: JLongArray<'local>,
 ) -> jint {
@@ -306,6 +307,8 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTranspor
         Err(_) => return crate::FL_ERR_INVALID_ARG,
     };
 
+    let платформа = env.convert_byte_array(&platform).unwrap_or_default();
+
     let mut handle = FlHandle(0);
     let status = unsafe {
         fl_transport_lan_start(
@@ -313,6 +316,8 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTranspor
             keys.len(),
             имя.as_ptr(),
             имя.len(),
+            платформа.as_ptr(),
+            платформа.len(),
             port.clamp(0, u16::MAX as jint) as u16,
             &mut handle,
         )

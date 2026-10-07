@@ -640,6 +640,8 @@ object Sample {
         port: Int,
         trail: List<String> = emptyList(),
         fingerprint: String = "",
+        platform: String = "",
+        coreVersion: String = "",
     ): DeviceDetailState = DeviceDetailState(
         name = device.name,
         statusLine = when (device.presence) {
@@ -674,11 +676,21 @@ object Sample {
                     // вместо идентификатора.
                     add(SubRow("id", "Идентификатор", "", RowEnd.Value(device.id)))
                     add(SubRow("address", "Адрес", "", RowEnd.Value("$address:$port")))
-                    // Платформа и версия ядра остаются прочеркиванием: их напарник не присылает,
-                    // а выдумывать значения нельзя. Придут с кадрами — тогда и
-                    // появятся.
-                    add(SubRow("platform", "Платформа", "", RowEnd.Value("—")))
-                    add(SubRow("core", "Версия ядра", "", RowEnd.Value("—")))
+                    // Платформа и версия приходят из объявления напарника.
+                    //
+                    // Обе приходят **без подписи**: сверить по ним нельзя,
+                    // нужны они только строкой на карточке. Поэтому пустое
+                    // значение — не поломка, а честное «не знаю», и
+                    // подставлять «неизвестно» от имени ядра было бы враньём.
+                    add(SubRow("platform", "Платформа", "", RowEnd.Value(platform.ifEmpty { "—" })))
+                    add(
+                        SubRow(
+                            "core",
+                            "Версия ядра",
+                            "",
+                            RowEnd.Value(coreVersion.ifEmpty { "—" }),
+                        )
+                    )
                     // Отпечаток настоящий: ядро вывело его из ключа подписи и
                     // сверило с идентификатором, отбросив объявление при
                     // несовпадении. Сверять его можно — в отличие от имени.

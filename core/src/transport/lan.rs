@@ -198,6 +198,12 @@ pub struct LanTransport {
     events: Vec<TransportEvent>,
     /// Имя устройства для объявления.
     display_name: String,
+    /// Платформа для объявления: «Android 13» и подобное.
+    ///
+    /// Приходит от клиента, потому что ядро о системе ничего не знает.
+    /// Объявление несёт её без подписи: сверить по ней нельзя, она нужна
+    /// только строкой на карточке.
+    platform: String,
     /// Порт, на котором реально слушает сокет.
     port: u16,
     last_announce: Option<Instant>,
@@ -221,7 +227,12 @@ impl LanTransport {
     /// Поэтому сначала пробуется постоянный порт, и только если он занят —
     /// любой свободный. Занятость порта на телефоне, кроме двух наших
     /// приложений, маловероятна.
-    pub fn bind(keys: DeviceKeys, display_name: String, port: u16) -> Result<Self, TransportError> {
+    pub fn bind(
+        keys: DeviceKeys,
+        display_name: String,
+        platform: String,
+        port: u16,
+    ) -> Result<Self, TransportError> {
         let listener = match TcpListener::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port)) {
             Ok(l) => l,
             Err(e) if port != 0 => {
@@ -263,6 +274,7 @@ impl LanTransport {
             peers: HashMap::new(),
             events: Vec::new(),
             display_name,
+            platform,
             port,
             last_announce: None,
             next_handle: 1,
@@ -308,6 +320,7 @@ impl LanTransport {
             // Настоящий порт, а не константа: клиент подключается именно туда,
             // и угадывать было бы вслепую.
             self.port,
+            &self.platform,
         )
         .map_err(|e| TransportError::Other(e.to_string()))?;
 
@@ -513,7 +526,7 @@ impl LanTransport {
     /// известен. Поэтому объявление годится, чтобы показать «устройство
     /// рядом», и не годится, чтобы пустить в дом.
     fn read_discovery(&mut self) {
-        let mut найдено: Vec<(Vec<u8>, SocketAddr, String, String)> = Vec::new();
+        let mut найдено: Vec<(Vec<u8>, SocketAddr, String, String, String, String)> = Vec::new();
         let mut сбой: Option<TransportError> = None;
 
         if let Some(discovery) = &self.discovery {
@@ -616,6 +629,8 @@ impl LanTransport {
                     SocketAddr::from((ip, порт)),
                     пригодное_имя(&identity.display_name),
                     отпечаток,
+                    пригодное_имя(&hello.platform),
+                    пригодное_имя(&hello.core_version),
                 ));
             }
         }
@@ -623,12 +638,14 @@ impl LanTransport {
         if let Some(e) = сбой {
             self.events.push(TransportEvent::Notice(e));
         }
-        for (device_id, addr, name, fingerprint) in найдено {
+        for (device_id, addr, name, fingerprint, platform, core_version) in найдено {
             self.events.push(TransportEvent::Discovered {
                 device_id,
                 addr,
                 name,
                 fingerprint,
+                platform,
+                core_version,
             });
         }
     }
@@ -1073,7 +1090,13 @@ mod tests {
     use prost::Message;
 
     fn транспорт() -> LanTransport {
-        LanTransport::bind(DeviceKeys::generate(), "Тест".to_owned(), 0).expect("порт свободен")
+        LanTransport::bind(
+            DeviceKeys::generate(),
+            "Тест".to_owned(),
+            "Android 13".to_owned(),
+            0,
+        )
+        .expect("порт свободен")
     }
 
     /// Порт переживает перезапуск транспорта.
@@ -1084,13 +1107,23 @@ mod tests {
     /// падало с «недоступно» без всякого объяснения в журнале.
     #[test]
     fn порт_переживает_перезапуск() {
-        let первый = LanTransport::bind(DeviceKeys::generate(), "A".to_owned(), LAN_PORT)
-            .expect("постоянный порт свободен");
+        let первый = LanTransport::bind(
+            DeviceKeys::generate(),
+            "A".to_owned(),
+            "Android 13".to_owned(),
+            LAN_PORT,
+        )
+        .expect("постоянный порт свободен");
         let занятый = первый.port();
         drop(первый);
 
-        let второй = LanTransport::bind(DeviceKeys::generate(), "A".to_owned(), LAN_PORT)
-            .expect("порт освободился после остановки");
+        let второй = LanTransport::bind(
+            DeviceKeys::generate(),
+            "A".to_owned(),
+            "Android 13".to_owned(),
+            LAN_PORT,
+        )
+        .expect("порт освободился после остановки");
         assert_eq!(второй.port(), занятый, "порт изменился после перезапуска");
     }
 
@@ -1100,11 +1133,21 @@ mod tests {
     /// напарник всё равно узнает настоящий порт из объявления.
     #[test]
     fn занятый_порт_не_мешает_каналу() {
-        let первый = LanTransport::bind(DeviceKeys::generate(), "A".to_owned(), LAN_PORT)
-            .expect("первый поднялся");
+        let первый = LanTransport::bind(
+            DeviceKeys::generate(),
+            "A".to_owned(),
+            "Android 13".to_owned(),
+            LAN_PORT,
+        )
+        .expect("первый поднялся");
 
-        let второй = LanTransport::bind(DeviceKeys::generate(), "B".to_owned(), LAN_PORT)
-            .expect("второй тоже поднялся, хоть порт занят");
+        let второй = LanTransport::bind(
+            DeviceKeys::generate(),
+            "B".to_owned(),
+            "Android 12".to_owned(),
+            LAN_PORT,
+        )
+        .expect("второй тоже поднялся, хоть порт занят");
         assert_ne!(
             второй.port(),
             первый.port(),
@@ -1436,8 +1479,13 @@ mod tests {
     /// говорило.
     #[test]
     fn имя_устройства_доходит_из_объявления() {
-        let t = LanTransport::bind(DeviceKeys::generate(), "Redmi Note 12".to_owned(), 0)
-            .expect("порт");
+        let t = LanTransport::bind(
+            DeviceKeys::generate(),
+            "Redmi Note 12".to_owned(),
+            "Android 13".to_owned(),
+            0,
+        )
+        .expect("порт");
         let msg = t.build_announcement(1, 1).expect("объявление");
         let (_, body, _) = frame::split(&msg).expect("кадр");
         let hello = Hello::decode(body).expect("тело");
@@ -1485,7 +1533,13 @@ mod tests {
     /// выглядела бы как «устройство нашлось, но не подключается».
     #[test]
     fn объявление_несёт_настоящие_ключи() {
-        let t = LanTransport::bind(DeviceKeys::generate(), "Ноутбук".to_owned(), 0).expect("порт");
+        let t = LanTransport::bind(
+            DeviceKeys::generate(),
+            "Ноутбук".to_owned(),
+            "Android 13".to_owned(),
+            0,
+        )
+        .expect("порт");
         let msg = t
             .build_announcement(42, 1_700_000_000_000)
             .expect("объявление");
@@ -1541,8 +1595,20 @@ mod tests {
     /// пока не выяснится, что данные не идут.
     #[test]
     fn два_транспорта_договариваются_и_передают_данные() {
-        let mut a = LanTransport::bind(DeviceKeys::generate(), "A".to_owned(), 0).expect("порт A");
-        let mut b = LanTransport::bind(DeviceKeys::generate(), "B".to_owned(), 0).expect("порт B");
+        let mut a = LanTransport::bind(
+            DeviceKeys::generate(),
+            "A".to_owned(),
+            "Android 13".to_owned(),
+            0,
+        )
+        .expect("порт A");
+        let mut b = LanTransport::bind(
+            DeviceKeys::generate(),
+            "B".to_owned(),
+            "Android 12".to_owned(),
+            0,
+        )
+        .expect("порт B");
 
         let target = std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, b.port());
         let handle = a.connect(target.into()).expect("соединение");
@@ -1716,8 +1782,20 @@ mod tests {
     /// а после рукопожатия — должно.
     #[test]
     fn на_связи_только_после_рукопожатия() {
-        let mut a = LanTransport::bind(DeviceKeys::generate(), "A".to_owned(), 0).expect("порт A");
-        let mut b = LanTransport::bind(DeviceKeys::generate(), "B".to_owned(), 0).expect("порт B");
+        let mut a = LanTransport::bind(
+            DeviceKeys::generate(),
+            "A".to_owned(),
+            "Android 13".to_owned(),
+            0,
+        )
+        .expect("порт A");
+        let mut b = LanTransport::bind(
+            DeviceKeys::generate(),
+            "B".to_owned(),
+            "Android 12".to_owned(),
+            0,
+        )
+        .expect("порт B");
 
         let target = std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, b.port());
         let handle = a.connect(target.into()).expect("соединение");
@@ -1765,8 +1843,10 @@ mod tests {
     fn ответчик_принимает_незнакомого() {
         let ключи_a = DeviceKeys::generate();
         let ключи_b = DeviceKeys::generate();
-        let mut a = LanTransport::bind(ключи_a, "A".to_owned(), 0).expect("порт A");
-        let mut b = LanTransport::bind(ключи_b, "B".to_owned(), 0).expect("порт B");
+        let mut a = LanTransport::bind(ключи_a, "A".to_owned(), "Android 13".to_owned(), 0)
+            .expect("порт A");
+        let mut b = LanTransport::bind(ключи_b, "B".to_owned(), "Android 13".to_owned(), 0)
+            .expect("порт B");
 
         let target = std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, b.port());
         a.connect(target.into()).expect("соединение");
@@ -1831,8 +1911,20 @@ mod tests {
     /// не дожидаясь следующего вызова poll.
     #[test]
     fn рукопожатие_проходит_без_задержки_в_очереди() {
-        let mut a = LanTransport::bind(DeviceKeys::generate(), "A".to_owned(), 0).expect("порт A");
-        let mut b = LanTransport::bind(DeviceKeys::generate(), "B".to_owned(), 0).expect("порт B");
+        let mut a = LanTransport::bind(
+            DeviceKeys::generate(),
+            "A".to_owned(),
+            "Android 13".to_owned(),
+            0,
+        )
+        .expect("порт A");
+        let mut b = LanTransport::bind(
+            DeviceKeys::generate(),
+            "B".to_owned(),
+            "Android 12".to_owned(),
+            0,
+        )
+        .expect("порт B");
 
         let target = std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, b.port());
         let handle = a.connect(target.into()).expect("соединение");
