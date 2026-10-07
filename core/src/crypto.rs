@@ -75,6 +75,33 @@ pub struct DeviceKeys {
     qr_key: Option<x25519_dalek::StaticSecret>,
 }
 
+/// Лента, подписываемая в `Hello`, по публичным данным.
+///
+/// Отдельная функция, а не метод ключей, потому что подпись проверяют **два**:
+///
+/// - отправитель — своими ключами;
+/// - получатель объявления — публичным ключом из самого объявления.
+///
+/// Если бы лента собиралась двумя разными способами, они разошлись бы при
+/// первом же изменении, и проверка объявлений отвергала бы всё подряд. Одна
+/// функция на обоих концах — это и есть защита от такого расхождения.
+///
+/// Набор возможностей входит не строкой, а хэшем: иначе `["a", "b"]` и
+/// `["a\nb"]` дали бы одинаковую подпись, и подмена не была бы заметна.
+pub fn handshake_tape(
+    signing_public: &[u8; 32],
+    static_public: &[u8; 32],
+    capabilities_hash: &[u8; 32],
+    nonce: u64,
+) -> Vec<u8> {
+    let mut tape = Vec::with_capacity(16 + 32 + 32 + 8);
+    tape.extend_from_slice(device_id_from_signing(signing_public).as_bytes());
+    tape.extend_from_slice(static_public);
+    tape.extend_from_slice(capabilities_hash);
+    tape.extend_from_slice(&nonce.to_be_bytes());
+    tape
+}
+
 impl DeviceKeys {
     /// Генерирует свежий набор ключей из системного CSPRNG.
     pub fn generate() -> Self {
@@ -224,20 +251,19 @@ impl DeviceKeys {
         device_id_from_signing(&self.signing_public())
     }
 
-    /// Лента, подписываемая в `Hello`.
+    /// Лента, подписываемая в Hello.
     ///
-    /// Набор возможностей входит не строкой, а хэшем: иначе `["a", "b"]` и
-    /// `["a\nb"]` дали бы одинаковую подпись, и подмена не была бы заметна.
-    ///
-    /// Принимает `&self`, хотя поля читает не все: так подпись всегда
-    /// собирается тем же экземпляром ключей, который её потом и проверит.
+    /// Тонкая обёртка над [handshake_tape] своими ключами. Существует для
+    /// удобства вызова, а не ради «настоящей» привязки к экземпляру: раньше
+    /// лента собиралась здесь же, и проверять объявления было нечем именно
+    /// потому, что подпись сверялась с ключом из того же сообщения.
     pub fn handshake_tape(&self, capabilities_hash: &[u8; 32], nonce: u64) -> Vec<u8> {
-        let mut tape = Vec::with_capacity(16 + 32 + 32 + 8);
-        tape.extend_from_slice(self.device_id().as_bytes());
-        tape.extend_from_slice(&self.static_public());
-        tape.extend_from_slice(capabilities_hash);
-        tape.extend_from_slice(&nonce.to_be_bytes());
-        tape
+        handshake_tape(
+            &self.signing_public(),
+            &self.static_public(),
+            capabilities_hash,
+            nonce,
+        )
     }
 }
 
