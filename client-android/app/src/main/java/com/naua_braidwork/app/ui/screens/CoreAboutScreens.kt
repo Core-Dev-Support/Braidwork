@@ -54,6 +54,7 @@ import com.naua_braidwork.app.ui.state.CoreTest
 import com.naua_braidwork.app.ui.state.DeviceDetailState
 import com.naua_braidwork.app.ui.state.DeviceFeature
 import com.naua_braidwork.app.ui.state.RoadmapStep
+import com.naua_braidwork.app.TrustStore
 import com.naua_braidwork.app.ui.state.RowEnd
 import com.naua_braidwork.app.ui.state.SubRow
 import com.naua_braidwork.app.ui.state.Toggles
@@ -523,6 +524,8 @@ fun DeviceDetailScreen(
     onSend: () -> Unit,
     onMirror: () -> Unit,
     onRow: (SubRow) -> Unit,
+    trust: TrustStore,
+    onTrust: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(

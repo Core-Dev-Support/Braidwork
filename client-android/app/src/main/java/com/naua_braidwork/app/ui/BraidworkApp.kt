@@ -43,7 +43,9 @@ import com.naua_braidwork.app.ui.icons.IcwSettings
 import com.naua_braidwork.app.ui.icons.IcwSync
 import com.naua_braidwork.app.DeviceDiscovery
 import com.naua_braidwork.app.LinkService
+import androidx.compose.ui.platform.LocalContext
 import com.naua_braidwork.app.SettingsStore
+import com.naua_braidwork.app.TrustStore
 import com.naua_braidwork.app.идентификатор
 import com.naua_braidwork.app.ui.components.tapNoRipple
 import com.naua_braidwork.app.ui.screens.DevicesScreen
@@ -204,6 +206,11 @@ fun BraidworkApp(
 
     // Стек открытых подэкранов. Пустой — мы в разделе; непустой — поверх него
     // открыт подэкран, и последний элемент тот, что на экране.
+    // Решения о доверии живут в хранилище, а не в состоянии: сопряжение
+    // переживает перезапуск процесса, и иначе каждое устройство снова было бы
+    // «не сверено» после убийства приложения.
+    val trust = remember { TrustStore.get(LocalContext.current) }
+
     val stack = remember { mutableStateListOf<String>() }
     val route = stack.lastOrNull()
     val openSystemSettings = rememberSystemSettingsOpener()
@@ -301,6 +308,7 @@ fun BraidworkApp(
                     onOpenSystemSettings = openSystemSettings,
                     onOpenListenerSettings = openListenerSettings,
                     selectedDevice = выбранное,
+                trust = trust,
                     devices = снимок.value.devices,
                     trail = поиск.value?.trail() ?: emptyList(),
                 )
@@ -424,6 +432,9 @@ private val OPEN_ROUTES = setOf(
     Route.ROADMAP,
     Route.PAIR,
     Route.DEVICE,
+    // Сопряжение ведёт на настоящий экран: без него строка «Доверие» на
+    // карточке была бы шевроном без цели.
+    Route.TRUST,
 )
 
 /**

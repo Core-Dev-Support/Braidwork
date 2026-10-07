@@ -18,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.naua_braidwork.app.TrustStore
 import com.naua_braidwork.app.идентификатор
 import com.naua_braidwork.app.ui.components.BackButton
 import com.naua_braidwork.app.ui.components.SubBody
@@ -37,6 +38,7 @@ import com.naua_braidwork.app.ui.screens.NotifsScreen
 import com.naua_braidwork.app.ui.screens.RoadmapScreen
 import com.naua_braidwork.app.ui.screens.PairScreen
 import com.naua_braidwork.app.ui.screens.SecurityScreen
+import com.naua_braidwork.app.ui.screens.TrustScreen
 import com.naua_braidwork.app.ui.state.DeviceSummary
 import com.naua_braidwork.app.ui.state.LinkMode
 import com.naua_braidwork.app.ui.state.RowEnd
@@ -68,6 +70,7 @@ object Route {
     const val ABOUT = "about"
     const val ROADMAP = "roadmap"
     const val DEVICE = "device"
+    const val TRUST = "trust"
 }
 
 /**
@@ -112,6 +115,16 @@ fun SubScreen(
      * подэкран. Тогда показывается честное сообщение, а не чужая карточка.
      */
     selectedDevice: DeviceSummary? = null,
+    /**
+     * Хранилище сопряжённых устройств.
+     *
+     * Передаётся, а не берётся из контекста: так решение человека о доверии
+     * доходит до карточки, а состояние видно сразу — иначе строка «Доверие»
+     * показывала бы старое значение до перерисовки и выглядела сломанной.
+     */
+    trust: TrustStore,
+    /** Открыть экран сопряжения выбранного устройства. */
+    onTrust: () -> Unit = {},
     /**
      * Устройства, как их видит канал.
      *
@@ -258,6 +271,28 @@ fun SubScreen(
                 onBack = onBack,
             )
 
+            Route.TRUST -> {
+                val device = selectedDevice
+                if (device == null) {
+                    MissingScreen("Устройство не выбрано", onBack)
+                } else {
+                    val найденное = devices.firstOrNull { it.deviceId.идентификатор() == device.id }
+                    val отпечаток = найденное?.fingerprint.orEmpty()
+                    val доверие = trust.состояние(device.id, отпечаток)
+                    TrustScreen(
+                        deviceName = device.name,
+                        fingerprint = отпечаток,
+                        адрес = найденное?.ipv4
+                            ?.joinToString(".") { (it.toInt() and 0xFF).toString() } ?: "—",
+                        версияЯдра = найденное?.coreVersion.ifEmpty { "—" },
+                        доверие = доверие,
+                        onBack = onBack,
+                        onСопрячь = { trust.сопрячь(device.id, отпечаток) },
+                        onЗабыть = { trust.забыть(device.id) },
+                    )
+                }
+            }
+
             Route.DEVICE -> {
                 // Устройство приходит из списка, а не берётся первым попавшимся:
                 // нажатие на третью плитку обязано открыть третью.
@@ -271,6 +306,15 @@ fun SubScreen(
                     // устройстве, и они разошлись бы при первом же изменении
                     // формата подписи.
                     val найденное = devices.firstOrNull { it.deviceId.идентификатор() == device.id }
+
+                    // Состояние доверия считается здесь, а не в Sample: оно
+                    // зависит от хранилища, а Sample строит только строки.
+                    val доверие = trust.состояние(device.id, найденное?.fingerprint.orEmpty())
+                    val текстДоверия = when (доверие) {
+                        TrustStore.Доверие.СОПРЯЖЕНО -> "Сопряжено"
+                        TrustStore.Доверие.ОТПЕЧАТОК_ИЗМЕНИЛСЯ -> "Отпечаток изменился"
+                        TrustStore.Доверие.НЕ_СВЕРЕНО -> "Не сверено"
+                    }
                     DeviceDetailScreen(
                         state = Sample.deviceDetailState(
                             device = device,
@@ -281,7 +325,10 @@ fun SubScreen(
                             fingerprint = найденное?.fingerprint.orEmpty(),
                             platform = найденное?.platform.orEmpty(),
                             coreVersion = найденное?.coreVersion.orEmpty(),
+                            trustText = текстДоверия,
                         ),
+                        trust = trust,
+                        onTrust = onTrust,
                         onBack = onBack,
                         // «Ещё» пока некуда вести: меню за ним не собрано.
                         //
@@ -308,6 +355,9 @@ fun SubScreen(
                         onSend = { onRow(Route.FILES) },
                         onMirror = { onRow(Route.MIRROR) },
                         onRow = { onRow(it.id) },
+                        // Доверие ведёт на экран сопряжения. Идентификатор
+                        // строки 	rust совпадает с маршрутом, поэтому
+                        // обработчик общий.
                     )
                 }
             }

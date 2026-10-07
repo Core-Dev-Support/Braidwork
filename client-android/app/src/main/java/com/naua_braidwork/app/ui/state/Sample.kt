@@ -642,6 +642,7 @@ object Sample {
         fingerprint: String = "",
         platform: String = "",
         coreVersion: String = "",
+        trustText: String = "",
     ): DeviceDetailState = DeviceDetailState(
         name = device.name,
         statusLine = when (device.presence) {
@@ -705,7 +706,10 @@ object Sample {
                             RowEnd.Value(fingerprint.ifEmpty { "—" }),
                         )
                     )
-                    add(SubRow("trust", "Доверие", "", RowEnd.Chevron))
+                    // Состояние в подписи строки, а не значком: «Доверие» со
+                    // шевроном и пустой подписью выглядит как готовая функция,
+                    // которой нет. Теперь видно, что приложение думает.
+                    add(SubRow("trust", "Доверие", trustText, RowEnd.Chevron))
                 },
             ),
             // Ход подключения — не строка настроек, а лог шагов: каждая запись
