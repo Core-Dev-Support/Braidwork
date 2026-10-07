@@ -70,17 +70,22 @@ jobs:
         # не с чем. Без неё версия разъезжается при каждом релизе и
         # расходится именно на экране у пользователя.
         if: startsWith(github.ref, 'refs/tags/v')
+        # Только ASCII. Имена переменных и текст в `run` проходят через
+        # /bin/sh в локали раннера, и кириллица там ломает разбор: первая
+        # версия этого шага падала с кодом 127, потому что переменные были
+        # названы по-русски. Пояснение живёт здесь, в комментарии YAML, —
+        # он до шелла не доходит.
         run: |
           set -euo pipefail
-          тег="${GITHUB_REF#refs/tags/v}"
-          в_manifestе="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
-          echo "тег: $тег, версия в Cargo.toml: $в_manifestе"
-          if [ "$тег" != "$в_manifestе" ]; then
-            echo "версия ядра не совпадает с тегом: ядро объявит «$в_manifestе»," \
-                 "а релиз помечен «$тег»."
-            echo "Поправьте version в core/Cargo.toml и выпустите релиз заново."
+          tag="${GITHUB_REF#refs/tags/v}"
+          manifest="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          echo "tag: $tag, version in Cargo.toml: $manifest"
+          if [ "$tag" != "$manifest" ]; then
+            echo "core version does not match the tag: core reports $manifest, release is $tag"
+            echo "fix version in core/Cargo.toml and release again"
             exit 1
           fi
+          echo "version matches"
 
   cross:
     name: Кросс-компиляция под Android
