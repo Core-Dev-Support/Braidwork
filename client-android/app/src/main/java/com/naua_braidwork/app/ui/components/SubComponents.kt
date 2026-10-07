@@ -351,6 +351,36 @@ fun SettingRowView(
                 )
             }
 
+            is RowEnd.ValueWrap -> {
+                Spacer(Modifier.width(10.dp))
+                // Перенос по границам четверок, а не по ширине строки.
+                //
+                // Значение читают вслух соседу по четверкам: «УРАЕ Х6СА Н7БД
+                // 2ХХР». Если разорвать группу посередине, сверяющий услышит одну
+                // половину и вторую по отдельности, и строка перестанет быть
+                // тем, что диктуют. Разбивка идёт по пробелам, то есть ровно
+                // по границам групп, которые ядро и формирует.
+                //
+                // Две строки, а не «сколько влезет»: на Honor 7c ширина 360 dp,
+                // и без ограничения строка могла бы вырасти в четыре, вытеснив
+                // название. Двух хватает: значение — это четыре группы по
+                // четыре символа, то есть ровно две строки.
+                Text(
+                    text = end.text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    softWrap = true,
+                    // Многоточие не появляется, пока строка помещается: это
+                    // запас на случай, когда не помещается. Clip обрезал бы
+                    // молча, и человек дочитал бы не всю строку, не заметив
+                    // этого. Три точки хотя бы видны.
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+            }
+
             is RowEnd.Chevron -> Icon(
                 imageVector = IcwChevron,
                 contentDescription = null,
