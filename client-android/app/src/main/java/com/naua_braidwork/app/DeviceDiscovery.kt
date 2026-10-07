@@ -546,8 +546,8 @@ class DeviceDiscovery(private val keysBlobProvider: () -> ByteArray) {
      */
     private fun платформа(): String {
         val релиз = Build.VERSION.RELEASE?.trim().orEmpty()
-        if (релиз.isEmpty()) return "
-        return "Android ".take(48)
+        if (релиз.isEmpty()) return ""
+        return "Android $релиз".take(48)
     }
 
     private companion object {
