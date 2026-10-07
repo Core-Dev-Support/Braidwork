@@ -335,6 +335,11 @@ fun SubScreen(
                         TrustStore.Доверие.ОТПЕЧАТОК_ИЗМЕНИЛСЯ -> "Отпечаток изменился"
                         TrustStore.Доверие.НЕ_СВЕРЕНО -> "Не сверено"
                     }
+                    // Читается здесь, а не внутри `onSend`: лямбда обработчика не
+                    // является composable-функцией, и `Local*.current` в ней —
+                    // ошибка компиляции. Значение берётся при построении экрана,
+                    // а лямбде достаётся уже готовое.
+                    val буферОбмена = LocalClipboardManager.current
                     DeviceDetailScreen(
                         state = Sample.deviceDetailState(
                             device = device,
@@ -377,7 +382,6 @@ fun SubScreen(
                         // но отправлять нечего, и кнопка вела бы в заготовку.
                         // Работающая отправка честнее ссылки на неготовую функцию.
                         onSend = {
-                            val буфер = LocalClipboardManager.current
                             // Пустой буфер и отсутствие соединения разбираются
                             // внутри канала и попадают в журнал: он уже показан на
                             // этой же карточке. Свой отдельный экран отказа был бы
@@ -385,7 +389,7 @@ fun SubScreen(
                             // разному.
                             discovery?.послатьБуферУстройству(
                                 device.id,
-                                буфер.getText()?.toString().orEmpty(),
+                                буферОбмена.getText()?.toString().orEmpty(),
                             )
                         },
                         onMirror = { onRow(Route.MIRROR) },

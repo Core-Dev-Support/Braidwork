@@ -318,7 +318,9 @@ class DeviceDiscovery(
      */
     private fun процентЗаряда(): Заряд? {
         val фильтр = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-        val сообщение: Intent? = context.registerReceiver(null, фильтр) ?: return null
+        // Тип не указывается: с `Intent?` компилятор перестаёт понимать, что
+        // после `?: return` значение не nullable, и требует `?.` на каждой строке.
+        val сообщение = context.registerReceiver(null, фильтр) ?: return null
         val уровень = сообщение.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
         val шкала = сообщение.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
         if (уровень < 0 || шкала <= 0) return null
