@@ -3,6 +3,7 @@ package com.naua_braidwork.app.ui.screens
 import com.naua_braidwork.app.ui.components.tapNoRipple
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.foundation.background
@@ -555,15 +556,20 @@ fun DeviceDetailScreen(
     val удар by пульс.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
-        animationSpec = keyframes {
-            durationMillis = 1400
-            0f at 0 using LinearOutSlowInEasing
-            0.45f at 90
-            0.10f at 260
-            0.38f at 350
-            0f at 560
-            0f at 1400
-        },
+        // Ключевые кадры обязаны быть обёрнуты в `infiniteRepeatable`: сам
+        // `keyframes` даёт конечную анимацию, а переход в `rememberInfiniteTransition`
+        // просит именно бесконечную.
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 1400
+                0f at 0 using LinearOutSlowInEasing
+                0.45f at 90
+                0.10f at 260
+                0.38f at 350
+                0f at 560
+                0f at 1400
+            },
+        ),
         label = "удар",
     )
     Column(
