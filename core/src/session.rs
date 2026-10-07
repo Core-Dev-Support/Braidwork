@@ -298,6 +298,68 @@ pub fn parse_and_verify_hello(body: &[u8], expected: &DeviceKeys) -> Result<Hell
     Ok(hello)
 }
 
+/// Проверяет объявление, полученное по UDP, без знания напарника.
+///
+/// Вызывающий код не имеет ни одного ключа устройства, которое услышал: он ещё
+/// не знает, кто это. Проверять поэтому можно только одно — что подпись под
+/// объявлением состоит **тем же** ключом, который объявление же и предъявило.
+///
+/// ## Что это доказывает
+///
+/// Что отправитель **держит приватный ключ**. Поэтому объявление нельзя
+/// пересказать чужое: чтобы повторить чужой идентификатор, нужен и чужой
+/// приватный ключ. Раньше проверки не было вовсе, и объявление можно было
+/// подделать или переслать.
+///
+/// ## Чего это не доказывает
+///
+/// Кто именно перед нами. Имя и адрес остаются заявлением: подпись доказывает
+/// лишь связь ключа с объявлением, а не личность человека за ним. Для этого
+/// нужно сопряжение — сверка отпечатка человеком при первом соединении.
+///
+/// ## Почему это возможно
+///
+/// Лента подписи собирается только из публичных данных, и все они лежат в
+/// самом объявлении: ключ подписи, статический ключ, набор возможностей и
+/// nonce. Поэтому проверка не требует ничего, кроме самого сообщения.
+pub fn verify_announcement(hello: &Hello) -> Result<(), SessionError> {
+    let identity = hello.identity.as_ref().ok_or(SessionError::Malformed)?;
+
+    let claimed: [u8; 32] = identity
+        .signing
+        .as_ref()
+        .ok_or(SessionError::Malformed)?
+        .key
+        .as_ref()
+        .try_into()
+        .map_err(|_| SessionError::Malformed)?;
+
+    let static_key: [u8; 32] = identity
+        .static_key
+        .as_ref()
+        .ok_or(SessionError::Malformed)?
+        .key
+        .as_ref()
+        .try_into()
+        .map_err(|_| SessionError::Malformed)?;
+
+    let offered = hello
+        .capabilities
+        .as_ref()
+        .map(|c| c.offered.clone())
+        .unwrap_or_default();
+    let caps_hash = capabilities_hash(&offered);
+
+    let signature: [u8; 64] = hello
+        .signature
+        .as_ref()
+        .try_into()
+        .map_err(|_| SessionError::Malformed)?;
+
+    let tape = crate::crypto::handshake_tape(&claimed, &static_key, &caps_hash, hello.nonce);
+    verify_handshake(&claimed, &tape, &signature).map_err(SessionError::Crypto)
+}
+
 /// Набор возможностей, которое объявляет ядро.
 ///
 /// Список расширяемый, поэтому клиент сверяет пересечение, а не сравнивает
