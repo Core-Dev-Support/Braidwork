@@ -1,12 +1,10 @@
 package com.naua_braidwork.app.ui.screens
 
 import com.naua_braidwork.app.ui.components.tapNoRipple
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -544,26 +542,29 @@ fun DeviceDetailScreen(
     pulseLive: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    // Масштаб и прозрачность одной точки. Дёшево даже на слабом телефоне: фон
-    // перерисовывает 9 dp, а не экран, и анимация не держит список устройств.
+    // Ритм «тук-тук», а не ровное дыхание.
+    //
+    // Сначала было `infiniteRepeatable` туда-обратно, и точка просто плавно
+    // разрасталась и сжималась. Владелец прав: так выглядит не пульс, а
+    // дыхание. Сердечный ритм узнаётся по двум ударам подряд — второй слабее
+    // первого, — и именно эта пара отличает его от любой другой анимации.
+    //
+    // Ключевые кадры заданы вручную: пара ударов, затем пауза. Кривая
+    // `FastOutSlowIn` размазывает переходы, а удар должен быть резким.
     val пульс = rememberInfiniteTransition(label = "пульс связи")
-    val дыхание by пульс.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.6f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(900, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "размер точки",
-    )
-    val прозрачность by пульс.animateFloat(
-        initialValue = 0.45f,
+    val удар by пульс.animateFloat(
+        initialValue = 0f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(900, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "прозрачность точки",
+        animationSpec = keyframes {
+            durationMillis = 1400
+            0f at 0 using LinearOutSlowInEasing
+            0.45f at 90
+            0.10f at 260
+            0.38f at 350
+            0f at 560
+            0f at 1400
+        },
+        label = "удар",
     )
     Column(
         modifier = modifier
@@ -614,12 +615,16 @@ fun DeviceDetailScreen(
                 modifier = Modifier
                     .size(9.dp)
                     .graphicsLayer {
-                        // Пульс только пришедшим сердцебиением. Точка, дышащая по
-                        // таймеру, врала бы: человек увидел бы живое соединение с
-                        // телефоном, который молчит уже полминуты.
-                        scaleX = if (pulseLive) дыхание else 1f
-                        scaleY = if (pulseLive) дыхание else 1f
-                        alpha = if (pulseLive) прозрачность else 1f
+                        // Пульс только пришедшим сердцебиением. Точка, бьющаяся
+                        // по таймеру, врала бы: человек увидел бы живое соединение
+                        // с телефоном, который молчит.
+                        //
+                        // Между ударами сила ноль, и фон спокойный: видно ритм,
+                        // а не мигание.
+                        val сила = if (pulseLive) удар else 0f
+                        scaleX = 1f + сила * 0.9f
+                        scaleY = 1f + сила * 0.9f
+                        alpha = if (pulseLive) 0.55f + сила * 0.45f else 1f
                     }
                     .background(
                         color = if (state.online) Color(0xFF2BB673) else Color(0xFFA4A7B2),

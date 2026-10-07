@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -264,16 +265,34 @@ fun SettingRowView(
     modifier: Modifier = Modifier,
 ) {
     val clickable = row.end !is RowEnd.Toggle && row.end !is RowEnd.Radio
+
+    // Высота задаётся **минимумом**, а не точно.
+    //
+    // Раньше стоял `.height(...)`, и строка была ровно 56, 64 или 66 dp. Всё,
+    // что длиннее, обрезалось: на скриншоте у владельца текст присланного буфера
+    // был срезан по нижнему краю карточки. Обрезанные данные хуже отсутствующих:
+    // человек видит начало и считает, что прислали столько.
+    //
+    // Тот же дефект всплывал на Honor 7c вместе с обрезанным отпечатком. Там
+    // увеличен системный шрифт, и обычное значение переставало влезать. Значит
+    // причина не в размере экрана, а в жёсткой высоте: при увеличенном шрифте
+    // ломается всё, что длиннее двух строк.
+    //
+    // С минимумом вёрстка сама подстраивается и под размер экрана, и под шрифт
+    // системы. Переписывать что-то под каждое устройство не нужно.
+    val минимумВысоты = when {
+        // Многострочное содержимое не имеет верхней границы: это журнал
+        // подключения и присланный текст, оба растут по необходимости.
+        row.multiline != null -> Dp.Unspecified
+        row.icon != null -> 64.dp
+        row.sub.isEmpty() -> 56.dp
+        else -> 66.dp
+    }
+
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(
-                when {
-                    row.icon != null -> 64.dp
-                    row.sub.isEmpty() -> 56.dp
-                    else -> 66.dp
-                },
-            )
+            .then(if (минимумВысоты == Dp.Unspecified) Modifier else Modifier.heightIn(min = минимумВысоты))
             .then(
                 if (clickable) Modifier.tapNoRipple(onClick = onRowClick) else Modifier,
             )
@@ -288,6 +307,18 @@ fun SettingRowView(
                 radius = 12.dp,
             )
             Spacer(Modifier.width(14.dp))
+        }
+        // Малый значок строки данных: слева от названия, без плишки. Плитка на
+        // каждой строке перетягивала бы внимание с самих значений.
+        row.smallIcon?.let { значок ->
+            Icon(
+                imageVector = значок,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .padding(end = 10.dp)
+                    .size(18.dp),
+            )
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(

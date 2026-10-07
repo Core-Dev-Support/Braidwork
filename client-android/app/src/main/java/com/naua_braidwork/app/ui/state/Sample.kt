@@ -2,6 +2,8 @@ package com.naua_braidwork.app.ui.state
 
 import com.naua_braidwork.app.BraidworkCore
 import androidx.compose.ui.graphics.Color
+import com.naua_braidwork.app.ui.icons.IcwAddress
+import com.naua_braidwork.app.ui.icons.IcwBattery
 import com.naua_braidwork.app.ui.icons.IcwBell
 import com.naua_braidwork.app.ui.icons.IcwCalendar
 import com.naua_braidwork.app.ui.icons.IcwCard
@@ -9,6 +11,7 @@ import com.naua_braidwork.app.ui.icons.IcwChat
 import com.naua_braidwork.app.ui.icons.IcwClipboard
 import com.naua_braidwork.app.ui.icons.IcwCpu
 import com.naua_braidwork.app.ui.icons.IcwFolder
+import com.naua_braidwork.app.ui.icons.IcwId
 import com.naua_braidwork.app.ui.icons.IcwInfo
 import com.naua_braidwork.app.ui.icons.IcwLaptop
 import com.naua_braidwork.app.ui.icons.IcwMail
@@ -212,13 +215,7 @@ object Sample {
             SubGroup(
                 title = "Ключи",
                 rows = listOf(
-                    SubRow("id", "Идентификатор устройства", "", RowEnd.Value(shortTag(deviceId))),
-                    // Свой отпечаток напротив, с переносом: тем же приёмом,
-                    // что и на экране сопряжения. Раньше он стоял под
-                    // названием во всю ширину, и строка выбивалась из соседних.
-                    //
-                    // Шеврона нет: он был и вёл в никуда, то есть строка
-                    // выглядела готовой и была пустой.
+                    SubRow("id", "Идентификатор устройства", "", RowEnd.Value(shortTag(deviceId)), smallIcon = IcwId),
                     SubRow(
                         "fingerprint",
                         "Отпечаток ключа",
@@ -226,6 +223,7 @@ object Sample {
                         RowEnd.ValueWrap(
                             fingerprint.ifBlank { "ядро не сообщило отпечаток" },
                         ),
+                        smallIcon = IcwShield,
                     ),
                     SubRow("rotation", "Ротация ключей", "", RowEnd.Value("Выключена")),
                 ),
@@ -787,15 +785,39 @@ object Sample {
                     // обрезался до 16 байт в структуре события и показывался
                     // шестнадцатеричным видом — получалось 64 символа мусора
                     // вместо идентификатора.
-                    add(SubRow("id", "Идентификатор", "", RowEnd.Value(device.id)))
-                    add(SubRow("address", "Адрес", "", RowEnd.Value("$address:$port")))
+                    add(
+                        SubRow(
+                            "id",
+                            "Идентификатор",
+                            "",
+                            RowEnd.Value(device.id),
+                            smallIcon = IcwId,
+                        )
+                    )
+                    add(
+                        SubRow(
+                            "address",
+                            "Адрес",
+                            "",
+                            RowEnd.Value("$address:$port"),
+                            smallIcon = IcwAddress,
+                        )
+                    )
                     // Платформа и версия приходят из объявления напарника.
                     //
                     // Обе приходят **без подписи**: сверить по ним нельзя,
                     // нужны они только строкой на карточке. Поэтому пустое
                     // значение — не поломка, а честное «не знаю», и
                     // подставлять «неизвестно» от имени ядра было бы враньём.
-                    add(SubRow("platform", "Платформа", "", RowEnd.Value(platform.ifEmpty { "—" })))
+                    add(
+                        SubRow(
+                            "platform",
+                            "Платформа",
+                            "",
+                            RowEnd.Value(platform.ifEmpty { "—" }),
+                            smallIcon = IcwPhone,
+                        )
+                    )
                     // Заряд соседа — из сердцебиения, то есть из настоящего
                     // сообщения по каналу. Объявление о батарее не говорит ничего,
                     // а выдуманный процент человек принял бы за показание.
@@ -821,6 +843,7 @@ object Sample {
                                             if (peerBattery.second) ", на зарядке" else ""
                                     }
                                 ),
+                                smallIcon = IcwBattery,
                             )
                         )
                     }
