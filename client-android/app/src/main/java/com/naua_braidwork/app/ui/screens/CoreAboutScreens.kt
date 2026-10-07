@@ -25,6 +25,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.naua_braidwork.app.ui.components.BackButton
@@ -728,13 +730,24 @@ private fun FeatureDial(
             )
         }
         Spacer(Modifier.height(8.dp))
+        // Подпись в одну строку с многоточием, а не в две.
+        //
+        // «Уведомления» — длинное слово, и на узком экране или при крупном
+        // шрифте оно не влезало в четверть ширины и переносилось посреди
+        // слова: «Уведомлени» / «я». Перенос по слогам читается как опечатка.
+        //
+        // Троеточие честнее разорванного слова: человек понимает, что
+        // подпись сокращена, а не что её перепутали с другой.
         Text(
             text = feature.label,
-            fontSize = 13.sp,
-            lineHeight = 18.sp,
+            fontSize = 12.sp,
+            lineHeight = 16.sp,
             fontWeight = if (feature.on) FontWeight.SemiBold else FontWeight.Normal,
             color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 2,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            softWrap = false,
+            textAlign = TextAlign.Center,
         )
     }
 }
