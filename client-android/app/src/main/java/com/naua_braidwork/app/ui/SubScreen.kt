@@ -216,11 +216,14 @@ fun SubScreen(
             )
 
             Route.CLIPBOARD -> ClipboardScreen(
-                groups = Sample.clipboardGroups(),
+                groups = Sample.clipboardGroups(
+                    discovery?.полученноеСодержимое().orEmpty()
+                ),
                 toggles = clipboardToggles,
                 onBack = onBack,
                 onRow = { onRow(it.id) },
                 onToggle = { id, value -> clipboardToggles = clipboardToggles.with(id, value) },
+                onВставить = { id -> discovery?.вставитьПолученное(id) },
             )
 
             Route.FILES -> FilesScreen(

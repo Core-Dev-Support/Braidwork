@@ -141,7 +141,7 @@ dependencies = [
 
 [[package]]
 name = "braidwork-core"
-version = "0.9.13"
+version = "0.9.14"
 dependencies = [
  "blake3",
  "ed25519-dalek",

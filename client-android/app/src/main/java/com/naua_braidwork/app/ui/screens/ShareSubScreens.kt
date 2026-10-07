@@ -52,6 +52,13 @@ fun ClipboardScreen(
     onBack: () -> Unit,
     onRow: (SubRow) -> Unit,
     onToggle: (String, Boolean) -> Unit,
+    /**
+     * Вставить запись из истории в буфер обмена.
+     *
+     * Отдельный обработчик, а не `onRow`: `onRow` открывает подэкран по
+     * идентификатору строки, и запись из истории подэкраном не является.
+     */
+    onВставить: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     RowsSubScreen(
@@ -60,7 +67,15 @@ fun ClipboardScreen(
         groups = groups,
         toggles = toggles,
         onBack = onBack,
-        onRow = onRow,
+        // Запись истории вставляется, а не открывается: её идентификатор не
+        // маршрут, и `открыть` его отбросил бы молча.
+        onRow = { строка ->
+            if (строка.id.startsWith("cb_") && строка.id != "cb_empty") {
+                onВставить(строка.id)
+            } else {
+                onRow(строка)
+            }
+        },
         onToggle = onToggle,
         modifier = modifier,
     )
