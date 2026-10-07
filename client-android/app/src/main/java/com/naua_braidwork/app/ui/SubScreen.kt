@@ -155,6 +155,15 @@ fun SubScreen(
      */
     discovery: com.naua_braidwork.app.DeviceDiscovery? = null,
 
+    /**
+     * Что сосед прислал последним сердцебиением, по идентификатору.
+     *
+     * Отдельными данными, а не свойством устройства: устройство обновляется
+     * объявлением каждые две секунды, и заряд соседа в нём был бы не с того
+     * момента. Пусто для устройства, которое ещё ничего не прислало.
+     */
+    pulses: Map<String, com.naua_braidwork.app.DeviceDiscovery.PeerPulse> = emptyMap(),
+
     /** Ход подключения для показа в карточке. Пустой список — событий не было. */
     trail: List<String> = emptyList(),
     modifier: Modifier = Modifier,
@@ -350,6 +359,13 @@ fun SubScreen(
                     // ошибка компиляции. Значение берётся при построении экрана,
                     // а лямбде достаётся уже готовое.
                     val буферОбмена = LocalClipboardManager.current
+
+                    // Пульс соседа: заряд и время последнего настоящего
+                    // сердцебиения. Пусто — сосед ничего не присылал, и точка не
+                    // пульсирует: анимация без данных была бы враньём.
+                    val пульс = pulses[device.id]
+                    val живойПульс = пульс?.свежее(System.currentTimeMillis()) == true
+                    val когдаПульс = if (пульс != null) Sample.whenAt(пульс.вМс) else ""
                     DeviceDetailScreen(
                         state = Sample.deviceDetailState(
                             device = device,
@@ -361,9 +377,20 @@ fun SubScreen(
                             platform = найденное?.platform.orEmpty(),
                             coreVersion = найденное?.coreVersion.orEmpty(),
                             trustText = текстДоверия,
+                            peerBattery = пульс?.let { it.заряд to it.зарядка },
+                            peerPulseAt = когдаПульс,
                         ),
                         trust = trust,
                         onTrust = onTrust,
+                        /**
+                         * Пульсирует ли точка «На связи».
+                         *
+                         * Только пришедшим сердцебиением. Анимация, которая шла бы
+                         * по таймеру, врала бы: человек увидел бы живое соединение
+                         * с телефоном, который молчит. Здесь пульс означает ровно
+                         * то, что значит: «данные идут прямо сейчас».
+                         */
+                        pulseLive = живойПульс,
                         onBack = onBack,
                         // «Ещё» пока некуда вести: меню за ним не собрано.
                         //

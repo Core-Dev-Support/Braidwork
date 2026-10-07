@@ -745,6 +745,16 @@ object Sample {
         platform: String = "",
         coreVersion: String = "",
         trustText: String = "",
+        /**
+         * Заряд соседа из последнего сердцебиения.
+         *
+         * `null` означает «ничего не приходило». Показывать раньше, чем пришло
+         * настоящее сообщение, нельзя: человек решил бы, что приложение знает
+         * состояние чужого телефона, а оно его не знает.
+         */
+        peerBattery: Pair<Int, Boolean>? = null,
+        /** Когда пришло сердцебиение, для подписи строки. */
+        peerPulseAt: String = "",
     ): DeviceDetailState = DeviceDetailState(
         name = device.name,
         statusLine = when (device.presence) {
@@ -786,6 +796,34 @@ object Sample {
                     // значение — не поломка, а честное «не знаю», и
                     // подставлять «неизвестно» от имени ядра было бы враньём.
                     add(SubRow("platform", "Платформа", "", RowEnd.Value(platform.ifEmpty { "—" })))
+                    // Заряд соседа — из сердцебиения, то есть из настоящего
+                    // сообщения по каналу. Объявление о батарее не говорит ничего,
+                    // а выдуманный процент человек принял бы за показание.
+                    //
+                    // Строка есть только при соединении. У офлайн-устройства
+                    // показывать «заряд соседа» незачем: канала нет, замеров нет,
+                    // и человек увидел бы пустое место там, где ждёт данных.
+                    if (device.online) {
+                        add(
+                            SubRow(
+                                "peer_battery",
+                                "Заряд соседа",
+                                if (peerPulseAt.isEmpty()) {
+                                    "ожидается"
+                                } else {
+                                    "пришло в $peerPulseAt"
+                                },
+                                RowEnd.Value(
+                                    if (peerBattery == null) {
+                                        "не присылал"
+                                    } else {
+                                        "${peerBattery.first} %" +
+                                            if (peerBattery.second) ", на зарядке" else ""
+                                    }
+                                ),
+                            )
+                        )
+                    }
                     add(
                         SubRow(
                             "core",

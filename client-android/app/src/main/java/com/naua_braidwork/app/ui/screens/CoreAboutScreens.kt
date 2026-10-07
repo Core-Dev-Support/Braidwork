@@ -1,6 +1,12 @@
 package com.naua_braidwork.app.ui.screens
 
 import com.naua_braidwork.app.ui.components.tapNoRipple
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,9 +27,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -526,8 +534,37 @@ fun DeviceDetailScreen(
     onRow: (SubRow) -> Unit,
     trust: TrustStore,
     onTrust: () -> Unit,
+    /**
+     * Пульсирует ли точка «На связи».
+     *
+     * Истина ставится только когда пришло настоящее сердцебиение. Точка, пульсирующая
+     * по таймеру, врала бы: человек увидел бы живое соединение с телефоном,
+     * который молчит. Здесь пульс значит ровно одно — «данные идут сейчас».
+     */
+    pulseLive: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    // Масштаб и прозрачность одной точки. Дёшево даже на слабом телефоне: фон
+    // перерисовывает 9 dp, а не экран, и анимация не держит список устройств.
+    val пульс = rememberInfiniteTransition(label = "пульс связи")
+    val дыхание by пульс.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.6f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "размер точки",
+    )
+    val прозрачность by пульс.animateFloat(
+        initialValue = 0.45f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "прозрачность точки",
+    )
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -576,6 +613,14 @@ fun DeviceDetailScreen(
             Box(
                 modifier = Modifier
                     .size(9.dp)
+                    .graphicsLayer {
+                        // Пульс только пришедшим сердцебиением. Точка, дышащая по
+                        // таймеру, врала бы: человек увидел бы живое соединение с
+                        // телефоном, который молчит уже полминуты.
+                        scaleX = if (pulseLive) дыхание else 1f
+                        scaleY = if (pulseLive) дыхание else 1f
+                        alpha = if (pulseLive) прозрачность else 1f
+                    }
                     .background(
                         color = if (state.online) Color(0xFF2BB673) else Color(0xFFA4A7B2),
                         shape = RoundedCornerShape(5.dp),
