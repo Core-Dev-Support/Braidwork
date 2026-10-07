@@ -209,7 +209,12 @@ fun BraidworkApp(
     // Решения о доверии живут в хранилище, а не в состоянии: сопряжение
     // переживает перезапуск процесса, и иначе каждое устройство снова было бы
     // «не сверено» после убийства приложения.
-    val trust = remember { TrustStore.get(LocalContext.current) }
+    // Контекст читается ДО remember, а не внутри. LocalContext.current —
+    // обращение к композабельному состоянию, и внутри лямбды remember оно
+    // запрещено. Ошибка звучит как «вызов @Composable вне @Composable-функции»
+    // и указывает совсем не туда, где ошибка на самом деле.
+    val контекст = LocalContext.current
+    val trust = remember { TrustStore.get(контекст) }
 
     val stack = remember { mutableStateListOf<String>() }
     val route = stack.lastOrNull()

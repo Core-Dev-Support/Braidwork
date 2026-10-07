@@ -284,7 +284,7 @@ fun SubScreen(
                         fingerprint = отпечаток,
                         адрес = найденное?.ipv4
                             ?.joinToString(".") { (it.toInt() and 0xFF).toString() } ?: "—",
-                        версияЯдра = найденное?.coreVersion.ifEmpty { "—" },
+                        версияЯдра = найденное?.coreVersion?.ifEmpty { "—" } ?: "—",
                         доверие = доверие,
                         onBack = onBack,
                         onСопрячь = { trust.сопрячь(device.id, отпечаток) },
