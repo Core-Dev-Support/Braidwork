@@ -80,7 +80,10 @@ private const val ОПРОС_СНИМКА_МС = 1000L
  * снимок на момент нажатия и показывала состояние, которое успело устареть:
  * список пересобирается каждые две секунды, а копия — нет.
  */
-private fun описание(найденное: DeviceDiscovery.Device) = DeviceSummary(
+private fun описание(
+    найденное: DeviceDiscovery.Device,
+    пульс: DeviceDiscovery.PeerPulse?,
+) = DeviceSummary(
     id = найденное.deviceId.идентификатор(),
     // Имя приходит из объявления напарника. Оно ещё не проверено подписью — та
     // сверяется на соединении, — но «Устройство» в плитке хуже: в общей
@@ -93,9 +96,13 @@ private fun описание(найденное: DeviceDiscovery.Device) = Devic
     subtitle = if (найденное.connected) "На связи" else "Рядом, не подключено",
     kind = DeviceKind.Desktop,
     presence = if (найденное.connected) Presence.Online else Presence.Nearby,
-    // Заряд придёт с первым кадром после соединения. До этого «нет данных»
-    // честнее выдуманного процента.
-    batteryPercent = null,
+    // Заряд соседа — из его сердцебиения, а не из объявления: объявление о
+    // батарее не говорит ничего. До первого кадра «нет данных» честнее
+    // выдуманного процента.
+    batteryPercent = пульс?.заряд,
+    // Свежесть считается здесь, один раз на все плитки. Плитка не должна сама
+    // решать, что значит «только что», — иначе каждая будет считать по-своему.
+    pulseFresh = пульс?.свежее(System.currentTimeMillis()) == true,
 )
 
 /**
@@ -190,13 +197,16 @@ fun BraidworkApp(
     // Карточка собирается из текущего снимка — того же, что и плитка. Одна
     // функция на оба: своя копия разъехалась бы при первом же изменении, и
     // противоречие вернулось бы в другой форме.
+    val пульсы = снимок.value.пульсы
+    fun описаниеУстройства(d: DeviceDiscovery.Device) = описание(d, пульсы[d.deviceId.идентификатор()])
+
     val выбранное: DeviceSummary? = снимок.value.devices
         .firstOrNull { it.deviceId.идентификатор() == выбранныйId }
-        ?.let(::описание)
+        ?.let(::описаниеУстройства)
 
     val devicesState = remember(снимок.value, filter) {
         DevicesState(
-            devices = снимок.value.devices.map(::описание),
+            devices = снимок.value.devices.map(::описаниеУстройства),
             filter = filter,
         )
     }

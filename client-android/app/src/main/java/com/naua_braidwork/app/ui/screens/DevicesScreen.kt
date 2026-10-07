@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -253,14 +254,26 @@ private fun DeviceCard(device: DeviceSummary, onClick: () -> Unit) {
                 )
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Точка на плитке читается так же, как на карточке: крупнее и
+                    // ярче при свежих данных, тусклее когда они перестали
+                    // приходить. Владелец просил видеть это прямо в списке, не
+                    // открывая карточку, — и по той же причине не только
+                    // анимацией: у него отключены анимации.
                     Box(
                         modifier = Modifier
                             .size(8.dp)
+                            .graphicsLayer {
+                                val основа = if (device.pulseFresh) 1.6f else 1f
+                                scaleX = основа
+                                scaleY = основа
+                            }
                             .background(
-                                color = if (device.online) {
-                                    if (isDark) Color(0xFF3DD68C) else Color(0xFF16804A)
-                                } else {
-                                    Color(0xFF6C707B)
+                                color = when {
+                                    !device.online -> Color(0xFF6C707B)
+                                    device.pulseFresh -> {
+                                        if (isDark) Color(0xFF3DD68C) else Color(0xFF16804A)
+                                    }
+                                    else -> Color(0xFF8FBFA6)
                                 },
                                 shape = RoundedCornerShape(4.dp),
                             ),
