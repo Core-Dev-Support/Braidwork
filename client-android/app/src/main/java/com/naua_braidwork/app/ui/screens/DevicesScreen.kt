@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -202,10 +204,25 @@ private fun HeaderIcon(
     }
 }
 
-/** Фильтры работают как группа: выбран один. */
+/**
+ * Фильтры работают как группа: выбран один.
+ *
+ * Ряд прокручивается вбок, и это не украшение, а единственный способ уместить
+ * четыре плашки на узком экране. Раньше ряд был обычным `Row`, и `Row` за
+ * границами своей ширины просто обрезает: на Honor 7c при системном шрифте 1.3
+ * подписи «В сети», «Рядом» и «Офлайн» требуют больше ширины, чем есть, и
+ * последняя плашка уезжала за край экрана вместе с возможностью её нажать.
+ *
+ * Плашка не переносится и на вторую строку: фильтры должны быть видны целиком,
+ * иначе «Офлайн» пришлось бы искать. Прокрутка даёт то, что нужно, — все
+ * четыре плашки доступны, хоть и не одновременно.
+ */
 @Composable
 private fun FilterRow(current: DeviceFilter, onFilter: (DeviceFilter) -> Unit, isDark: Boolean) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         DeviceFilter.entries.forEach { filter ->
             val selected = filter == current
             Surface(
@@ -277,37 +294,43 @@ private fun DeviceCard(device: DeviceSummary, onClick: () -> Unit) {
                     // каждая строка списка завела бы своё преимущество, и
                     // несколько плиток били бы вразнобой.
                     val ритм = rememberПульс()
-                    // Точка на плитке читается так же, как на карточке: крупнее и
-                    // ярче при свежих данных, тусклее когда они перестали
-                    // приходить. Владелец просил видеть это прямо в списке, не
-                    // открывая карточку, — и по той же причине не только
-                    // анимацией: у него отключены анимации.
+                    // ## Почему точка стала в два раза меньше, а не «чуть тусклее»
+                    //
+                    // Разница в 1.35 раза на пятне в восемь точек глазом не
+                    // читается — владелец проверял это дважды и сказал «сердцебие
+                    // нигде нет». Причина не в том, что разница мала по числу: в
+                    // восьми точках не читается **ничего**, потому что глаз берёт
+                    // угловой размер, а не отношение.
+                    //
+                    // Поэтому состояния разведены в два раза: восемь точек при
+                    // свежих данных и четыре при устаревших. Разница вдвое читается
+                    // боковым зрением, на плитке и на карточке, и **без анимации
+                    // вовсе** — анимация поверх только украшает.
+                    val свежие = device.online && device.pulseFresh
+                    val точкаDp = if (свежие) 8.dp else 4.dp
                     Box(
                         modifier = Modifier
-                            .size(8.dp)
+                            .size(точкаDp)
                             // Ритм нужен и здесь. Раньше точка в списке только
                             // увеличивалась, и это выглядело как «статичный
-                            // размер», а не как пульс: владелец прямо сказал, что
-                            // пульса в плитке нет. Теперь обе точки бьют один
-                            // ритм из одного места — [rememberПульс].
+                            // размер», а не как пульс.
                             .graphicsLayer {
-                                val основа = when {
-                                    !device.online -> 1f
-                                    !device.pulseFresh -> 1f
-                                    else -> 1.35f + ритм * 0.65f
-                                }
+                                val основа = if (свежие) 1.35f + ритм * 0.65f else 1f
                                 scaleX = основа
                                 scaleY = основа
                             }
                             .background(
                                 color = when {
                                     !device.online -> Color(0xFF6C707B)
+                                    // Свежая — чистый зелёный, устаревшая — заметно
+                                    // бледнее. Вместе с размером это даёт признак,
+                                    // который читается без анимации.
                                     device.pulseFresh -> {
                                         if (isDark) Color(0xFF3DD68C) else Color(0xFF16804A)
                                     }
-                                    else -> Color(0xFF8FBFA6)
+                                    else -> Color(0xFFB9C4BE)
                                 },
-                                shape = RoundedCornerShape(4.dp),
+                                shape = RoundedCornerShape(точкаDp),
                             ),
                     )
                     Spacer(Modifier.width(6.dp))

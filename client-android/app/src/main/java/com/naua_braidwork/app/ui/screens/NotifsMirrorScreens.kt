@@ -157,7 +157,9 @@ private fun MirrorPreview(live: Boolean) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(150.dp)
+                    // Минимум: над состоянием зеркала наложена подпись, и при
+                    // крупном шрифте она переставала помещаться.
+                    .heightIn(min = 150.dp)
                     .background(
                         Brush.linearGradient(
                             listOf(Color(0xFF2E4470), Color(0xFF1A2238)),

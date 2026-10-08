@@ -1,6 +1,8 @@
 package com.naua_braidwork.app.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -342,7 +344,13 @@ private fun StorageCard(storedText: String, modifier: Modifier = Modifier) {
                     .background(Color(0xFFE6E8EE), RoundedCornerShape(6.dp)),
             )
             Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            // Прокручивается вбок по той же причине, что и фильтры в списке
+            // устройств: при крупном системном шрифте три подписи легенды перестают
+            // помещаться, а `Row` за своей шириной обрезает без предупреждения.
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
                 StorageLegend("Видео", Color(0xFF2B8CF5))
                 StorageLegend("Фото", Color(0xFF3DDC84))
                 StorageLegend("Другое", Color(0xFFFF9A3D))

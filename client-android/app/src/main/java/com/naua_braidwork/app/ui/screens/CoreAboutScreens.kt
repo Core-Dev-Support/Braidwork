@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -418,7 +419,9 @@ fun RoadmapScreen(
 /** Строка плана: кружок с номером, вертикальная линия и подписи. */
 @Composable
 private fun TimelineRow(step: RoadmapStep, isLast: Boolean) {
-    Row(modifier = Modifier.height(84.dp)) {
+    // Минимум: строка плана несёт заголовок и подпись, оба переносятся при
+    // крупном системном шрифте, и 84 dp срезали бы вторую строку подписи.
+    Row(modifier = Modifier.heightIn(min = 84.dp)) {
         Column(
             modifier = Modifier.width(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -598,47 +601,36 @@ fun DeviceDetailScreen(
         ) {
             Box(
                 modifier = Modifier
-                    .size(9.dp)
+                    // ## Размер вместо оттенка
+                    //
+                    // Точка была всегда одного размера, и различаться могла
+                    // только яркостью и движением. Движение человек вправе
+                    // выключить — владелец так и сделал, — и тогда признака не
+                    // оставалось вовсе.
+                    //
+                    // Свежие данные дают точку вдвое крупнее, чем устаревшие.
+                    // Разница в полтора раза на девяти точках не читается,
+                    // разница вдвое читается боковым зрением и **без анимации**.
+                    //
+                    // Ритм поверх остаётся украшением: с выключенной анимацией
+                    // остаётся ровно эта разница в размере, и смысл тот же.
+                    .size(if (pulseLive) 10.dp else 5.dp)
                     .graphicsLayer {
-                        // Пульс — украшение, а не носитель смысла.
-                        //
-                        // Владелец проверял на устройстве с **отключёнными
-                        // анимациями** и не увидел ничего: точка оставалась прежней,
-                        // потому что весь признак жил в движении. У анимации есть
-                        // ещё одно свойство: её выключают осознанно, и человек,
-                        // который её выключил, вправе получить тот же смысл.
-                        //
-                        // Поэтому состояние видно и без движения: при свежем
-                        // сердцебиении точка крупнее и ярче, при устаревшем —
-                        // тусклее. С выключенной анимацией остаётся ровно эта
-                        // разница, а с включённой к ней добавляется ритм.
-                        //
-                        // Между ударами сила ноль, и фон спокойный: видно ритм, а не
-                        // мигание.
                         val сила = if (pulseLive) удар else 0f
-                        val основа = if (pulseLive) 1.45f else 1f
-                        scaleX = основа + сила * 0.75f
-                        scaleY = основа + сила * 0.75f
-                        // Тусклый зелёный в покое читался как «что-то не так».
-                        // Поэтому на просто установленном канале точка остаётся
-                        // зелёной в полную силу, и тускнеет только когда данные
-                        // действительно перестали приходить.
-                        alpha = when {
-                            pulseLive -> 1f
-                            state.online -> 0.7f
-                            else -> 1f
-                        }
+                        val основа = if (pulseLive) 1.35f else 1f
+                        scaleX = основа + сила * 0.65f
+                        scaleY = основа + сила * 0.65f
                     }
                     .background(
-                        // Зелёный означает «канал есть». Оттенок зависит от
-                        // данных: со свежим сердцебиением — чистый зелёный, без
-                        // данных — приглушённый. Разница читается без анимации.
+                        // Зелёный означает «канал есть», оттенок — «идут данные».
+                        // Вдвое меньшая точка читается без анимации, оттенок её
+                        // усиливает, но не несёт смысл в одиночку.
                         color = when {
                             !state.online -> Color(0xFFA4A7B2)
                             pulseLive -> Color(0xFF2BB673)
-                            else -> Color(0xFF7FC5A2)
+                            else -> Color(0xFFBFCBC4)
                         },
-                        shape = RoundedCornerShape(5.dp),
+                        shape = RoundedCornerShape(percent = 50),
                     ),
             )
             Spacer(Modifier.width(8.dp))

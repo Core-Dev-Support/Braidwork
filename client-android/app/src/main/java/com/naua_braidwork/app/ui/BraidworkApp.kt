@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.size
@@ -482,11 +483,16 @@ private fun shortenId(id: String): String {
 
 /**
  * Нижнее меню: высота 84, иконки 26, подписи 11.
+ *
+ * Высота — минимум. Подписи разделов переносятся при крупном системном шрифте,
+ * и заданные 84 dp срезали бы их: у «Устройства» и «Настройки» по две строки
+ * уже при шрифте 1.3, а нижнее меню на телефоне с крупным шрифтом должно
+ * оставаться в две строки, а не терять подписи.
  */
 @Composable
 private fun BottomBar(current: Tab, onSelect: (Tab) -> Unit) {
     Surface(
-        modifier = Modifier.fillMaxWidth().height(84.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 84.dp),
         color = MaterialTheme.colorScheme.surface,
     ) {
         Box {
