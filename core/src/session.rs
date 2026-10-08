@@ -734,9 +734,15 @@ mod tests {
     #[test]
     fn hello_с_подменёнными_возможностями_отвергается() {
         let a = DeviceKeys::generate();
-        let original =
-            build_hello(&a, &Профиль::new("телефон", "", ""), &caps(&["feature/v1"]), 7, 0, 0)
-                .expect("сборка");
+        let original = build_hello(
+            &a,
+            &Профиль::new("телефон", "", ""),
+            &caps(&["feature/v1"]),
+            7,
+            0,
+            0,
+        )
+        .expect("сборка");
 
         // Меняем набор возможностей в теле: подпись собрана по старому хэшу.
         let mut hello = Hello::decode(original.as_slice()).expect("разбор");
@@ -753,9 +759,15 @@ mod tests {
     #[test]
     fn hello_с_подменённым_nonce_отвергается() {
         let a = DeviceKeys::generate();
-        let original =
-            build_hello(&a, &Профиль::new("телефон", "", ""), &default_capabilities(), 7, 0, 0)
-                .expect("сборка");
+        let original = build_hello(
+            &a,
+            &Профиль::new("телефон", "", ""),
+            &default_capabilities(),
+            7,
+            0,
+            0,
+        )
+        .expect("сборка");
 
         let mut hello = Hello::decode(original.as_slice()).expect("разбор");
         hello.nonce = 8;
@@ -769,9 +781,15 @@ mod tests {
     #[test]
     fn hello_с_подменённым_именем_проходит_подпись_но_меняет_имя() {
         let a = DeviceKeys::generate();
-        let original =
-            build_hello(&a, &Профиль::new("телефон", "", ""), &default_capabilities(), 7, 0, 0)
-                .expect("сборка");
+        let original = build_hello(
+            &a,
+            &Профиль::new("телефон", "", ""),
+            &default_capabilities(),
+            7,
+            0,
+            0,
+        )
+        .expect("сборка");
 
         // Имя не входит в подпись: оно показывается пользователю и может быть
         // переименовано. Фиксируем поведение явно, чтобы изменение состава
@@ -824,9 +842,15 @@ mod tests {
     #[test]
     fn идентификатор_в_hello_совпадает_с_вычисленным() {
         let a = DeviceKeys::generate();
-        let body =
-            build_hello(&a, &Профиль::new("планшет", "", ""), &default_capabilities(), 3, 0, 0)
-                .expect("сборка");
+        let body = build_hello(
+            &a,
+            &Профиль::new("планшет", "", ""),
+            &default_capabilities(),
+            3,
+            0,
+            0,
+        )
+        .expect("сборка");
         let hello = parse_and_verify_hello(&body, &a).expect("проверка");
 
         let из_сообщения = hello.identity.expect("идентичность").device_id;

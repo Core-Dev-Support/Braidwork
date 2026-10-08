@@ -355,7 +355,11 @@ impl LanTransport {
     ) -> Result<Vec<u8>, TransportError> {
         let body = build_hello(
             &self.keys,
-            &crate::session::Профиль::new(&self.display_name, &self.platform, &self.device_kind),
+            &crate::session::Профиль::new(
+                &self.display_name,
+                &self.platform,
+                &self.device_kind,
+            ),
             &default_capabilities(),
             nonce,
             unix_time_ms,

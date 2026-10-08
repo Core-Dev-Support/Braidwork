@@ -858,7 +858,7 @@ mod tests {
             fingerprint: "AYZN D56Q WD2K TU3F".to_owned(),
             platform: "Android 13".to_owned(),
             core_version: "0.9.2".to_owned(),
-                  device_kind: "phone".to_owned(),
+            device_kind: "phone".to_owned(),
         };
 
         let (запись, тело) = в_c(&событие, 0);
@@ -912,7 +912,7 @@ mod tests {
             fingerprint: "ABCD EFGH IJKL MNOP".to_owned(),
             platform: "Android 13".to_owned(),
             core_version: "0.9.2".to_owned(),
-                  device_kind: "phone".to_owned(),
+            device_kind: "phone".to_owned(),
         };
         let (запись, тело) = в_c(&событие, 24);
 
@@ -1109,7 +1109,7 @@ mod tests {
             fingerprint: "ABCD EFGH IJKL MNOP".to_owned(),
             platform: "Android 13".to_owned(),
             core_version: "0.9.2".to_owned(),
-                  device_kind: "phone".to_owned(),
+            device_kind: "phone".to_owned(),
         };
         let (запись, _) = в_c(&событие, 0);
 
