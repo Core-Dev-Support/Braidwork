@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -261,14 +262,17 @@ private fun LiveButton(live: Boolean, onClick: () -> Unit, modifier: Modifier = 
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .height(56.dp),
+            // Минимум: «Начать трансляцию» переносится при крупном шрифте, и
+            // 56 dp её обрезали.
+            .heightIn(min = 56.dp),
         shape = RoundedCornerShape(28.dp),
         color = if (live) Color.White else MaterialTheme.colorScheme.primary,
         contentColor = if (live) Color(0xFFC42B2B) else Color.White,
     ) {
         Row(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp)
                 .tapNoRipple(onClick = onClick),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -129,7 +130,8 @@ private fun <T> ChoiceGroup(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp)
+                        // Минимум: та же причина, что и в строках ниже.
+                        .heightIn(min = 56.dp)
                         .tapNoRipple { onSelect(option) }
                         .padding(horizontal = 18.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -219,7 +221,7 @@ private fun PerfGroup(rows: List<SubRow>) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(if (row.sub.isEmpty()) 56.dp else 66.dp)
+                        .heightIn(min = if (row.sub.isEmpty()) 56.dp else 66.dp)
                         .padding(horizontal = 18.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {

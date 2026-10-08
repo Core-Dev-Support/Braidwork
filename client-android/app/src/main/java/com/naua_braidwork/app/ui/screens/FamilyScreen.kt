@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -202,14 +203,16 @@ private fun InviteButton(onClick: () -> Unit) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .height(52.dp),
+            // Минимум: надпись кнопки переносится при крупном системном шрифте.
+            .heightIn(min = 52.dp),
         shape = RoundedCornerShape(26.dp),
         color = MaterialTheme.colorScheme.primary,
         contentColor = MaterialTheme.colorScheme.onPrimary,
     ) {
         Row(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp)
                 .tapNoRipple(onClick = onClick),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
@@ -244,7 +247,9 @@ private fun MemberList(members: List<FamilyMember>) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(72.dp)
+                        // Минимум: в строке участника имя и роль, оба
+                        // переносятся при крупном системном шрифте.
+                        .heightIn(min = 72.dp)
                         .tapNoRipple { }
                         .padding(horizontal = 18.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,

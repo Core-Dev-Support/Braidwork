@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -211,7 +212,9 @@ private fun StepRow(step: Step) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(66.dp)
+            // Минимум: шаг сопряжения несёт заголовок и подпись, оба
+            // переносятся при крупном шрифте.
+            .heightIn(min = 66.dp)
             .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

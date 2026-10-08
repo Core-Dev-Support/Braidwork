@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -162,7 +163,9 @@ private fun BrandPills(
                 row.forEach { brand ->
                     val on = brand == selected
                     Surface(
-                        modifier = Modifier.height(44.dp),
+                        // Минимум: название фона переносится при крупном
+                        // шрифте, и 44 dp переставали его вмещать.
+                        modifier = Modifier.heightIn(min = 44.dp),
                         shape = RoundedCornerShape(22.dp),
                         color = if (on) {
                             MaterialTheme.colorScheme.primary
@@ -172,9 +175,10 @@ private fun BrandPills(
                     ) {
                         Box(
                             modifier = Modifier
-                                .height(44.dp)
+                                .fillMaxWidth()
+                                .heightIn(min = 44.dp)
                                 .tapNoRipple { onSelect(brand) }
-                                .padding(horizontal = 18.dp),
+                                .padding(horizontal = 18.dp, vertical = 8.dp),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
@@ -206,7 +210,9 @@ private fun StepRow(step: BrandStep) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(66.dp)
+            // Минимум: шаг несёт заголовок и подпись, оба переносятся при
+            // крупном шрифте.
+            .heightIn(min = 66.dp)
             .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

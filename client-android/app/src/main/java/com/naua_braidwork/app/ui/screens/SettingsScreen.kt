@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -181,7 +182,9 @@ private fun SettingsRowView(row: SettingsRow, onOpen: (String) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(64.dp)
+            // Минимум, а не высота: заголовок строки переносится при крупном
+            // системном шрифте, и фиксированные 64 dp срезали бы вторую строку.
+            .heightIn(min = 64.dp)
             .tapNoRipple { onOpen(row.id) }
             .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
