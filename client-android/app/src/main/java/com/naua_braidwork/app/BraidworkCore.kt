@@ -370,6 +370,23 @@ object BraidworkCore {
             val platform: String = "",
             /** Версия ядра напарника. Тоже без подписи и тоже может быть пустой. */
             val coreVersion: String = "",
+            /**
+             * Тип устройства напарника, каким он назвал себя сам.
+             *
+             * Объявлять обязан отправитель: получатель знает только адрес и
+             * четыре байта порта из пакета, и по ним тип соседа не
+             * восстановить — есть только правдоподобное враньё.
+             *
+             * **Пусто — обычное состояние**, а не поломка: ядро напарника старше
+             * этого поля, либо клиент не смог определить тип. Оба случая
+             * показываются как «неизвестно».
+             *
+             * Значение по умолчанию ставить нельзя. Ноутбук на карточке телефона
+             * выглядит правдоподобно настолько, что человек примет его за
+             * показание, — это ровно тот класс правды, которого здесь быть не
+             * должно.
+             */
+            val deviceKind: String = "",
         ) : TransportEvent() {
             // ByteArray в data class сравнивается по ссылке, а не по содержимому:
             // два одинаковых идентификатора выглядели бы разными. Список
@@ -378,12 +395,14 @@ object BraidworkCore {
                 other is Discovered && deviceId.contentEquals(other.deviceId) &&
                     port == other.port && name == other.name &&
                     ipv4.contentEquals(other.ipv4) && fingerprint == other.fingerprint &&
-                    platform == other.platform && coreVersion == other.coreVersion
+                    platform == other.platform && coreVersion == other.coreVersion &&
+                    deviceKind == other.deviceKind
 
             override fun hashCode() =
-                31 * ((31 * (31 * (31 * (31 * deviceId.contentHashCode() + port) * 31 +
+                31 * (31 * ((31 * (31 * (31 * (31 * deviceId.contentHashCode() + port) * 31 +
                     name.hashCode()) + ipv4.contentHashCode()) * 31 + fingerprint.hashCode()) * 31 +
-                    platform.hashCode()) * 31 + coreVersion.hashCode()
+                    platform.hashCode()) * 31 + coreVersion.hashCode()) * 31 +
+                    deviceKind.hashCode()
         }
 
         /** Пришло входящее соединение. Рукопожатие идёт, сверки ещё не было. */
@@ -462,6 +481,15 @@ object BraidworkCore {
      * правда, а не пробел. Подписью платформа не защищена, и сверить по ней
      * нечего.
      *
+     * [deviceKind] — тип устройства: `phone`, `tablet` или `laptop`. Объявляет
+     * отправитель, потому что получатель знает только адрес и четыре байта
+     * порта из пакета и по ним тип соседа не восстановить.
+     *
+     * Пустая строка законна и означает «не знаю». На карточке у соседа в этом
+     * случае будет «неизвестно» — и это правда. Значение по умолчанию здесь
+     * ставить нельзя: ноутбук на телефоне выглядит правдоподобно, и человек
+     * поверит ему.
+     *
      * При `STATUS_STORAGE` файл ключей нечитаем. Вызывающий обязан показать это
      * пользователю и не создавать новые ключи молча.
      */
@@ -469,6 +497,7 @@ object BraidworkCore {
         keysBlob: ByteArray,
         displayName: String,
         platform: String = "",
+        deviceKind: String = "",
         port: Int = 0,
     ): Long {
         require(keysBlob.size == PUBLIC_KEYS_BLOB_LEN) {
@@ -478,8 +507,9 @@ object BraidworkCore {
 
         val name = displayName.toByteArray(Charsets.UTF_8)
         val платформа = platform.toByteArray(Charsets.UTF_8)
+        val тип = deviceKind.toByteArray(Charsets.UTF_8)
         val handle = LongArray(1)
-        val status = nativeTransportStart(keysBlob, name, платформа, port, handle)
+        val status = nativeTransportStart(keysBlob, name, платформа, тип, port, handle)
         if (status != STATUS_OK) {
             throw BraidworkException(status, "не удалось поднять канал локальной сети")
         }
@@ -577,6 +607,10 @@ object BraidworkCore {
                         // останется прочеркивание, и это правда, а не пробел.
                         platform = объявление.getOrNull(2).orEmpty(),
                         coreVersion = объявление.getOrNull(3).orEmpty(),
+                        // Пятая часть — тип устройства. Её может не быть: у
+                        // напарника ядро старше этого поля, и тогда на карточке
+                        // будет «неизвестно».
+                        deviceKind = объявление.getOrNull(4).orEmpty(),
                         ipv4 = адреса.copyOfRange(i * 4, i * 4 + 4),
                     )
                 }
@@ -805,10 +839,26 @@ object BraidworkCore {
     private external fun nativeDeviceId(signingPublic: ByteArray, outId: ByteArray, outLen: IntArray): Int
     private external fun nativeVerifySignature(signingPublic: ByteArray, tape: ByteArray, signature: ByteArray): Int
 
+    /**
+     * Поднимает канал локальной сети.
+     *
+     * ## Порядок параметров жёсткий
+     *
+     * Имя функции JNI кодирует только имя, но не типы. Ошибка на один
+     * параметр здесь не даёт `UnsatisfiedLinkError`: приложение запустится, а
+     * нативный код прочитает не тот аргумент — указатель вместо длины или
+     * наоборот. Симптом будет «канал работает с чужим именем», и искать это
+     * придётся по косвенным признакам.
+     *
+     * Поэтому [transportStart] — единственное место, где параметры перечисляются
+     * поимённо, и менять их можно только вместе с
+     * `Java_…_nativeTransportStart` в `jni_bridge.rs`.
+     */
     private external fun nativeTransportStart(
         keysBlob: ByteArray,
         displayName: ByteArray,
         platform: ByteArray,
+        deviceKind: ByteArray,
         port: Int,
         outHandle: LongArray,
     ): Int

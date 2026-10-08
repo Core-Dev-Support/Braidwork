@@ -142,8 +142,9 @@ fn код_состояния(s: TransportState) -> u16 {
 ///
 /// # Safety
 /// `keys_blob` — указатель на `keys_len` байт файла ключей, `display_name` —
-/// на `name_len` байт UTF-8, `platform` — на `platform_len` байт UTF-8.
-/// Все три указателя валидны и не пересекаются.
+/// на `name_len` байт UTF-8, `platform` — на `platform_len` байт UTF-8,
+/// `device_kind` — на `device_kind_len` байт UTF-8.
+/// Четыре указателя валидны и не пересекаются.
 #[no_mangle]
 pub unsafe extern "C" fn fl_transport_lan_start(
     keys_blob: *const u8,
@@ -152,6 +153,8 @@ pub unsafe extern "C" fn fl_transport_lan_start(
     name_len: usize,
     platform: *const u8,
     platform_len: usize,
+    device_kind: *const u8,
+    device_kind_len: usize,
     port: u16,
     out_handle: *mut FlHandle,
 ) -> FlStatus {
@@ -180,9 +183,22 @@ pub unsafe extern "C" fn fl_transport_lan_start(
             }
         };
 
+        // Тип устройства — тоже от клиента и тоже может быть неизвестен: у ядра
+        // нет ни экрана, ни окна, и определить его можно только на стороне,
+        // которая видит своё окно. Пустая строка честно дойдёт до карточки как
+        // «неизвестно».
+        let тип_устройства = if device_kind.is_null() {
+            String::new()
+        } else {
+            match std::str::from_utf8(std::slice::from_raw_parts(device_kind, device_kind_len)) {
+                Ok(s) => s.to_owned(),
+                Err(_) => return FL_ERR_INVALID_ARG,
+            }
+        };
+
         match LanTransport::bind(keys, имя, платформа, port) {
             Ok(t) => {
-                *out_handle = реестр().insert(t);
+                *out_handle = реестр().insert(t.с_типом_устройства(&тип_устройства));
                 FL_OK
             }
             Err(_) => crate::FL_ERR_TRANSPORT,
@@ -292,6 +308,7 @@ fn в_c(событие: &TransportEvent, смещение: usize) -> (FlTransEve
             fingerprint,
             platform,
             core_version,
+            device_kind,
         } => {
             запись.event_type = FL_EV_DISCOVERED;
             запись.port = addr.port();
@@ -320,7 +337,12 @@ fn в_c(событие: &TransportEvent, смещение: usize) -> (FlTransEve
             // `пригодное_имя` выбрасывает управляющие символы, и нулевой байт не
             // исключение. Проверять его отсутствие отдельно не нужно.
             let mut блоб = String::with_capacity(
-                name.len() + fingerprint.len() + platform.len() + core_version.len() + 3,
+                name.len()
+                    + fingerprint.len()
+                    + platform.len()
+                    + core_version.len()
+                    + device_kind.len()
+                    + 4,
             );
             блоб.push_str(name);
             блоб.push('\0');
@@ -329,6 +351,11 @@ fn в_c(событие: &TransportEvent, смещение: usize) -> (FlTransEve
             блоб.push_str(platform);
             блоб.push('\0');
             блоб.push_str(core_version);
+            блоб.push('\0');
+            // Тип устройства — пятым. Пустым он тоже бывает: напарник старый и
+            // поля не прислал. Клиент читает пятую часть и показывает
+            // «неизвестно», а не подставляет ноутбук.
+            блоб.push_str(device_kind);
             запись.payload_off = смещение as u32;
             запись.payload_len = блоб.len() as u32;
             (запись, блоб.into_bytes())
@@ -599,6 +626,8 @@ mod tests {
             "Устройство".len(),
             ptr::null(),
             0,
+            ptr::null(),
+            0,
             0,
             &mut h,
         );
@@ -639,6 +668,8 @@ mod tests {
                 1,
                 ptr::null(),
                 0,
+                ptr::null(),
+                0,
                 0,
                 &mut h,
             )
@@ -657,6 +688,8 @@ mod tests {
                 blob.as_ptr(),
                 blob.len(),
                 "".as_ptr(),
+                0,
+                ptr::null(),
                 0,
                 ptr::null(),
                 0,
@@ -736,6 +769,8 @@ mod tests {
                     // неё законен, а проверяется нулевой указатель на хранилище.
                     std::ptr::null(),
                     0,
+                    std::ptr::null(),
+                    0,
                     0,
                     std::ptr::null_mut(),
                 )
@@ -747,6 +782,8 @@ mod tests {
                 fl_transport_lan_start(
                     blob.as_ptr(),
                     blob.len(),
+                    std::ptr::null(),
+                    0,
                     std::ptr::null(),
                     0,
                     std::ptr::null(),
@@ -776,11 +813,15 @@ mod tests {
                 fingerprint: "ABCD EFGH IJKL MNOP".to_owned(),
                 platform: "Android 13".to_owned(),
                 core_version: "0.9.2".to_owned(),
+                device_kind: "phone".to_owned(),
             };
             let (запись, тело) = в_c(&событие, 0);
+            // Пятая часть — тип устройства. Проверяется он здесь же: забыть
+            // дописать разделитель значит склеить версию с типом в одно
+            // поле, и клиент показал бы «0.9.2phone» вместо «телефон».
             assert_eq!(
                 тело,
-                "Устройство\x00ABCD EFGH IJKL MNOP\x00Android 13\x000.9.2".as_bytes()
+                "Устройство\x00ABCD EFGH IJKL MNOP\x00Android 13\x000.9.2\x00phone".as_bytes()
             );
             assert_eq!(запись.event_type, FL_EV_DISCOVERED);
             assert_eq!(запись.port, 42424);
@@ -817,6 +858,7 @@ mod tests {
             fingerprint: "AYZN D56Q WD2K TU3F".to_owned(),
             platform: "Android 13".to_owned(),
             core_version: "0.9.2".to_owned(),
+                  device_kind: "phone".to_owned(),
         };
 
         let (запись, тело) = в_c(&событие, 0);
@@ -833,20 +875,25 @@ mod tests {
 
         // Отпечаток из тела: клиент делит тело по нулевому байту.
         //
-        // Поля идут по порядку и жёстко: имя, отпечаток, платформа, версия.
-        // Порядок проверяется числом частей, а содержимое — по индексам, и
-        // перестановка полей местами сломала бы обе проверки.
+        // Поля идут по порядку и жёстко: имя, отпечаток, платформа, версия,
+        // тип устройства. Порядок проверяется числом частей, а содержимое — по
+        // индексам, и перестановка полей местами сломала бы обе проверки.
+        //
+        // Пятой части раньше не было. Число частей проверяется именно потому,
+        // что добавление поля без разделителя склеило бы версию с типом в одно
+        // значение, а клиент показал бы «0.9.2phone» вместо «телефон».
         let части: Vec<&[u8]> = тело.split(|b| *b == 0).collect();
         assert_eq!(
             части.len(),
-            4,
-            "ожидались имя, отпечаток, платформа и версия, получилось {}",
+            5,
+            "ожидались имя, отпечаток, платформа, версия и тип устройства, получилось {}",
             части.len()
         );
         let отпечаток = String::from_utf8_lossy(части[1]).into_owned();
         assert_eq!(отпечаток, "AYZN D56Q WD2K TU3F");
         assert_eq!(String::from_utf8_lossy(части[2]), "Android 13");
         assert_eq!(String::from_utf8_lossy(части[3]), "0.9.2");
+        assert_eq!(String::from_utf8_lossy(части[4]), "phone");
 
         // И главное: отпечаток — начало идентификатора.
         let слитно: String = отпечаток.chars().filter(|c| *c != ' ').collect();
@@ -865,12 +912,13 @@ mod tests {
             fingerprint: "ABCD EFGH IJKL MNOP".to_owned(),
             platform: "Android 13".to_owned(),
             core_version: "0.9.2".to_owned(),
+                  device_kind: "phone".to_owned(),
         };
         let (запись, тело) = в_c(&событие, 24);
 
         assert_eq!(
             тело,
-            "Redmi Note 12\x00ABCD EFGH IJKL MNOP\x00Android 13\x000.9.2".as_bytes()
+            "Redmi Note 12\x00ABCD EFGH IJKL MNOP\x00Android 13\x000.9.2\x00phone".as_bytes()
         );
         assert_eq!(запись.payload_off, 24, "смещение тела передаётся наружу");
         assert_eq!(запись.payload_len, тело.len() as u32);
@@ -1061,6 +1109,7 @@ mod tests {
             fingerprint: "ABCD EFGH IJKL MNOP".to_owned(),
             platform: "Android 13".to_owned(),
             core_version: "0.9.2".to_owned(),
+                  device_kind: "phone".to_owned(),
         };
         let (запись, _) = в_c(&событие, 0);
 

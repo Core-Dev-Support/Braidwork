@@ -339,6 +339,7 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTranspor
     blob: JByteArray<'local>,
     name: JByteArray<'local>,
     platform: JByteArray<'local>,
+    device_kind: JByteArray<'local>,
     port: jint,
     out_handle: JLongArray<'local>,
 ) -> jint {
@@ -353,6 +354,10 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTranspor
 
     let платформа = env.convert_byte_array(&platform).unwrap_or_default();
 
+    // Тип устройства — тоже от клиента, и он может быть неизвестен. Пустой массив
+    // честно доедет до объявления, и напарник покажет «неизвестно», а не ноутбук.
+    let тип_устройства = env.convert_byte_array(&device_kind).unwrap_or_default();
+
     let mut handle = FlHandle(0);
     let status = unsafe {
         fl_transport_lan_start(
@@ -362,6 +367,8 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTranspor
             имя.len(),
             платформа.as_ptr(),
             платформа.len(),
+            тип_устройства.as_ptr(),
+            тип_устройства.len(),
             port.clamp(0, u16::MAX as jint) as u16,
             &mut handle,
         )

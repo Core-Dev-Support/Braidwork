@@ -215,18 +215,52 @@ impl Session {
     }
 }
 
+/// То, что устройство рассказывает о себе словами.
+///
+/// Три отдельных аргумента рядом с ключами, однонаправленными числами и
+/// списком возможностей разъезжались: восьмым параметром миновали уже двое
+/// ([LanTransport::build_announcement] и рукопожатие), и узнать об этом можно
+/// было только компилятором. Собранные в одну структуру, они читаются как одно
+/// целое — «кто я» — и перестают путаться местами: три строки подряд одинакового
+/// типа легко переставить, не заметив.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Профиль {
+    /// Как устройство назвало себя.
+    pub имя: String,
+    /// Система, на которой оно работает. Пусто, если клиент не сказал.
+    pub платформа: String,
+    /// Тип устройства: `phone`, `tablet`, `laptop`. Пусто, если не сказано.
+    ///
+    /// Пустота здесь — законное значение, а не «не дописали». Получатель знает
+    /// только адрес и четыре байта порта из пакета, и восстановить из них
+    /// размер экрана соседа невозможно: объявлять обязан тот, кто видит своё
+    /// окно. Подставлять вместо пустоты ноутбук нельзя — это то же враньё, только
+    /// тише.
+    pub тип_устройства: String,
+}
+
+impl Профиль {
+    /// Профиль из трёх строк, готовый к отправке.
+    pub fn new(имя: &str, платформа: &str, тип_устройства: &str) -> Self {
+        Self {
+            имя: имя.to_owned(),
+            платформа: платформа.to_owned(),
+            тип_устройства: тип_устройства.to_owned(),
+        }
+    }
+}
+
 /// Собирает `Hello` от устройства.
 ///
 /// Подпись считается здесь же: собирать её на стороне вызова означало бы, что
 /// подписываемое и проверяемое однажды разойдутся.
 pub fn build_hello(
     keys: &DeviceKeys,
-    display_name: &str,
+    профиль: &Профиль,
     capabilities: &[String],
     nonce: u64,
     unix_time_ms: u64,
     lan_port: u16,
-    platform: &str,
 ) -> Result<Vec<u8>, SessionError> {
     let caps_hash = capabilities_hash(capabilities);
     let tape = keys.handshake_tape(&caps_hash, nonce);
@@ -241,7 +275,7 @@ pub fn build_hello(
             static_key: Some(StaticPublic {
                 key: prost::bytes::Bytes::copy_from_slice(&keys.static_public()),
             }),
-            display_name: display_name.to_owned(),
+            display_name: профиль.имя.clone(),
             protocol_version: crate::PROTOCOL_VERSION,
         }),
         capabilities: Some(CapabilitySet {
@@ -253,12 +287,14 @@ pub fn build_hello(
         // Ноль означает «данные не принимаю». В подписи порта нет: он не часть
         // личности, а просто адрес, по которому придут за данными.
         lan_port: lan_port as u32,
-        platform: platform.to_owned(),
+        platform: профиль.платформа.clone(),
         // Версию объявляет ядро, а не клиент. Ядро и поставляется внутри
         // приложения, поэтому версия crate и есть версия того, что на
         // устройстве. Клиент знает свою версию приложения — это другое число,
         // и выдавать его за версию ядра было бы враньём.
         core_version: env!("CARGO_PKG_VERSION").to_owned(),
+        // Тип объявляет клиент: у него есть экран, ввод и окно, у ядра — нет.
+        device_kind: профиль.тип_устройства.clone(),
     };
 
     Ok(hello.encode_to_vec())
@@ -566,12 +602,11 @@ mod tests {
         let a = DeviceKeys::generate();
         let body = build_hello(
             &a,
-            "телефон",
+            &Профиль::new("телефон", "Android 13", "phone"),
             &default_capabilities(),
             1,
             0,
             0,
-            "Android 13",
         )
         .expect("сборка");
         let hello = parse_and_verify_hello(&body, &a).expect("проверка");
@@ -587,6 +622,55 @@ mod tests {
         assert_eq!(
             identity.signing.as_ref().map(|s| s.key.as_ref()),
             Some(a.signing_public().as_slice())
+        );
+        assert_eq!(hello.device_kind, "phone");
+    }
+
+    /// Тип устройства доезжает в объявлении, а пустота остаётся пустотой.
+    ///
+    /// Проверяются оба конца: объявление «телефон» не должно превращаться в
+    /// «ноутбук» по дороге, и объявление старого напарника без этого поля должно
+    /// читаться как «не сказал», а не как «ноутбук».
+    ///
+    /// Второе важнее первого. Подставить вместо пустоты значение по умолчанию —
+    /// самый естественный и самый незаметный способ соврать: на экране появится
+    /// правдоподобный значок ноутбука на телефоне, и человек поверит ему.
+    #[test]
+    fn тип_устройства_доезжает_и_пустота_не_заполняется() {
+        let a = DeviceKeys::generate();
+
+        let с_типом = build_hello(
+            &a,
+            &Профиль::new("телефон", "Android 13", "phone"),
+            &default_capabilities(),
+            11,
+            0,
+            0,
+        )
+        .expect("сборка");
+        assert_eq!(
+            parse_and_verify_hello(&с_типом, &a)
+                .expect("проверка")
+                .device_kind,
+            "phone"
+        );
+
+        // Напарник старый: поля в его объявлении нет, и `proto3` оставляет поле
+        // пустым. Подставлять вместо этого ноутбук нельзя.
+        let без_типа = build_hello(
+            &a,
+            &Профиль::new("телефон", "Android 13", ""),
+            &default_capabilities(),
+            12,
+            0,
+            0,
+        )
+        .expect("сборка");
+        assert_eq!(
+            parse_and_verify_hello(&без_типа, &a)
+                .expect("проверка")
+                .device_kind,
+            ""
         );
     }
 
@@ -617,6 +701,7 @@ mod tests {
             lan_port: 0,
             platform: String::new(),
             core_version: String::new(),
+            device_kind: String::new(),
         };
 
         assert_eq!(
@@ -633,12 +718,11 @@ mod tests {
         // Ключ в сообщении не совпадает с объявленным при обнаружении.
         let body = build_hello(
             &другой,
-            "чужой",
+            &Профиль::new("чужой", "Android 12", ""),
             &default_capabilities(),
             1,
             0,
             0,
-            "Android 12",
         )
         .expect("сборка");
         assert_eq!(
@@ -651,7 +735,8 @@ mod tests {
     fn hello_с_подменёнными_возможностями_отвергается() {
         let a = DeviceKeys::generate();
         let original =
-            build_hello(&a, "телефон", &caps(&["feature/v1"]), 7, 0, 0, "").expect("сборка");
+            build_hello(&a, &Профиль::new("телефон", "", ""), &caps(&["feature/v1"]), 7, 0, 0)
+                .expect("сборка");
 
         // Меняем набор возможностей в теле: подпись собрана по старому хэшу.
         let mut hello = Hello::decode(original.as_slice()).expect("разбор");
@@ -669,7 +754,8 @@ mod tests {
     fn hello_с_подменённым_nonce_отвергается() {
         let a = DeviceKeys::generate();
         let original =
-            build_hello(&a, "телефон", &default_capabilities(), 7, 0, 0, "").expect("сборка");
+            build_hello(&a, &Профиль::new("телефон", "", ""), &default_capabilities(), 7, 0, 0)
+                .expect("сборка");
 
         let mut hello = Hello::decode(original.as_slice()).expect("разбор");
         hello.nonce = 8;
@@ -684,7 +770,8 @@ mod tests {
     fn hello_с_подменённым_именем_проходит_подпись_но_меняет_имя() {
         let a = DeviceKeys::generate();
         let original =
-            build_hello(&a, "телефон", &default_capabilities(), 7, 0, 0, "").expect("сборка");
+            build_hello(&a, &Профиль::new("телефон", "", ""), &default_capabilities(), 7, 0, 0)
+                .expect("сборка");
 
         // Имя не входит в подпись: оно показывается пользователю и может быть
         // переименовано. Фиксируем поведение явно, чтобы изменение состава
@@ -726,6 +813,7 @@ mod tests {
             lan_port: 0,
             platform: String::new(),
             core_version: String::new(),
+            device_kind: String::new(),
         };
         assert_eq!(
             parse_and_verify_hello(hello.encode_to_vec().as_slice(), &a).err(),
@@ -737,7 +825,8 @@ mod tests {
     fn идентификатор_в_hello_совпадает_с_вычисленным() {
         let a = DeviceKeys::generate();
         let body =
-            build_hello(&a, "планшет", &default_capabilities(), 3, 0, 0, "").expect("сборка");
+            build_hello(&a, &Профиль::new("планшет", "", ""), &default_capabilities(), 3, 0, 0)
+                .expect("сборка");
         let hello = parse_and_verify_hello(&body, &a).expect("проверка");
 
         let из_сообщения = hello.identity.expect("идентичность").device_id;

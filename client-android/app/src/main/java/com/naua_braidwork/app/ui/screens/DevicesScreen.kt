@@ -319,14 +319,19 @@ private fun DeviceCard(device: DeviceSummary, onClick: () -> Unit) {
                     )
                 }
             }
-            Icon(
-                imageVector = iconFor(device.kind),
-                contentDescription = null,
-                tint = if (device.online) foregroundOn(isDark) else Color(0xFF6C707B),
-                modifier = Modifier
-                    .size(44.dp)
-                    .alpha(if (device.online) 1f else 0.55f),
-            )
+            // Значка может не быть: тип неизвестен, и вместо него рисовать
+            // нечего. Место под значок остаётся, чтобы плитки в списке не
+            // прыгали по высоте в зависимости от того, знают ли соседи о себе.
+            iconFor(device.kind)?.let { значок ->
+                Icon(
+                    imageVector = значок,
+                    contentDescription = null,
+                    tint = if (device.online) foregroundOn(isDark) else Color(0xFF6C707B),
+                    modifier = Modifier
+                        .size(44.dp)
+                        .alpha(if (device.online) 1f else 0.55f),
+                )
+            }
         }
     }
 }
@@ -362,10 +367,21 @@ private fun statusLabel(device: DeviceSummary): String {
     return "На связи$заряд · $живость"
 }
 
-private fun iconFor(kind: DeviceKind): ImageVector = when (kind) {
+/**
+ * Значок типа устройства.
+ *
+ * Для неизвестного типа значка нет вовсе. Раньше на это место попадал ноутбук —
+ * и вот почему это плохо: значок устройства на плитке это утверждение, а не
+ * украшение. Ноутбук у телефона не «примерно похоже», а прямой ответ на вопрос,
+ * на который у нас нет данных, и выглядит он при этом совершенно убедительно.
+ *
+ * Пустой значок читается как «не знаю» и вопрос оставляет открытым.
+ */
+private fun iconFor(kind: DeviceKind): ImageVector? = when (kind) {
     DeviceKind.Phone -> IcwPhone
     DeviceKind.Tablet -> IcwTablet
     DeviceKind.Laptop, DeviceKind.Desktop -> IcwLaptop
+    DeviceKind.Неизвестно -> null
 }
 
 /** Пока нет устройств: объяснение и кнопка, а не пустая сетка. */

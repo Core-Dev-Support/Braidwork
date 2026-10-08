@@ -82,6 +82,16 @@ class DeviceDiscovery(
         val platform: String = "",
         /** Версия ядра напарника. Пусто у старого ядра. */
         val coreVersion: String = "",
+        /**
+         * Тип устройства напарника, каким он назвал себя сам.
+         *
+         * Пусто у старого ядра или когда клиент не смог определить тип. На
+         * карточке это читается как «неизвестно».
+         *
+         * Значение по умолчанию ставить нельзя: ноутбук на карточке телефона —
+         * правдоподобное враньё, которому человек поверит.
+         */
+        val deviceKind: String = "",
     ) {
         // `lastSeenMs` в сравнение не входит: он меняется при каждом объявлении,
         // и с ним устройство никогда не было бы «тем же самым». Список
@@ -95,12 +105,14 @@ class DeviceDiscovery(
                 fingerprint == other.fingerprint &&
                 platform == other.platform &&
                 coreVersion == other.coreVersion &&
+                deviceKind == other.deviceKind &&
                 connected == other.connected
 
         override fun hashCode(): Int =
-            31 * ((31 * (31 * (31 * (31 * (31 * deviceId.contentHashCode() + port) +
+            31 * (31 * ((31 * (31 * (31 * (31 * (31 * deviceId.contentHashCode() + port) +
                 name.hashCode()) + ipv4.contentHashCode()) * 31 + fingerprint.hashCode()) * 31 +
-                platform.hashCode()) * 31 + coreVersion.hashCode()) * 31 + connected.hashCode()
+                platform.hashCode()) * 31 + coreVersion.hashCode()) * 31 + deviceKind.hashCode()) *
+                31 + connected.hashCode()
     }
 
     /**
@@ -670,7 +682,9 @@ class DeviceDiscovery(
             // объявления, и при перезапуске сервиса произвольный порт уезжал,
             // подключение падало с «недоступно», а в журнале не было ни слова
             // о том, что у напарника просто другой порт.
-            val h = BraidworkCore.transportStart(blob, имя, платформа(), ПОРТ_ДАННЫХ)
+            val h = BraidworkCore.transportStart(
+                blob, имя, платформа(), типУстройства(), ПОРТ_ДАННЫХ,
+            )
             хэндл.set(h)
 
             val port = BraidworkCore.transportPort(h)
@@ -841,6 +855,10 @@ class DeviceDiscovery(
                         // целиком.
                         platform = событие.platform.ifEmpty { было?.platform.orEmpty() },
                         coreVersion = событие.coreVersion.ifEmpty { было?.coreVersion.orEmpty() },
+                        // Тип устройства — то же объявление, та же осторожность:
+                        // пустое новое значение не затирает прежнее, потому что
+                        // краткое объявление могло обрезаться целиком.
+                        deviceKind = событие.deviceKind.ifEmpty { было?.deviceKind.orEmpty() },
                         connected = подтверждено.contains(id.идентификатор()),
                         lastSeenMs = теперь,
                     )
@@ -1049,6 +1067,38 @@ class DeviceDiscovery(
         return "Android $релиз".take(48)
     }
 
+    /**
+     * Свой тип устройства для объявления.
+     *
+     * ## Почему объявляем мы, а не сосед
+     *
+     * Получатель видит адрес и четыре байта порта в UDP-пакете. Ни размер экрана
+     * соседа, ни наличие у него клавиатуры отсюда не восстанавливаются — есть
+     * только враньё, правдоподобное ровно настолько, чтобы человек ему поверил.
+     * Тип знает лишь тот, у кого есть своё окно, то есть мы.
+     *
+     * ## Откуда берётся
+     *
+     * `smallestScreenWidthDp` — наименьшая ширина экрана в dp, заданная
+     * устройством. Граница 600 dp официальная: ниже неё телефон, выше или
+     * равно — всё, что шире. На устройстве без ресурсов настройки значение
+     * равно нулю, и это честный ответ «не знаю».
+     *
+     * ## Что при неизвестном
+     *
+     * Пустая строка. На карточке у соседа будет «неизвестно», и это правда.
+     * Значение по умолчанию — ноутбук — обошлось бы правдоподобно, и человек
+     * принял бы значок за показание.
+     */
+    private fun типУстройства(): String {
+        val ширина = context.resources.configuration.smallestScreenWidthDp
+        return when {
+            ширина <= 0 -> ""
+            ширина >= ПОРОГ_ПЛАНШЕТА_DP -> "tablet"
+            else -> "phone"
+        }
+    }
+
     private companion object {
         const val TAG = "BraidworkDiscovery"
 
@@ -1061,6 +1111,15 @@ class DeviceDiscovery(
          */
         const val KIND_HEARTBEAT = 16
         const val KIND_CLIPBOARD_CONTENT = 34
+
+        /**
+         * Граница «телефон или планшет» в dp.
+         *
+         * Официальная граница Android: `smallestScreenWidthDp` от 600 означает
+         * всё, что шире телефона. Число стоит здесь, рядом с местом, где решается,
+         * чтобы не искать его потом по всему коду.
+         */
+        const val ПОРОГ_ПЛАНШЕТА_DP = 600
 
         /** Сколько шагов подключения хранить. Глубже бесполезно: событий столько же. */
         const val ГЛУБИНА_СЛЕДА = 8
