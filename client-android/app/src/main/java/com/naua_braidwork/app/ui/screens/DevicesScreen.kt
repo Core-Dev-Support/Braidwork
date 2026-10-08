@@ -1,6 +1,8 @@
 package com.naua_braidwork.app.ui.screens
 
+import com.naua_braidwork.app.ui.components.rememberПульс
 import com.naua_braidwork.app.ui.components.tapNoRipple
+import com.naua_braidwork.app.ui.theme.ширинаОкна
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -87,7 +90,16 @@ fun DevicesScreen(
             .fillMaxSize()
             .background(background),
     ) {
-        Column(modifier = Modifier.padding(horizontal = 24.dp)) {
+        // Поле от края и число колонок берутся у класса ширины окна.
+        //
+        // Раньше здесь стояли 24 dp и `GridCells.Fixed(2)` на любом экране. На
+        // планшете две колонки растягивали плитки вдвое, и карточка устройства
+        // переставала быть карточкой — это становилось полем с текстом на
+        // полэкрана. На очень узком окне, наоборот, вторая колонка оставляла
+        // подпись в две строки от слова «Телефон».
+        val поле = ширинаОкна.поле
+        val колонки = ширинаОкна.колонки
+        Column(modifier = Modifier.padding(horizontal = поле)) {
             Spacer(Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -126,7 +138,7 @@ fun DevicesScreen(
                     color = if (isDark) Color(0xFF3A2A24) else Color(0xFFFDEDE7),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 24.dp),
+                        .padding(horizontal = поле),
                 ) {
                     Text(
                         text = problem,
@@ -143,12 +155,12 @@ fun DevicesScreen(
         if (state.devices.isEmpty()) {
             // Плитки не рисуются, пока нет ни одного устройства: сетка из
             // пустых карточек выглядит поломкой, а не как начало работы.
-            EmptyDevicesHint(onAdd = onAdd, modifier = Modifier.padding(horizontal = 24.dp))
+            EmptyDevicesHint(onAdd = onAdd, modifier = Modifier.padding(horizontal = поле))
         } else {
             LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
+                columns = GridCells.Fixed(колонки),
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 4.dp),
+                contentPadding = PaddingValues(horizontal = поле, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -159,7 +171,7 @@ fun DevicesScreen(
         }
 
         Spacer(Modifier.height(12.dp))
-        DashedAddButton(onAdd = onAdd, isDark = isDark, modifier = Modifier.padding(horizontal = 24.dp))
+        DashedAddButton(onAdd = onAdd, isDark = isDark, modifier = Modifier.padding(horizontal = поле))
         Spacer(Modifier.height(12.dp))
     }
 }
@@ -233,14 +245,21 @@ private fun DeviceCard(device: DeviceSummary, onClick: () -> Unit) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .height(140.dp),
+            // Минимум, а не высота. Плитка содержит текст: имя, состояние и
+            // подпись с данными. При шрифте 1.3 три строки не влезали в 140 dp,
+            // и Compose срезал их сверху — имя исчезало, а состояние обрывалось
+            // на середине слова. Смысл плитки — эти строки, терять их нельзя.
+            .heightIn(min = 140.dp),
         shape = RoundedCornerShape(24.dp),
         color = if (isDark) Color(0xFF242830) else Color(0xFFFFFFFF),
         contentColor = foregroundOn(isDark),
     ) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                // Не `fillMaxSize`: высота плитки теперь растёт под текст, а
+                // `fillMaxSize` внутри `Surface` означал бы «занять всё
+                // доступное», то есть снова заданный размер вместо содержимого.
+                .fillMaxWidth()
                 .tapNoRipple(onClick = onClick)
                 .padding(16.dp),
             verticalArrangement = Arrangement.SpaceBetween,
@@ -254,6 +273,10 @@ private fun DeviceCard(device: DeviceSummary, onClick: () -> Unit) {
                 )
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Ритм считается один раз на плитку, а не в точке: иначе
+                    // каждая строка списка завела бы своё преимущество, и
+                    // несколько плиток били бы вразнобой.
+                    val ритм = rememberПульс()
                     // Точка на плитке читается так же, как на карточке: крупнее и
                     // ярче при свежих данных, тусклее когда они перестали
                     // приходить. Владелец просил видеть это прямо в списке, не
@@ -262,8 +285,17 @@ private fun DeviceCard(device: DeviceSummary, onClick: () -> Unit) {
                     Box(
                         modifier = Modifier
                             .size(8.dp)
+                            // Ритм нужен и здесь. Раньше точка в списке только
+                            // увеличивалась, и это выглядело как «статичный
+                            // размер», а не как пульс: владелец прямо сказал, что
+                            // пульса в плитке нет. Теперь обе точки бьют один
+                            // ритм из одного места — [rememberПульс].
                             .graphicsLayer {
-                                val основа = if (device.pulseFresh) 1.6f else 1f
+                                val основа = when {
+                                    !device.online -> 1f
+                                    !device.pulseFresh -> 1f
+                                    else -> 1.35f + ритм * 0.65f
+                                }
                                 scaleX = основа
                                 scaleY = основа
                             }
@@ -306,16 +338,28 @@ private fun DeviceCard(device: DeviceSummary, onClick: () -> Unit) {
  * сейчас, подписывалось «Офлайн». Это враньё: плитка стоит в списке «рядом», а
  * подпись говорит обратное. Теперь состояний три, и «Офлайн» достаётся только
  * тем, кто действительно молчит.
+ *
+ * ## Почему живость написана словами
+ *
+ * Владелец проверял на двух устройствах — с включёнными и с отключёнными
+ * анимациями — и не увидел пульса нигде. Точка в списке меняла оттенок, и этого
+ * не хватало: на восьми точках разница не читается глазом.
+ *
+ * Здесь точка остаётся как второстепенный знак, а смысл несёт текст. Человек
+ * видит «данные идут» или «нет данных» прямо в списке, не открывая карточку.
  */
-private fun statusLabel(device: DeviceSummary): String = when (device.presence) {
-    Presence.Nearby -> "Рядом, не подключено"
-    Presence.Online -> if (device.batteryPercent != null) {
-        "На связи · ${device.batteryPercent}%"
-    } else {
-        "На связи"
+private fun statusLabel(device: DeviceSummary): String {
+    if (device.presence != Presence.Online) {
+        return when (device.presence) {
+            Presence.Nearby -> "Рядом, не подключено"
+            else -> "Офлайн"
+        }
     }
-
-    Presence.Offline -> "Офлайн"
+    val заряд = device.batteryPercent?.let { " · $it %" }.orEmpty()
+    // Канал есть, а данных нет — это разные вещи, и сводить их к «На связи»
+    // нельзя: человек решил бы, что всё в порядке, и перестал бы смотреть.
+    val живость = if (device.pulseFresh) "данные идут" else "нет данных"
+    return "На связи$заряд · $живость"
 }
 
 private fun iconFor(kind: DeviceKind): ImageVector = when (kind) {
@@ -370,7 +414,9 @@ private fun DashedAddButton(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .height(60.dp),
+            // Минимум, а не высота: подпись «Добавить устройство» при шрифте
+            // 1.3 переставала помещаться и обрезалась.
+            .heightIn(min = 60.dp),
         shape = RoundedCornerShape(24.dp),
         color = Color.Transparent,
         border = BorderStroke(
@@ -380,7 +426,8 @@ private fun DashedAddButton(
     ) {
         Row(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp)
                 .tapNoRipple(onClick = onAdd),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,

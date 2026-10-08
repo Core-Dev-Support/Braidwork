@@ -1,6 +1,11 @@
 package com.naua_braidwork.app.ui.components
 
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.keyframes
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -48,6 +53,8 @@ import com.naua_braidwork.app.ui.state.RowEnd
 import com.naua_braidwork.app.ui.state.SubRow
 import com.naua_braidwork.app.ui.state.Tone
 import com.naua_braidwork.app.ui.theme.LocalBwColors
+import com.naua_braidwork.app.ui.theme.ширинаОкна
+import com.naua_braidwork.app.ui.theme.ширинаОкна
 
 /**
  * Элементы подэкранов настроек.
@@ -106,24 +113,30 @@ fun SubHeader(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Поле от края берётся у класса ширины окна, а не задано числом.
+    //
+    // Раньше здесь стояли 24 dp на любом экране. На узком окне в 360 dp это
+    // седьмая часть ширины, и заголовок начинался почти у самого края; на
+    // широком окне 24 dp — это щель, которую не выбрал бы ни один человек.
+    val поле = ширинаОкна.поле
     Column(modifier = modifier.fillMaxWidth()) {
         BackButton(onClick = onBack)
         Text(
             text = title,
             style = MaterialTheme.typography.displaySmall,
             color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.padding(start = 24.dp, top = 4.dp),
+            modifier = Modifier.padding(start = поле, top = 4.dp),
         )
         // Подпись ограничена по ширине. Длинная строка на узком отступе от края
         // читается как случайность, а в две строки — как мысль. Ограничение
         // задано в dp, а не в процентах: на широком экране одна и та же строка
-        // должна переноситься в том же месте, а не зависеть от ширины.
+        // должна переноситься в том же месте, а не зависеть от ширины окна.
         Text(
             text = subtitle,
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier
-                .padding(start = 24.dp, top = 4.dp)
+                .padding(start = поле, top = 4.dp)
                 .widthIn(max = SubtitleWidth),
         )
     }
@@ -160,6 +173,7 @@ fun BackButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
  */
 @Composable
 fun ColumnScope.SubBody(content: @Composable () -> Unit) {
+    val класс = ширинаОкна
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -172,10 +186,22 @@ fun ColumnScope.SubBody(content: @Composable () -> Unit) {
             // Функция — расширение `ColumnScope` именно ради этого веса: `weight`
             // доступен только внутри `Column`, иначе он падал бы в рантайме.
             .weight(1f)
+            // На широком окне строки текста не должны растягиваться на всю
+            // ширину: глаз не находит начало следующей строки. Ограничение
+            // ширины содержимого — единственное, что нужно на планшете и
+            // в окне рабочего стола.
+            .widthIn(max = класс.максШиринаСодержимого)
+            // По центру, а не слева. Иначе на планшете колонка уходила к левому
+            // краю, и справа оставалось пустое поле в половину экрана — выглядит
+            // как недоделанный макет, а не как замысел.
+            .align(Alignment.CenterHorizontally)
             .verticalScroll(rememberScrollState()),
     ) {
         content()
-        Spacer(Modifier.height(24.dp))
+        // Поле снизу берётся у класса ширины окна. На узком окне 24 dp — это
+        // седьмая часть высоты телефона, и системная навигация всё равно
+        // перекрывает край; на широком 24 dp — щель перед системной панелью.
+        Spacer(Modifier.height(класс.поле))
     }
 }
 
@@ -444,6 +470,49 @@ fun SettingRowView(
 }
 
 /**
+ * Ритм «тук-тук», значение 0…1.
+ *
+ * Одна функция на все пульсирующие точки, а не своя на каждый экран. Две копии
+ * этого разъехались бы при первом же изменении периода: на карточке ритм был бы
+ * один, а в списке другой, и человек решил бы, что они показывают разное.
+ * Именно так и вышло — в списке анимации не было вовсе, а на карточке была.
+ *
+ * ## Что здесь значит
+ *
+ * Ноль между ударами, два горба за цикл: сначала сильный, потом слабее. Именно
+ * эта пара отличает сердечный ритм от ровного дыхания, а ровное дыхание
+ * выглядит как «точка просто растёт» и так ничего не сообщает.
+ *
+ * ## Почему анимация не единственный признак
+ *
+ * Её можно выключить в системе, и у владельца она выключена. Поэтому состояние
+ * везде передаётся ещё и текстом: «данные идут» либо «нет данных».
+ */
+@Composable
+fun rememberПульс(): Float {
+    val переход = rememberInfiniteTransition(label = "пульс")
+    val удар by переход.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        // `keyframes` даёт конечную анимацию, а переход в `rememberInfiniteTransition`
+        // просит бесконечную: без обёртки сборка не проходит.
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 1400
+                0f at 0 using LinearOutSlowInEasing
+                0.45f at 90
+                0.10f at 260
+                0.38f at 350
+                0f at 560
+                0f at 1400
+            },
+        ),
+        label = "удар",
+    )
+    return удар
+}
+
+/**
  * Заголовок группы над карточкой. Пустое имя — группы без заголовка.
  *
  * Внутреннего отступа слева нет намеренно: в макете подпись группы стоит на
@@ -580,7 +649,14 @@ fun InfoBanner(
     }
 }
 
-/** Синяя кнопка во всю ширину: высота 56, радиус 28. */
+/**
+ * Синяя кнопка во всю ширину: высота 56, радиус 28.
+ *
+ * Высота — минимум, а не точное значение. При крупном системном шрифте
+ * текст в кнопке растёт, и фиксированные 56 dp его срезали бы: буквы
+ * обрезаны наполовину, а кнопка выглядит сломанной. `heightIn(min = …)`
+ * позволяет кнопке вырасти вместе с текстом.
+ */
 @Composable
 fun PrimaryButton(
     text: String,
@@ -591,7 +667,7 @@ fun PrimaryButton(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .height(56.dp),
+            .heightIn(min = 56.dp),
         shape = RoundedCornerShape(28.dp),
         color = MaterialTheme.colorScheme.primary,
         contentColor = MaterialTheme.colorScheme.onPrimary,
@@ -599,6 +675,7 @@ fun PrimaryButton(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp)
                 .tapNoRipple(onClick = onClick),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
@@ -607,7 +684,14 @@ fun PrimaryButton(
                 Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(10.dp))
             }
-            Text(text = text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                text = text,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -617,6 +701,9 @@ fun PrimaryButton(
  *
  * Есть в трёх местах — «Файлы», «Карточка устройства» и подобных. Вес задаёт
  * вызывающий: в ряду из двух кнопок они должны делить ширину поровну.
+ *
+ * Высота — минимум: при крупном шрифте текст растёт, и фиксированные 56 dp
+ * его срезали бы.
  */
 @Composable
 fun PillButton(
@@ -629,7 +716,7 @@ fun PillButton(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .height(56.dp),
+            .heightIn(min = 56.dp),
         shape = RoundedCornerShape(28.dp),
         color = if (filled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
         contentColor = if (filled) {
@@ -641,6 +728,10 @@ fun PillButton(
         Row(
             modifier = Modifier
                 .fillMaxSize()
+                // Вертикальное поле: кнопка выросла вместе со шрифтом, и без
+                // него текст упирался бы в края радиуса, где скругление его
+                // срезает.
+                .padding(horizontal = 14.dp, vertical = 10.dp)
                 .tapNoRipple(onClick = onClick),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
@@ -651,7 +742,12 @@ fun PillButton(
                 text = text,
                 fontSize = 16.sp,
                 fontWeight = if (filled) FontWeight.SemiBold else FontWeight.Medium,
-                maxLines = 1,
+                textAlign = TextAlign.Center,
+                // Две строки вместо одной. Ради этого кнопка и стала выше 56:
+                // раньше одна строка жёстко обрезалась, и человек видел половину
+                // подписи.
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
@@ -661,6 +757,9 @@ fun PillButton(
  * Переключатель-сегмент: два или три варианта в одной дорожке.
  *
  * Высота 48, радиус дорожки 24 и активной части 20, поля 4 — из макета.
+ *
+ * Высота — минимум: при крупном шрифте текст в сегменте растёт, и
+ * фиксированные 48 dp его срезали бы.
  */
 @Composable
 fun SegmentedTabs(
@@ -672,7 +771,7 @@ fun SegmentedTabs(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(48.dp)
+            .heightIn(min = 48.dp)
             .background(Color(0xFFE4E6EC), RoundedCornerShape(24.dp))
             .padding(4.dp),
     ) {
@@ -683,7 +782,10 @@ fun SegmentedTabs(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .height(40.dp)
+                        // Минимум, а не высота: при шрифте 1.3 подпись сегмента
+                        // («Недавнее») перестаёт помещаться в 40 dp и обрезается
+                        // сверху и снизу. Радиус активной части остаётся 20.
+                        .heightIn(min = 40.dp)
                         .background(
                             color = if (on) Color.White else Color.Transparent,
                             shape = RoundedCornerShape(20.dp),

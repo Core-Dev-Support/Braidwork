@@ -46,6 +46,7 @@ import com.naua_braidwork.app.ui.state.LinkMode
 import com.naua_braidwork.app.ui.state.MainState
 import com.naua_braidwork.app.ui.state.QuickAction
 import com.naua_braidwork.app.ui.theme.LocalBwColors
+import com.naua_braidwork.app.ui.theme.ширинаОкна
 
 /**
  * Главный экран по спецификации `design/spec/SPEC.txt`.
@@ -69,10 +70,17 @@ fun MainScreen(
     modifier: Modifier = Modifier,
 ) {
 
+    // Поле от края — у класса ширины окна, а не число.
+    //
+    // Раньше здесь везде стояло 24 dp. На окне в 360 dp это седьмая часть ширины,
+    // и на ширине планшета — щель, которую не выбрал бы человек. Решение одно
+    // на весь экран: расходиться по экранам не должна даже вёрстка.
+    val поле = ширинаОкна.поле
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = поле),
     ) {
         item {
             // Отступ сверху задаётся системной панелью: за статус-бар
@@ -80,7 +88,7 @@ fun MainScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 24.dp, end = 24.dp, top = 12.dp),
+                    .padding(start = поле, end = поле, top = 12.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Top,
             ) {
@@ -111,7 +119,7 @@ fun MainScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp),
+                    .padding(horizontal = поле),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
@@ -182,7 +190,7 @@ fun MainScreen(
 
         item {
             Gap(20.dp)
-            SectionTitle("Последняя активность", Modifier.padding(horizontal = 24.dp))
+            SectionTitle("Последняя активность", Modifier.padding(horizontal = поле))
             Spacer(Modifier.height(10.dp))
             if (state.activity.isEmpty()) {
                 // Пусто вместо выдуманных записей: экран показывают тестерам,
