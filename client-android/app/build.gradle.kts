@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -83,7 +85,7 @@ android {
                 ?: file("key.properties").takeIf { it.exists() }
 
             if (keyPropsFile != null && keyPropsFile.exists()) {
-                val props = java.util.Properties()
+                val props = Properties()
                 keyPropsFile.inputStream().use { props.load(it) }
                 val storePath = props.getProperty("storeFile", "app/braidwork-release.jks")
                 storeFile = rootProject.file(storePath).takeIf { it.exists() }
