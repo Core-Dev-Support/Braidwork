@@ -10,6 +10,8 @@ build/
 *.jks
 key.properties
 local.properties
+*keystore*.txt
+*-base64.txt
 
 # Сгенерированный protobuf-код: воспроизводится из схемы через build.rs
 OUT_DIR/

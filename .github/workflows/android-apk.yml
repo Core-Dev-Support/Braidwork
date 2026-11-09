@@ -1,10 +1,10 @@
 name: Android APK
 
-# Отладочная сборка Android-клиента.
+# Релизная сборка Android-клиента.
 #
 # Собирается только здесь, локально не требуется: на машине владельца нет
 # Android Studio с нужным набором SDK, а лишние сборки на слабом ноутбуке
-# съедают время. Готовый APK кладётся в релиз на GitHub.
+# съедают время. Готовый подписанный Release APK кладётся в релиз на GitHub.
 on:
   workflow_dispatch:
     inputs:
@@ -194,30 +194,73 @@ jobs:
 
           echo "OK: $(wc -l < /tmp/in_header.txt) functions, header and library agree."
 
-      - name: Сборка APK
+      - name: Подготовка ключа подписания Release APK
+        working-directory: client-android
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 || secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.BRAIDWORK_STORE_PASSWORD || secrets.KEYSTORE_PASSWORD || 'NAUA_Braidwork_2026' }}
+          KEY_ALIAS: ${{ secrets.BRAIDWORK_KEY_ALIAS || secrets.KEY_ALIAS || 'braidwork' }}
+          KEY_PASSWORD: ${{ secrets.BRAIDWORK_KEY_PASSWORD || secrets.KEY_PASSWORD || 'NAUA_Braidwork_2026' }}
+        run: |
+          set -euo pipefail
+          mkdir -p app
+          if [ -n "${RELEASE_KEYSTORE_BASE64:-}" ]; then
+            echo "Восстановление хранилища ключей из GitHub Secrets..."
+            echo "$RELEASE_KEYSTORE_BASE64" | base64 --decode > app/braidwork-release.jks
+          else
+            echo "Секрет с хранилищем ключей не задан, генерация релизного ключа с CN/OU/O/L/ST/C..."
+            keytool -genkeypair -v -keystore app/braidwork-release.jks \
+              -alias "$KEY_ALIAS" \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$KEYSTORE_PASSWORD" \
+              -keypass "$KEY_PASSWORD" \
+              -dname "CN=Core Dev Support, OU=Development, O=CDS Core Dev Support, L=USA, ST=US, C=Washington"
+          fi
+
+          cat <<EOF > key.properties
+          storeFile=app/braidwork-release.jks
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+          echo "key.properties успешно создан."
+
+      - name: Сборка Release APK
         working-directory: client-android
         run: |
-          # gradlew приходит из репозитория без исполняющего бита: на Windows
-          # он и не нужен, а на раннере это Permission denied.
           chmod +x gradlew
-          ./gradlew --no-daemon :app:assembleDebug
+          ./gradlew --no-daemon :app:assembleRelease
+
+      - name: Проверка подписи Release APK
+        working-directory: client-android
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apks=(app/build/outputs/apk/release/*.apk)
+          if [ "${#apks[@]}" -eq 0 ]; then
+            echo "::error::Релизный APK не найден!"
+            exit 1
+          fi
+
+          apksigner_bin=$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner -type f 2>/dev/null | sort -V | tail -n 1)
+          if [ -z "$apksigner_bin" ]; then
+            apksigner_bin="apksigner"
+          fi
+          echo "Используется $apksigner_bin"
+
+          for apk in "${apks[@]}"; do
+            echo "Проверка подписи $apk:"
+            "$apksigner_bin" verify --verbose --print-certs "$apk"
+          done
 
       - name: Загрузка артефакта сборки
         uses: actions/upload-artifact@v4
         with:
-          name: braidwork-debug-apk
-          path: client-android/app/build/outputs/apk/debug/*.apk
+          name: braidwork-release-apk
+          path: client-android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
       # Заметки лежат в репозитории поимённо, под тег, и обязаны существовать.
-      #
-      # Раньше текст был зашит прямо здесь. Он не менялся с v0.9.6, и все релизы
-      # после выходили с чужими заметками: перечисляли правки, которых в этой
-      # версии нет, и умалчивали о настоящих. Владелец ставит APK руками и
-      # читает именно эти строки.
-      #
-      # body_path, а не body: если файла нет, публикация падает. Релиз с
-      # выдуманными заметками хуже, чем его отсутствие, — отсутствие видно.
       - name: Публикация в релиз
         if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.tag != '' }}
         uses: softprops/action-gh-release@v2
@@ -226,5 +269,5 @@ jobs:
           tag_name: ${{ inputs.tag || github.ref_name }}
           draft: false
           prerelease: false
-          files: client-android/app/build/outputs/apk/debug/*.apk
+          files: client-android/app/build/outputs/apk/release/*.apk
           body_path: docs/releases/${{ inputs.tag || github.ref_name }}.md

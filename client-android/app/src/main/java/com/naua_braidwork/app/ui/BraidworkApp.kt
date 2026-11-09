@@ -505,7 +505,8 @@ private fun BottomBar(current: Tab, onSelect: (Tab) -> Unit) {
             )
             Row(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
+                    .align(Alignment.Center)
                     .padding(horizontal = 6.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
@@ -538,7 +539,7 @@ private fun BottomBar(current: Tab, onSelect: (Tab) -> Unit) {
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             },
                             textAlign = TextAlign.Center,
-                            maxLines = 1,
+                            maxLines = 2,
                         )
                     }
                 }

@@ -76,6 +76,50 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            val keyPropsFile = rootProject.file("key.properties").takeIf { it.exists() }
+                ?: rootProject.file("keystore.properties").takeIf { it.exists() }
+                ?: file("key.properties").takeIf { it.exists() }
+
+            if (keyPropsFile != null && keyPropsFile.exists()) {
+                val props = java.util.Properties()
+                keyPropsFile.inputStream().use { props.load(it) }
+                val storePath = props.getProperty("storeFile", "app/braidwork-release.jks")
+                storeFile = rootProject.file(storePath).takeIf { it.exists() }
+                    ?: file(storePath).takeIf { it.exists() }
+                    ?: rootProject.file("app/braidwork-release.jks")
+                storePassword = props.getProperty("storePassword", "")
+                keyAlias = props.getProperty("keyAlias", "braidwork")
+                keyPassword = props.getProperty("keyPassword", storePassword)
+            } else {
+                val storePath = project.findProperty("BRAIDWORK_STORE_FILE") as String?
+                    ?: System.getenv("BRAIDWORK_STORE_FILE")
+                    ?: "app/braidwork-release.jks"
+                storeFile = rootProject.file(storePath).takeIf { it.exists() }
+                    ?: file(storePath).takeIf { it.exists() }
+                    ?: rootProject.file("braidwork-release.jks").takeIf { it.exists() }
+                    ?: file("braidwork-release.jks")
+                storePassword = project.findProperty("BRAIDWORK_STORE_PASSWORD") as String?
+                    ?: System.getenv("BRAIDWORK_STORE_PASSWORD")
+                    ?: System.getenv("KEYSTORE_PASSWORD")
+                    ?: ""
+                keyAlias = project.findProperty("BRAIDWORK_KEY_ALIAS") as String?
+                    ?: System.getenv("BRAIDWORK_KEY_ALIAS")
+                    ?: System.getenv("KEY_ALIAS")
+                    ?: "braidwork"
+                keyPassword = project.findProperty("BRAIDWORK_KEY_PASSWORD") as String?
+                    ?: System.getenv("BRAIDWORK_KEY_PASSWORD")
+                    ?: System.getenv("KEY_PASSWORD")
+                    ?: storePassword
+            }
+
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -84,6 +128,10 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            val releaseConfig = signingConfigs.getByName("release")
+            if (releaseConfig.storeFile?.exists() == true) {
+                signingConfig = releaseConfig
+            }
         }
         debug {
             // Отладочная сборка подключается к ядру напрямую, минуя JNI-прокладку,
