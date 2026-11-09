@@ -1,6 +1,9 @@
 package com.naua_braidwork.app
 
 import android.content.ClipData
+import android.os.Handler
+import android.os.Looper
+import android.widget.Toast
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
@@ -283,10 +286,16 @@ class DeviceDiscovery(
         return try {
             BraidworkCore.transportSend(h, conn, кадр)
             записать("буфер отправлен: ${текст.кратко()} (${текст.length} символов)")
+            mainHandler.post {
+                Toast.makeText(context, "Буфер отправлен (${текст.length} симв.)", Toast.LENGTH_SHORT).show()
+            }
             null
         } catch (e: BraidworkException) {
             val причина = e.message
             записать("буфер не отправлен: $причина")
+            mainHandler.post {
+                Toast.makeText(context, "Ошибка отправки буфера: $причина", Toast.LENGTH_SHORT).show()
+            }
             причина
         }
     }
@@ -295,8 +304,13 @@ class DeviceDiscovery(
     private fun разобратьКадр(
         кадр: BraidworkCore.TransportEvent.Frame,
         соединения: Map<Long, String>,
+        прежние: MutableMap<String, Device>,
     ) {
         val кто = соединения[кадр.conn] ?: "неизвестное устройство"
+        прежние[кто]?.let {
+            прежние[кто] = it.copy(lastSeenMs = System.currentTimeMillis())
+        }
+        замолчавшие.remove(кто)
 
         when (кадр.kind) {
             KIND_HEARTBEAT -> {
@@ -396,19 +410,19 @@ class DeviceDiscovery(
      * бы действие в «положить и hope, что он увидит».
      */
     private fun вставитьВБуфер(текст: String, кто: String) {
-        val менеджер = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-        if (менеджер == null) {
-            записать("от $кто: буфер обмена недоступен, текст только в журнале")
-            return
-        }
-        try {
-            менеджер.setPrimaryClip(ClipData.newPlainText("Braidwork", текст))
-            записать("буфер обмена перезаписан текстом от $кто")
-        } catch (e: RuntimeException) {
-            // Система может отказать, и это не должно ронять связь: отказ в
-            // вставке — это не обрыв канала. Причина пишется, потому что
-            // молчаливое «ничего не произошло» хуже отказа с текстом.
-            записать("буфер обмена не обновлён: ${e.message}")
+        mainHandler.post {
+            val менеджер = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            if (менеджер == null) {
+                записать("от $кто: буфер обмена недоступен, текст только в журнале")
+                return@post
+            }
+            try {
+                менеджер.setPrimaryClip(ClipData.newPlainText("Braidwork", текст))
+                записать("буфер обмена перезаписан текстом от $кто")
+                Toast.makeText(context, "Скопировано с $кто: ${текст.кратко()}", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                записать("буфер обмена не обновлён: ${e.message}")
+            }
         }
     }
 
@@ -742,6 +756,8 @@ class DeviceDiscovery(
 
     /** Что прислал каждый сосед последним сердцебиением. */
     private val пульсы = java.util.concurrent.ConcurrentHashMap<String, PeerPulse>()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val замолчавшие = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     /**
      * Есть ли хоть одно подтверждённое соединение.
@@ -862,6 +878,7 @@ class DeviceDiscovery(
                         connected = подтверждено.contains(id.идентификатор()),
                         lastSeenMs = теперь,
                     )
+                    замолчавшие.remove(id.идентификатор())
                     if (!живой) {
                         живой = true
                         проблема = ""
@@ -909,17 +926,18 @@ class DeviceDiscovery(
 
                 is BraidworkCore.TransportEvent.Closed -> {
                     val id = соединения.remove(событие.conn)
-                    // Обратная карта чистится вместе с прямой. Оставленный там
-                    // хэндл отправлял бы в закрытое соединение: отправка молча
-                    // уходила бы в никуда, а журнал показывал бы «нет соединения»
-                    // только на следующем нажатии.
-                    id?.let { connУстройства.remove(it) }
-                    // Пульс соседа тоже забывается вместе с соединением: оставить
-                    // его значило бы показывать заряд устройства, с которым связи
-                    // уже нет.
-                    id?.let { пульсы.remove(it) }
-                    id?.let { подтверждено.remove(it) }
                     отправленоСердцебие.remove(событие.conn)
+                    if (id != null) {
+                        val другоеConn = соединения.entries.firstOrNull { it.value == id }?.key
+                        if (другоеConn != null) {
+                            connУстройства[id] = другоеConn
+                        } else {
+                            connУстройства.remove(id)
+                            пульсы.remove(id)
+                            подтверждено.remove(id)
+                            замолчавшие.remove(id)
+                        }
+                    }
                     if (id == null) {
                         // Соединение, которое так и не сопоставили. Причину всё
                         // равно показываем: она объясняет, что произошло, даже
@@ -952,7 +970,7 @@ class DeviceDiscovery(
                 // канал поднимался, оставался пустым, и по журналу нельзя было
                 // сказать, дошло ли что-нибудь.
                 is BraidworkCore.TransportEvent.Frame ->
-                    разобратьКадр(событие, соединения)
+                    разобратьКадр(событие, соединения, прежние)
 
                 else -> Unit
             }
@@ -991,15 +1009,21 @@ class DeviceDiscovery(
         for (пропавший in прежние.values) {
             val id = пропавший.deviceId.идентификатор()
             if (теперь - пропавший.lastSeenMs >= исчезает_через_мс) {
-                val жил = подтверждено.contains(id)
-                записать(
-                    "$id замолчал на ${(теперь - пропавший.lastSeenMs) / 1000} с" +
-                        if (жил) {
-                            ", соединение ещё живо, карточка остаётся"
-                        } else {
-                            ", устройство убрано из списка"
-                        }
-                )
+                if (замолчавшие.add(id)) {
+                    val жил = подтверждено.contains(id)
+                    записать(
+                        "$id замолчал" +
+                            if (жил) {
+                                ", соединение ещё живо, карточка остаётся"
+                            } else {
+                                ", устройство убрано из списка"
+                            }
+                    )
+                }
+            } else {
+                if (замолчавшие.remove(id)) {
+                    записать("$id снова на связи")
+                }
             }
         }
 
