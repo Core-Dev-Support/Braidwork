@@ -1,11 +1,5 @@
 package com.naua_braidwork.app.ui.components
 
-import androidx.compose.animation.core.LinearOutSlowInEasing
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.keyframes
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -30,9 +24,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import android.os.SystemClock
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameMillis
+import kotlinx.coroutines.isActive
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -219,10 +220,28 @@ fun BwSwitch(
     modifier: Modifier = Modifier,
 ) {
     val bw = LocalBwColors.current
-    val knobOffset by animateDpAsState(
-        targetValue = if (checked) 22.dp else 2.dp,
-        label = "knob",
-    )
+    val targetOffset = if (checked) 22.dp else 2.dp
+    var knobOffset by remember { mutableStateOf(targetOffset) }
+
+    LaunchedEffect(checked) {
+        val startOffset = knobOffset.value
+        val endOffset = targetOffset.value
+        if (startOffset == endOffset) return@LaunchedEffect
+        val durationMs = 180L
+        val start = SystemClock.uptimeMillis()
+        while (isActive) {
+            var finished = false
+            withFrameMillis { now ->
+                val progress = ((now - start).toFloat() / durationMs).coerceIn(0f, 1f)
+                val ease = 1f - (1f - progress) * (1f - progress)
+                knobOffset = (startOffset + (endOffset - startOffset) * ease).dp
+                if (progress >= 1f) finished = true
+            }
+            if (finished) break
+        }
+        knobOffset = targetOffset
+    }
+
     Box(
         modifier = modifier
             .size(width = 52.dp, height = 32.dp)
@@ -488,27 +507,33 @@ fun SettingRowView(
  * Её можно выключить в системе, и у владельца она выключена. Поэтому состояние
  * везде передаётся ещё и текстом: «данные идут» либо «нет данных».
  */
+/**
+ * Текущая сила удара сердца от 0 до 1.
+ *
+ * Работает напрямую через [withFrameMillis] (Choreographer) по времени uptime,
+ * поэтому плавно пульсирует независимо от того, включены ли системные анимации
+ * в настройках разработчика Android (animator_duration_scale) или выключены.
+ *
+ * Ноль между ударами, два горба за цикл (1400 мс): сначала сильный, потом слабее.
+ */
 @Composable
 fun rememberПульс(): Float {
-    val переход = rememberInfiniteTransition(label = "пульс")
-    val удар by переход.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        // `keyframes` даёт конечную анимацию, а переход в `rememberInfiniteTransition`
-        // просит бесконечную: без обёртки сборка не проходит.
-        animationSpec = infiniteRepeatable(
-            animation = keyframes {
-                durationMillis = 1400
-                0f at 0 using LinearOutSlowInEasing
-                0.45f at 90
-                0.10f at 260
-                0.38f at 350
-                0f at 560
-                0f at 1400
-            },
-        ),
-        label = "удар",
-    )
+    var удар by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(Unit) {
+        val start = SystemClock.uptimeMillis()
+        while (isActive) {
+            withFrameMillis { now ->
+                val elapsed = (now - start) % 1400L
+                удар = when {
+                    elapsed < 90L -> (elapsed / 90f) * 0.45f
+                    elapsed < 260L -> 0.45f - ((elapsed - 90L) / 170f) * (0.45f - 0.10f)
+                    elapsed < 350L -> 0.10f + ((elapsed - 260L) / 90f) * (0.38f - 0.10f)
+                    elapsed < 560L -> 0.38f - ((elapsed - 350L) / 210f) * 0.38f
+                    else -> 0f
+                }
+            }
+        }
+    }
     return удар
 }
 
