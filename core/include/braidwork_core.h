@@ -221,6 +221,10 @@ fl_status fl_keys_fingerprint(const uint8_t *blob, size_t blob_len,
  * ошибки сборки, а тихо обрезанный кадр или текст. */
 #define FL_HEARTBEAT_FRAME_MAX 256u
 #define FL_CLIPBOARD_MAX 65536u
+#define FL_FILE_BLOCK_MAX (256u * 1024u)
+#define FL_FILE_BLOCK_FRAME_MAX (FL_FILE_BLOCK_MAX + 1024u)
+#define FL_FILE_OFFER_FRAME_MAX 4096u
+#define FL_HASH_LEN 32u
 
 /* Собирает кадр Heartbeat — первое, что уходит по установленному каналу.
  * Несёт настоящие значения: время, заряд, зарядку. measured_kbps остаётся
@@ -260,6 +264,50 @@ fl_status fl_clipboard_build(const uint8_t *content, size_t content_len,
 fl_status fl_clipboard_read(const uint8_t *body, size_t body_len,
                             uint8_t *out_content, size_t content_cap, size_t *out_content_len,
                             uint8_t *out_mime, size_t mime_cap, size_t *out_mime_len);
+
+/* Вычисляет хэш BLAKE3 (32 байта) от переданных данных data_len. */
+fl_status fl_blake3_hash(const uint8_t *data, size_t data_len, uint8_t *out_hash);
+
+/* Поточный инкрементальный расчёт хэша BLAKE3 для больших файлов без расхода памяти. */
+fl_status fl_blake3_hasher_create(uint64_t *out_handle);
+fl_status fl_blake3_hasher_update(uint64_t handle, const uint8_t *data, size_t data_len);
+fl_status fl_blake3_hasher_finalize(uint64_t handle, uint8_t *out_hash);
+fl_status fl_blake3_hasher_free(uint64_t handle);
+
+/* Собирает кадр FileOffer (предложение передачи файла).
+ * transfer_id — до 64 байт идентификатора передачи.
+ * file_name — UTF-8 имя файла (без путей), длины file_name_len.
+ * total_size — общий размер файла в байтах.
+ * total_hash — 32 байта хэша BLAKE3 всего файла.
+ * out_data — не менее FL_FILE_OFFER_FRAME_MAX байт. Длина кадра в out_len. */
+fl_status fl_file_offer_build(const uint8_t *transfer_id, size_t transfer_id_len,
+                             const uint8_t *file_name, size_t file_name_len,
+                             uint64_t total_size,
+                             const uint8_t *total_hash, size_t total_hash_len,
+                             uint8_t *out_data, size_t *out_len);
+
+/* Разбирает тело FileOffer. */
+fl_status fl_file_offer_read(const uint8_t *body, size_t body_len,
+                            uint8_t *out_transfer_id, size_t transfer_id_cap, size_t *out_transfer_id_len,
+                            uint8_t *out_file_name, size_t file_name_cap, size_t *out_file_name_len,
+                            uint64_t *out_total_size,
+                            uint8_t *out_total_hash, size_t total_hash_cap, size_t *out_total_hash_len);
+
+/* Собирает кадр FileBlock (блок файла с автоматическим подсчётом BLAKE3-хэша блока).
+ * data — данные блока размером data_len (до FL_FILE_BLOCK_MAX).
+ * out_data — не менее FL_FILE_BLOCK_FRAME_MAX байт. Длина кадра в out_len. */
+fl_status fl_file_block_build(const uint8_t *transfer_id, size_t transfer_id_len,
+                             uint64_t offset,
+                             const uint8_t *data, size_t data_len,
+                             uint8_t *out_data, size_t *out_len);
+
+/* Разбирает тело FileBlock.
+ * Проверяет целостность: вычисляет BLAKE3 от принятых данных и сравнивает с block_hash.
+ * При несовпадении возвращает FL_ERR_CRYPTO. */
+fl_status fl_file_block_read(const uint8_t *body, size_t body_len,
+                            uint8_t *out_transfer_id, size_t transfer_id_cap, size_t *out_transfer_id_len,
+                            uint64_t *out_offset,
+                            uint8_t *out_data, size_t data_cap, size_t *out_data_len);
 
 fl_status fl_keys_device_id(const uint8_t *blob, size_t blob_len,
                             uint8_t *out_id, size_t *out_len);

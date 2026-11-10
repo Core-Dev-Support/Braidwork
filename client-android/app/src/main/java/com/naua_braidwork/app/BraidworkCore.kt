@@ -65,6 +65,18 @@ object BraidworkCore {
     /** Предел содержимого буфера обмена. Обязан совпадать с `FL_CLIPBOARD_MAX`. */
     const val CLIPBOARD_MAX = 65536
 
+    /** Предел размера блока файла — 256 КиБ по PROTOCOL.md. */
+    const val FILE_BLOCK_MAX = 256 * 1024
+
+    /** Буфер под кадр блока файла. */
+    const val FILE_BLOCK_FRAME_MAX = FILE_BLOCK_MAX + 1024
+
+    /** Буфер под кадр предложения файла. */
+    const val FILE_OFFER_FRAME_MAX = 4096
+
+    /** Длина хэша BLAKE3. */
+    const val HASH_LEN = 32
+
     /**
      * Буфер под тип содержимого, например `text/plain`.
      *
@@ -787,6 +799,169 @@ object BraidworkCore {
             String(mime, 0, mimeLen[0], Charsets.UTF_8)
     }
 
+    data class FileOfferData(
+        val transferId: ByteArray,
+        val fileName: String,
+        val totalSize: Long,
+        val totalHash: ByteArray,
+    ) {
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is FileOfferData) return false
+            return transferId.contentEquals(other.transferId) &&
+                fileName == other.fileName &&
+                totalSize == other.totalSize &&
+                totalHash.contentEquals(other.totalHash)
+        }
+
+        override fun hashCode(): Int {
+            var result = transferId.contentHashCode()
+            result = 31 * result + fileName.hashCode()
+            result = 31 * result + totalSize.hashCode()
+            result = 31 * result + totalHash.contentHashCode()
+            return result
+        }
+    }
+
+    data class FileBlockData(
+        val transferId: ByteArray,
+        val offset: Long,
+        val data: ByteArray,
+    ) {
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is FileBlockData) return false
+            return transferId.contentEquals(other.transferId) &&
+                offset == other.offset &&
+                data.contentEquals(other.data)
+        }
+
+        override fun hashCode(): Int {
+            var result = transferId.contentHashCode()
+            result = 31 * result + offset.hashCode()
+            result = 31 * result + data.contentHashCode()
+            return result
+        }
+    }
+
+    /** Собирает кадр `FileOffer`. */
+    fun fileOfferFrame(
+        transferId: ByteArray,
+        fileName: String,
+        totalSize: Long,
+        totalHash: ByteArray,
+    ): ByteArray {
+        ensureLoaded()
+        val out = ByteArray(FILE_OFFER_FRAME_MAX)
+        val len = IntArray(1)
+        val status = nativeFileOfferBuild(transferId, fileName, totalSize, totalHash, out, len)
+        if (status != STATUS_OK) {
+            throw BraidworkException(status, "не удалось собрать кадр предложения файла")
+        }
+        return out.copyOf(len[0])
+    }
+
+    /** Разбирает тело `FileOffer`. */
+    fun readFileOffer(body: ByteArray): FileOfferData? {
+        ensureLoaded()
+        val tid = ByteArray(64)
+        val tidLen = IntArray(1)
+        val name = ByteArray(1024)
+        val nameLen = IntArray(1)
+        val size = LongArray(1)
+        val hash = ByteArray(HASH_LEN)
+        val hashLen = IntArray(1)
+
+        val status = nativeFileOfferRead(body, tid, tidLen, name, nameLen, size, hash, hashLen)
+        if (status != STATUS_OK) return null
+        return FileOfferData(
+            transferId = tid.copyOf(tidLen[0]),
+            fileName = String(name, 0, nameLen[0], Charsets.UTF_8),
+            totalSize = size[0],
+            totalHash = hash.copyOf(hashLen[0]),
+        )
+    }
+
+    /** Собирает кадр `FileBlock`. */
+    fun fileBlockFrame(
+        transferId: ByteArray,
+        offset: Long,
+        data: ByteArray,
+    ): ByteArray {
+        ensureLoaded()
+        val out = ByteArray(FILE_BLOCK_FRAME_MAX)
+        val len = IntArray(1)
+        val status = nativeFileBlockBuild(transferId, offset, data, out, len)
+        if (status != STATUS_OK) {
+            throw BraidworkException(status, "не удалось собрать кадр блока файла")
+        }
+        return out.copyOf(len[0])
+    }
+
+    /** Разбирает тело `FileBlock`, сверяя контрольную сумму блока. */
+    fun readFileBlock(body: ByteArray): FileBlockData? {
+        ensureLoaded()
+        val tid = ByteArray(64)
+        val tidLen = IntArray(1)
+        val offset = LongArray(1)
+        val data = ByteArray(FILE_BLOCK_MAX)
+        val dataLen = IntArray(1)
+
+        val status = nativeFileBlockRead(body, tid, tidLen, offset, data, dataLen)
+        if (status != STATUS_OK) return null
+        return FileBlockData(
+            transferId = tid.copyOf(tidLen[0]),
+            offset = offset[0],
+            data = data.copyOf(dataLen[0]),
+        )
+    }
+
+    /** Вычисляет BLAKE3 хэш от байтового массива. */
+    fun blake3(data: ByteArray): ByteArray {
+        ensureLoaded()
+        val out = ByteArray(HASH_LEN)
+        val status = nativeBlake3Hash(data, out)
+        if (status != STATUS_OK) {
+            throw BraidworkException(status, "ошибка вычисления BLAKE3")
+        }
+        return out
+    }
+
+    /**
+     * Поточный расчёт BLAKE3 от [InputStream] порциями по 64 КиБ.
+     * Не загружает весь файл в память.
+     */
+    fun blake3Stream(stream: java.io.InputStream): ByteArray {
+        ensureLoaded()
+        val handleArr = LongArray(1)
+        val createStatus = nativeBlake3HasherCreate(handleArr)
+        if (createStatus != STATUS_OK) {
+            throw BraidworkException(createStatus, "ошибка создания hasher")
+        }
+        val handle = handleArr[0]
+        try {
+            val buf = ByteArray(64 * 1024)
+            var read: Int
+            while (stream.read(buf).also { read = it } != -1) {
+                if (read > 0) {
+                    val slice = if (read == buf.size) buf else buf.copyOf(read)
+                    val updateStatus = nativeBlake3HasherUpdate(handle, slice)
+                    if (updateStatus != STATUS_OK) {
+                        throw BraidworkException(updateStatus, "ошибка обновления hasher")
+                    }
+                }
+            }
+            val out = ByteArray(HASH_LEN)
+            val finStatus = nativeBlake3HasherFinalize(handle, out)
+            if (finStatus != STATUS_OK) {
+                throw BraidworkException(finStatus, "ошибка финализации hasher")
+            }
+            return out
+        } finally {
+            nativeBlake3HasherFree(handle)
+        }
+    }
+
     /** Останавливает транспорт: сокеты закрыты, состояние сброшено. */
     fun transportStop(handle: Long) {
         ensureLoaded()
@@ -915,6 +1090,49 @@ object BraidworkCore {
         outMime: ByteArray,
         outMimeLen: IntArray,
     ): Int
+    private external fun nativeFileOfferBuild(
+        transferId: ByteArray,
+        fileName: String,
+        totalSize: Long,
+        totalHash: ByteArray,
+        out: ByteArray,
+        outLen: IntArray,
+    ): Int
+
+    private external fun nativeFileOfferRead(
+        body: ByteArray,
+        outTransferId: ByteArray,
+        outTransferIdLen: IntArray,
+        outFileName: ByteArray,
+        outFileNameLen: IntArray,
+        outTotalSize: LongArray,
+        outTotalHash: ByteArray,
+        outTotalHashLen: IntArray,
+    ): Int
+
+    private external fun nativeFileBlockBuild(
+        transferId: ByteArray,
+        offset: Long,
+        data: ByteArray,
+        out: ByteArray,
+        outLen: IntArray,
+    ): Int
+
+    private external fun nativeFileBlockRead(
+        body: ByteArray,
+        outTransferId: ByteArray,
+        outTransferIdLen: IntArray,
+        outOffset: LongArray,
+        outData: ByteArray,
+        outDataLen: IntArray,
+    ): Int
+
+    private external fun nativeBlake3Hash(data: ByteArray, outHash: ByteArray): Int
+    private external fun nativeBlake3HasherCreate(outHandle: LongArray): Int
+    private external fun nativeBlake3HasherUpdate(handle: Long, data: ByteArray): Int
+    private external fun nativeBlake3HasherFinalize(handle: Long, outHash: ByteArray): Int
+    private external fun nativeBlake3HasherFree(handle: Long): Int
+
     private external fun nativeTransportStop(handle: Long): Int
     private external fun nativeTransportFree(handle: Long): Int
     private external fun nativeTransportAlive(handle: Long): Int

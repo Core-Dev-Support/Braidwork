@@ -99,8 +99,10 @@ fun FilesScreen(
     onSend: () -> Unit,
     onPickReceiver: () -> Unit,
     onCancel: (String) -> Unit,
+    receiverName: String = "",
     modifier: Modifier = Modifier,
 ) {
+    val комуТекст = if (receiverName.isNotBlank()) receiverName else "Кому"
     RowsSubScreen(
         title = "Файлы",
         subtitle = "Передача и хранилище по хэшу",
@@ -122,7 +124,7 @@ fun FilesScreen(
                     onClick = onSend, modifier = Modifier.weight(1f),
                 )
                 PillButton(
-                    "Кому", IcwDevices, filled = false,
+                    комуТекст, IcwDevices, filled = false,
                     onClick = onPickReceiver, modifier = Modifier.weight(1f),
                 )
             }

@@ -551,6 +551,18 @@ pub unsafe extern "C" fn fl_hello_verify(
 /// разрезаться молча наполовину.
 pub const CLIPBOARD_MAX: usize = 64 * 1024;
 
+/// Предел размера блока файла — 256 КиБ по PROTOCOL.md.
+pub const FILE_BLOCK_MAX: usize = 256 * 1024;
+
+/// Буфер под кадр блока файла: заголовок, protobuf-поля и данные блока.
+pub const FILE_BLOCK_FRAME_MAX: usize = FILE_BLOCK_MAX + 1024;
+
+/// Буфер под кадр предложения файла.
+pub const FILE_OFFER_FRAME_MAX: usize = 4096;
+
+/// Длина хэша BLAKE3.
+pub const HASH_LEN: usize = 32;
+
 /// Буфер под кадр `Heartbeat`: заголовок плюс пять небольших полей.
 ///
 /// Взят с запасом. Тело сообщения — это время, процент, флажок и два целых
@@ -803,6 +815,391 @@ pub unsafe extern "C" fn fl_clipboard_read(
 /// Хэш содержимого буфера для дедупликации.
 fn хэш_содержимого(bytes: &[u8]) -> [u8; 32] {
     *blake3::hash(bytes).as_bytes()
+}
+
+/// Инкрементальный вычислитель хэша BLAKE3.
+struct Blake3Hasher(blake3::Hasher);
+
+static HASHERS: std::sync::OnceLock<Registry<Blake3Hasher>> = std::sync::OnceLock::new();
+
+fn hashers() -> &'static Registry<Blake3Hasher> {
+    HASHERS.get_or_init(Registry::new)
+}
+
+/// Вычисляет хэш BLAKE3 (32 байта) от блока данных.
+///
+/// # Safety
+/// `data` должен указывать на блок памяти длиной не менее `data_len` байт.
+/// `out_hash` должен указывать на буфер размером не менее 32 байт.
+#[no_mangle]
+pub unsafe extern "C" fn fl_blake3_hash(
+    data: *const u8,
+    data_len: usize,
+    out_hash: *mut u8,
+) -> FlStatus {
+    guard(|| {
+        if out_hash.is_null() {
+            return FL_ERR_INVALID_ARG;
+        }
+        if data.is_null() && data_len > 0 {
+            return FL_ERR_INVALID_ARG;
+        }
+        let срез = if data_len == 0 {
+            &[][..]
+        } else {
+            std::slice::from_raw_parts(data, data_len)
+        };
+        let h = blake3::hash(срез);
+        std::slice::from_raw_parts_mut(out_hash, HASH_LEN).copy_from_slice(h.as_bytes());
+        FL_OK
+    })
+}
+
+/// Создаёт инкрементальный вычислитель хэша BLAKE3 для поточной обработки больших файлов.
+///
+/// # Safety
+/// `out_handle` должен указывать на доступную для записи ячейку `u64`.
+#[no_mangle]
+pub unsafe extern "C" fn fl_blake3_hasher_create(out_handle: *mut u64) -> FlStatus {
+    guard(|| {
+        if out_handle.is_null() {
+            return FL_ERR_INVALID_ARG;
+        }
+        let h = hashers().insert(Blake3Hasher(blake3::Hasher::new()));
+        *out_handle = h.0;
+        FL_OK
+    })
+}
+
+/// Добавляет порцию данных в вычислитель хэша BLAKE3.
+///
+/// # Safety
+/// `data` должен указывать на блок памяти длиной не менее `data_len` байт.
+#[no_mangle]
+pub unsafe extern "C" fn fl_blake3_hasher_update(
+    handle: u64,
+    data: *const u8,
+    data_len: usize,
+) -> FlStatus {
+    guard(|| {
+        if data.is_null() && data_len > 0 {
+            return FL_ERR_INVALID_ARG;
+        }
+        let срез = if data_len == 0 {
+            &[][..]
+        } else {
+            std::slice::from_raw_parts(data, data_len)
+        };
+        match hashers().with(FlHandle(handle), |hasher| {
+            hasher.0.update(срез);
+        }) {
+            Some(()) => FL_OK,
+            None => FL_ERR_INVALID_ARG,
+        }
+    })
+}
+
+/// Финализирует хэш BLAKE3 и записывает 32 байта в `out_hash`.
+///
+/// # Safety
+/// `out_hash` должен указывать на буфер размером не менее 32 байт.
+#[no_mangle]
+pub unsafe extern "C" fn fl_blake3_hasher_finalize(handle: u64, out_hash: *mut u8) -> FlStatus {
+    guard(|| {
+        if out_hash.is_null() {
+            return FL_ERR_INVALID_ARG;
+        }
+        match hashers().with(FlHandle(handle), |hasher| hasher.0.finalize()) {
+            Some(res) => {
+                std::slice::from_raw_parts_mut(out_hash, HASH_LEN).copy_from_slice(res.as_bytes());
+                FL_OK
+            }
+            None => FL_ERR_INVALID_ARG,
+        }
+    })
+}
+
+/// Освобождает вычислитель хэша BLAKE3.
+///
+/// # Safety
+/// `handle` должен быть валидным хэндлом или 0.
+#[no_mangle]
+pub unsafe extern "C" fn fl_blake3_hasher_free(handle: u64) -> FlStatus {
+    guard(|| {
+        if hashers().remove(FlHandle(handle)) {
+            FL_OK
+        } else {
+            FL_ERR_INVALID_ARG
+        }
+    })
+}
+
+/// Собирает кадр `FileOffer` (предложение передачи файла).
+///
+/// # Safety
+/// `transfer_id`, `file_name`, `total_hash` должны указывать на валидные буферы соответствующих длин.
+/// `out_data` и `out_len` должны удовлетворять протоколу `copy_out`.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fl_file_offer_build(
+    transfer_id: *const u8,
+    transfer_id_len: usize,
+    file_name: *const u8,
+    file_name_len: usize,
+    total_size: u64,
+    total_hash: *const u8,
+    total_hash_len: usize,
+    out_data: *mut u8,
+    out_len: *mut usize,
+) -> FlStatus {
+    guard(|| {
+        if out_data.is_null() || out_len.is_null() {
+            return FL_ERR_INVALID_ARG;
+        }
+        if transfer_id.is_null() || transfer_id_len == 0 || transfer_id_len > 64 {
+            return FL_ERR_INVALID_ARG;
+        }
+        if file_name.is_null() || file_name_len == 0 || file_name_len > 1024 {
+            return FL_ERR_INVALID_ARG;
+        }
+        if total_hash.is_null() || total_hash_len != HASH_LEN {
+            return FL_ERR_INVALID_ARG;
+        }
+
+        let id_slice = std::slice::from_raw_parts(transfer_id, transfer_id_len);
+        let name_bytes = std::slice::from_raw_parts(file_name, file_name_len);
+        let name_str = match std::str::from_utf8(name_bytes) {
+            Ok(s) => s,
+            Err(_) => return FL_ERR_INVALID_ARG,
+        };
+        let hash_slice = std::slice::from_raw_parts(total_hash, total_hash_len);
+
+        let тело = crate::pb::FileOffer {
+            transfer_id: prost::bytes::Bytes::copy_from_slice(id_slice),
+            file_name: name_str.to_string(),
+            total_size,
+            total_hash: prost::bytes::Bytes::copy_from_slice(hash_slice),
+            blocks: Vec::new(),
+            origin: None,
+        };
+
+        let кадр =
+            match crate::frame::encode(crate::pb::MessageKind::KindFileOffer as i32, 0, &тело) {
+                Ok(f) => f,
+                Err(_) => return crate::FL_ERR_INTERNAL,
+            };
+
+        copy_out(&кадр, out_data, out_len)
+    })
+}
+
+/// Разбирает тело `FileOffer` в поля предложения передачи.
+///
+/// # Safety
+/// Все входные указатели должны указывать на валидную память соответствующих размеров.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fl_file_offer_read(
+    body: *const u8,
+    body_len: usize,
+    out_transfer_id: *mut u8,
+    transfer_id_cap: usize,
+    out_transfer_id_len: *mut usize,
+    out_file_name: *mut u8,
+    file_name_cap: usize,
+    out_file_name_len: *mut usize,
+    out_total_size: *mut u64,
+    out_total_hash: *mut u8,
+    total_hash_cap: usize,
+    out_total_hash_len: *mut usize,
+) -> FlStatus {
+    guard(|| {
+        if body.is_null()
+            || out_transfer_id_len.is_null()
+            || out_file_name_len.is_null()
+            || out_total_size.is_null()
+            || out_total_hash_len.is_null()
+        {
+            return FL_ERR_INVALID_ARG;
+        }
+        let bytes = if body_len == 0 {
+            &[][..]
+        } else {
+            std::slice::from_raw_parts(body, body_len)
+        };
+
+        let offer = match crate::pb::FileOffer::decode(bytes) {
+            Ok(o) => o,
+            Err(_) => return FL_ERR_INVALID_ARG,
+        };
+
+        let места_хватает = |нужно: usize, есть: usize| есть == 0 || нужно <= есть;
+        if !места_хватает(offer.transfer_id.len(), transfer_id_cap)
+            || !места_хватает(offer.file_name.len(), file_name_cap)
+            || !места_хватает(offer.total_hash.len(), total_hash_cap)
+        {
+            return FL_ERR_INVALID_ARG;
+        }
+
+        if (transfer_id_cap > 0 && out_transfer_id.is_null())
+            || (file_name_cap > 0 && out_file_name.is_null())
+            || (total_hash_cap > 0 && out_total_hash.is_null())
+        {
+            return FL_ERR_INVALID_ARG;
+        }
+
+        if transfer_id_cap > 0 && !offer.transfer_id.is_empty() {
+            std::slice::from_raw_parts_mut(out_transfer_id, offer.transfer_id.len())
+                .copy_from_slice(&offer.transfer_id);
+        }
+        *out_transfer_id_len = offer.transfer_id.len();
+
+        let name_bytes = offer.file_name.as_bytes();
+        if file_name_cap > 0 && !name_bytes.is_empty() {
+            std::slice::from_raw_parts_mut(out_file_name, name_bytes.len())
+                .copy_from_slice(name_bytes);
+        }
+        *out_file_name_len = name_bytes.len();
+
+        *out_total_size = offer.total_size;
+
+        if total_hash_cap > 0 && !offer.total_hash.is_empty() {
+            std::slice::from_raw_parts_mut(out_total_hash, offer.total_hash.len())
+                .copy_from_slice(&offer.total_hash);
+        }
+        *out_total_hash_len = offer.total_hash.len();
+
+        FL_OK
+    })
+}
+
+/// Собирает кадр `FileBlock` (блок данных файла с подсчётом BLAKE3).
+///
+/// # Safety
+/// `transfer_id` и `data` должны указывать на валидные буферы соответствующих длин.
+/// `out_data` и `out_len` должны удовлетворять протоколу `copy_out`.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fl_file_block_build(
+    transfer_id: *const u8,
+    transfer_id_len: usize,
+    offset: u64,
+    data: *const u8,
+    data_len: usize,
+    out_data: *mut u8,
+    out_len: *mut usize,
+) -> FlStatus {
+    guard(|| {
+        if out_data.is_null() || out_len.is_null() {
+            return FL_ERR_INVALID_ARG;
+        }
+        if transfer_id.is_null() || transfer_id_len == 0 || transfer_id_len > 64 {
+            return FL_ERR_INVALID_ARG;
+        }
+        if data_len > FILE_BLOCK_MAX {
+            return FL_ERR_INVALID_ARG;
+        }
+        if data.is_null() && data_len > 0 {
+            return FL_ERR_INVALID_ARG;
+        }
+
+        let id_slice = std::slice::from_raw_parts(transfer_id, transfer_id_len);
+        let data_slice = if data_len == 0 {
+            &[][..]
+        } else {
+            std::slice::from_raw_parts(data, data_len)
+        };
+
+        let block_hash = blake3::hash(data_slice);
+
+        let тело = crate::pb::FileBlock {
+            offset,
+            length: data_len as u32,
+            data: prost::bytes::Bytes::copy_from_slice(data_slice),
+            block_hash: prost::bytes::Bytes::copy_from_slice(block_hash.as_bytes()),
+            transfer_id: prost::bytes::Bytes::copy_from_slice(id_slice),
+        };
+
+        let кадр =
+            match crate::frame::encode(crate::pb::MessageKind::KindFileBlock as i32, 0, &тело) {
+                Ok(f) => f,
+                Err(_) => return crate::FL_ERR_INTERNAL,
+            };
+
+        copy_out(&кадр, out_data, out_len)
+    })
+}
+
+/// Разбирает тело `FileBlock`, проверяет целостность по BLAKE3 хэшу блока.
+///
+/// # Safety
+/// Все указатели должны указывать на валидную память соответствующих размеров.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fl_file_block_read(
+    body: *const u8,
+    body_len: usize,
+    out_transfer_id: *mut u8,
+    transfer_id_cap: usize,
+    out_transfer_id_len: *mut usize,
+    out_offset: *mut u64,
+    out_data: *mut u8,
+    data_cap: usize,
+    out_data_len: *mut usize,
+) -> FlStatus {
+    guard(|| {
+        if body.is_null()
+            || out_transfer_id_len.is_null()
+            || out_offset.is_null()
+            || out_data_len.is_null()
+        {
+            return FL_ERR_INVALID_ARG;
+        }
+        let bytes = if body_len == 0 {
+            &[][..]
+        } else {
+            std::slice::from_raw_parts(body, body_len)
+        };
+
+        let block = match crate::pb::FileBlock::decode(bytes) {
+            Ok(b) => b,
+            Err(_) => return FL_ERR_INVALID_ARG,
+        };
+
+        // Проверка целостности блока: считаем BLAKE3 от принятых данных
+        let calc_hash = blake3::hash(&block.data);
+        if calc_hash.as_bytes() != &block.block_hash[..] {
+            return FL_ERR_CRYPTO;
+        }
+
+        let места_хватает = |нужно: usize, есть: usize| есть == 0 || нужно <= есть;
+        if !места_хватает(block.transfer_id.len(), transfer_id_cap)
+            || !места_хватает(block.data.len(), data_cap)
+        {
+            return FL_ERR_INVALID_ARG;
+        }
+
+        if (transfer_id_cap > 0 && out_transfer_id.is_null())
+            || (data_cap > 0 && out_data.is_null())
+        {
+            return FL_ERR_INVALID_ARG;
+        }
+
+        if transfer_id_cap > 0 && !block.transfer_id.is_empty() {
+            std::slice::from_raw_parts_mut(out_transfer_id, block.transfer_id.len())
+                .copy_from_slice(&block.transfer_id);
+        }
+        *out_transfer_id_len = block.transfer_id.len();
+
+        *out_offset = block.offset;
+
+        if data_cap > 0 && !block.data.is_empty() {
+            std::slice::from_raw_parts_mut(out_data, block.data.len()).copy_from_slice(&block.data);
+        }
+        *out_data_len = block.data.len();
+
+        FL_OK
+    })
 }
 
 #[cfg(test)]
@@ -1473,5 +1870,201 @@ mod tests {
         };
         assert_eq!(код, FL_ERR_INVALID_ARG);
         assert_eq!(длина, 0);
+    }
+
+    /// Предложение файла собирается и разбирается с сохранением всех полей.
+    #[test]
+    fn file_offer_собирается_и_разбирается() {
+        let tid = b"transfer_0123456";
+        let name = "photo_2026.jpg";
+        let size = 1048576u64;
+        let hash = [0x42u8; 32];
+
+        let mut frame = vec![0u8; FILE_OFFER_FRAME_MAX];
+        let mut frame_len = 0usize;
+        let code = unsafe {
+            fl_file_offer_build(
+                tid.as_ptr(),
+                tid.len(),
+                name.as_ptr(),
+                name.len(),
+                size,
+                hash.as_ptr(),
+                hash.len(),
+                frame.as_mut_ptr(),
+                &mut frame_len as *mut usize,
+            )
+        };
+        assert_eq!(code, FL_OK);
+        assert!(frame_len > 10);
+
+        let (header, body, _) = crate::frame::split(&frame[..frame_len]).expect("кадр");
+        assert_eq!(header.kind, crate::pb::MessageKind::KindFileOffer as i32);
+
+        let mut out_tid = vec![0u8; 32];
+        let mut out_tid_len = 0usize;
+        let mut out_name = vec![0u8; 256];
+        let mut out_name_len = 0usize;
+        let mut out_size = 0u64;
+        let mut out_hash = vec![0u8; 32];
+        let mut out_hash_len = 0usize;
+
+        let read_code = unsafe {
+            fl_file_offer_read(
+                body.as_ptr(),
+                body.len(),
+                out_tid.as_mut_ptr(),
+                out_tid.len(),
+                &mut out_tid_len as *mut usize,
+                out_name.as_mut_ptr(),
+                out_name.len(),
+                &mut out_name_len as *mut usize,
+                &mut out_size as *mut u64,
+                out_hash.as_mut_ptr(),
+                out_hash.len(),
+                &mut out_hash_len as *mut usize,
+            )
+        };
+        assert_eq!(read_code, FL_OK);
+        assert_eq!(&out_tid[..out_tid_len], tid);
+        assert_eq!(
+            std::str::from_utf8(&out_name[..out_name_len]).unwrap(),
+            name
+        );
+        assert_eq!(out_size, size);
+        assert_eq!(&out_hash[..out_hash_len], &hash[..]);
+    }
+
+    /// Блок файла собирается, хэш считается автоматически, а при разборе сверяется.
+    #[test]
+    fn file_block_собирается_и_разбирается() {
+        let tid = b"transfer_0123456";
+        let offset = 65536u64;
+        let data = vec![7u8; 4096];
+
+        let mut frame = vec![0u8; FILE_BLOCK_FRAME_MAX];
+        let mut frame_len = 0usize;
+        let code = unsafe {
+            fl_file_block_build(
+                tid.as_ptr(),
+                tid.len(),
+                offset,
+                data.as_ptr(),
+                data.len(),
+                frame.as_mut_ptr(),
+                &mut frame_len as *mut usize,
+            )
+        };
+        assert_eq!(code, FL_OK);
+
+        let (header, body, _) = crate::frame::split(&frame[..frame_len]).expect("кадр");
+        assert_eq!(header.kind, crate::pb::MessageKind::KindFileBlock as i32);
+
+        let mut out_tid = vec![0u8; 32];
+        let mut out_tid_len = 0usize;
+        let mut out_offset = 0u64;
+        let mut out_data = vec![0u8; 8192];
+        let mut out_data_len = 0usize;
+
+        let read_code = unsafe {
+            fl_file_block_read(
+                body.as_ptr(),
+                body.len(),
+                out_tid.as_mut_ptr(),
+                out_tid.len(),
+                &mut out_tid_len as *mut usize,
+                &mut out_offset as *mut u64,
+                out_data.as_mut_ptr(),
+                out_data.len(),
+                &mut out_data_len as *mut usize,
+            )
+        };
+        assert_eq!(read_code, FL_OK);
+        assert_eq!(&out_tid[..out_tid_len], tid);
+        assert_eq!(out_offset, offset);
+        assert_eq!(&out_data[..out_data_len], &data[..]);
+    }
+
+    /// Повреждённый блок файла отвергается проверкой хэша.
+    #[test]
+    fn file_block_повреждение_отвергается() {
+        let tid = b"transfer_0123456";
+        let offset = 0u64;
+        let data = vec![9u8; 1024];
+
+        let mut frame = vec![0u8; FILE_BLOCK_FRAME_MAX];
+        let mut frame_len = 0usize;
+        unsafe {
+            fl_file_block_build(
+                tid.as_ptr(),
+                tid.len(),
+                offset,
+                data.as_ptr(),
+                data.len(),
+                frame.as_mut_ptr(),
+                &mut frame_len as *mut usize,
+            );
+        }
+
+        let (_hdr, body, _) = crate::frame::split(&frame[..frame_len]).expect("кадр");
+        let mut corrupted_body = body.to_vec();
+        // Портим байт в середине тела
+        let mid = corrupted_body.len() / 2;
+        corrupted_body[mid] ^= 0xFF;
+
+        let mut out_tid = vec![0u8; 32];
+        let mut out_tid_len = 0usize;
+        let mut out_offset = 0u64;
+        let mut out_data = vec![0u8; 2048];
+        let mut out_data_len = 0usize;
+
+        let read_code = unsafe {
+            fl_file_block_read(
+                corrupted_body.as_ptr(),
+                corrupted_body.len(),
+                out_tid.as_mut_ptr(),
+                out_tid.len(),
+                &mut out_tid_len as *mut usize,
+                &mut out_offset as *mut u64,
+                out_data.as_mut_ptr(),
+                out_data.len(),
+                &mut out_data_len as *mut usize,
+            )
+        };
+        // Либо повреждён protobuf, либо хэш не сошёлся: ни в коем случае не FL_OK!
+        assert_ne!(read_code, FL_OK);
+    }
+
+    /// Вычисление хэша BLAKE3 напрямую и через поточный Hasher дают один и тот же результат.
+    #[test]
+    fn blake3_хэш_и_поточный_hasher() {
+        let data = b"Hello, Braidwork file transfer!";
+        let mut direct_hash = [0u8; 32];
+        let code = unsafe { fl_blake3_hash(data.as_ptr(), data.len(), direct_hash.as_mut_ptr()) };
+        assert_eq!(code, FL_OK);
+
+        let mut hasher_handle = 0u64;
+        assert_eq!(
+            unsafe { fl_blake3_hasher_create(&mut hasher_handle as *mut u64) },
+            FL_OK
+        );
+        assert_eq!(
+            unsafe { fl_blake3_hasher_update(hasher_handle, data[..10].as_ptr(), 10) },
+            FL_OK
+        );
+        assert_eq!(
+            unsafe { fl_blake3_hasher_update(hasher_handle, data[10..].as_ptr(), data.len() - 10) },
+            FL_OK
+        );
+
+        let mut stream_hash = [0u8; 32];
+        assert_eq!(
+            unsafe { fl_blake3_hasher_finalize(hasher_handle, stream_hash.as_mut_ptr()) },
+            FL_OK
+        );
+        assert_eq!(unsafe { fl_blake3_hasher_free(hasher_handle) }, FL_OK);
+
+        assert_eq!(direct_hash, stream_hash);
+        assert_eq!(direct_hash, *blake3::hash(data).as_bytes());
     }
 }

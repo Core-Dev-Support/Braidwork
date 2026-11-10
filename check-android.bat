@@ -62,14 +62,14 @@ echo === Exported symbols ===
 echo.
 
 set "OK=1"
-for %%M in (nativeInit nativeDeviceId nativeVerifySignature nativeKeysCreate nativeKeysLoad nativeKeysDeviceId nativeKeysFingerprint nativeTransportStart nativeTransportPoll nativeTransportPort nativeTransportStop nativeTransportFree nativeTransportAlive nativeFrameEncode) do (
+for %%M in (nativeInit nativeDeviceId nativeVerifySignature nativeKeysCreate nativeKeysLoad nativeKeysDeviceId nativeKeysFingerprint nativeTransportStart nativeTransportPoll nativeTransportPort nativeTransportStop nativeTransportFree nativeTransportAlive nativeFrameEncode nativeFileOfferBuild nativeFileOfferRead nativeFileBlockBuild nativeFileBlockRead nativeBlake3Hash nativeBlake3HasherCreate nativeBlake3HasherUpdate nativeBlake3HasherFinalize nativeBlake3HasherFree) do (
   findstr /C:"Java_com_naua_1braidwork_app_BraidworkCore_%%M" "%SO%" >nul || (
     echo FAIL: no symbol for %%M
     set "OK=0"
   )
 )
 
-for %%F in (fl_init fl_device_id fl_verify_signature fl_abi_version fl_free fl_keys_blob_len fl_keys_create fl_keys_load fl_keys_device_id fl_keys_fingerprint fl_session_create fl_session_step fl_session_ready fl_session_finish fl_session_seal fl_session_open fl_session_free fl_hello_build fl_hello_verify fl_heartbeat_build fl_heartbeat_read fl_clipboard_build fl_clipboard_read fl_frame_encode fl_transport_lan_start fl_transport_poll fl_transport_connect fl_transport_send fl_transport_conn_close fl_transport_port fl_transport_stop fl_transport_free fl_transport_event_size) do (
+for %%F in (fl_init fl_device_id fl_verify_signature fl_abi_version fl_free fl_keys_blob_len fl_keys_create fl_keys_load fl_keys_device_id fl_keys_fingerprint fl_session_create fl_session_step fl_session_ready fl_session_finish fl_session_seal fl_session_open fl_session_free fl_hello_build fl_hello_verify fl_heartbeat_build fl_heartbeat_read fl_clipboard_build fl_clipboard_read fl_file_offer_build fl_file_offer_read fl_file_block_build fl_file_block_read fl_blake3_hash fl_blake3_hasher_create fl_blake3_hasher_update fl_blake3_hasher_finalize fl_blake3_hasher_free fl_frame_encode fl_transport_lan_start fl_transport_poll fl_transport_connect fl_transport_send fl_transport_conn_close fl_transport_port fl_transport_stop fl_transport_free fl_transport_event_size) do (
   findstr /C:"%%F" "%SO%" >nul || (
     echo FAIL: no C ABI symbol %%F
     set "OK=0"

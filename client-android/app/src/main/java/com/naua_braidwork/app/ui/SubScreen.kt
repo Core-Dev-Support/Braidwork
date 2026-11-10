@@ -1,7 +1,13 @@
 package com.naua_braidwork.app.ui
 
 import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -235,16 +241,74 @@ fun SubScreen(
                 onВставить = { id -> discovery?.вставитьПолученное(id) },
             )
 
-            Route.FILES -> FilesScreen(
-                state = Sample.filesState(),
-                toggles = filesToggles,
-                onBack = onBack,
-                onRow = { onRow(it.id) },
-                onToggle = { id, value -> filesToggles = filesToggles.with(id, value) },
-                onSend = { onRow(Route.FILES) },
-                onPickReceiver = { onRow(Route.FILES) },
-                onCancel = { onRow(Route.FILES) },
-            )
+            Route.FILES -> {
+                val context = LocalContext.current
+                var pickedReceiverId by remember { mutableStateOf<String?>(null) }
+                var tick by remember { mutableStateOf(0) }
+
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        delay(500)
+                        tick++
+                    }
+                }
+
+                // Доступные устройства для отправки: выбранное на карточке, либо первое сопряжённое/найденное
+                val targetDevice = devices.firstOrNull { it.deviceId.идентификатор() == pickedReceiverId }
+                    ?: (if (selectedDevice != null) devices.firstOrNull { it.deviceId.идентификатор() == selectedDevice.id } else null)
+                    ?: devices.firstOrNull { it.connected }
+                    ?: devices.firstOrNull()
+
+                val filePicker = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.GetContent()
+                ) { uri: Uri? ->
+                    if (uri != null) {
+                        val targetId = targetDevice?.deviceId?.идентификатор()
+                        if (targetId == null) {
+                            Toast.makeText(context, "Нет устройства для отправки", Toast.LENGTH_SHORT).show()
+                        } else {
+                            val err = discovery?.отправитьФайлУстройству(targetId, uri)
+                            if (err != null) {
+                                Toast.makeText(context, "Ошибка отправки: $err", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                }
+
+                val currentTransfers = discovery?.getActiveTransfers().orEmpty()
+                val storageUsage = discovery?.getStorageUsageText() ?: "0 МБ на диске"
+
+                FilesScreen(
+                    state = Sample.filesState().copy(
+                        transfers = currentTransfers,
+                        storedText = storageUsage,
+                    ),
+                    toggles = filesToggles,
+                    receiverName = targetDevice?.name ?: "",
+                    onBack = onBack,
+                    onRow = { onRow(it.id) },
+                    onToggle = { id, value -> filesToggles = filesToggles.with(id, value) },
+                    onSend = {
+                        if (targetDevice == null) {
+                            Toast.makeText(context, "Нет доступных устройств для отправки", Toast.LENGTH_SHORT).show()
+                        } else {
+                            filePicker.launch("*/*")
+                        }
+                    },
+                    onPickReceiver = {
+                        if (devices.isEmpty()) {
+                            Toast.makeText(context, "Устройства ещё не обнаружены", Toast.LENGTH_SHORT).show()
+                        } else {
+                            val curIdx = devices.indexOfFirst { it.deviceId.идентификатор() == targetDevice?.deviceId?.идентификатор() }
+                            val nextIdx = if (curIdx >= 0) (curIdx + 1) % devices.size else 0
+                            val nextDevice = devices[nextIdx]
+                            pickedReceiverId = nextDevice.deviceId.идентификатор()
+                            Toast.makeText(context, "Получатель: ${nextDevice.name}", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onCancel = { name -> discovery?.cancelTransfer(name) },
+                )
+            }
 
             Route.NOTIFS -> {
                 val (title, sub) = Sample.notifStatus()

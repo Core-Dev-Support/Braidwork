@@ -1038,3 +1038,436 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeEventSiz
 ) -> jint {
     crate::fl_transport_event_size() as jint
 }
+
+/// Собирает кадр `FileOffer`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileOfferBuild<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    transfer_id: JByteArray<'local>,
+    file_name: JString<'local>,
+    total_size: jlong,
+    total_hash: JByteArray<'local>,
+    out: JByteArray<'local>,
+    out_len: JIntArray<'local>,
+) -> jint {
+    if out_len.is_null() {
+        return crate::FL_ERR_INVALID_ARG;
+    }
+    let tid = match env.convert_byte_array(&transfer_id) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+    let name: String = match env.get_string(&file_name) {
+        Ok(s) => s.into(),
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+    let hash = match env.convert_byte_array(&total_hash) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+
+    let mut мест = match env.get_array_length(&out) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+    let mut буфер = vec![0u8; мест.max(1)];
+
+    let status = unsafe {
+        crate::fl_file_offer_build(
+            tid.as_ptr(),
+            tid.len(),
+            name.as_ptr(),
+            name.len(),
+            total_size as u64,
+            hash.as_ptr(),
+            hash.len(),
+            буфер.as_mut_ptr(),
+            &mut мест,
+        )
+    };
+    if status != FL_OK {
+        return status;
+    }
+
+    let срез = буфер[..мест.min(буфер.len())].to_vec();
+    if env
+        .set_byte_array_region(&out, 0, &to_signed(&срез))
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+    if env
+        .set_int_array_region(&out_len, 0, &[мест as jint])
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    FL_OK
+}
+
+/// Разбирает тело `FileOffer`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileOfferRead<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    body: JByteArray<'local>,
+    out_transfer_id: JByteArray<'local>,
+    out_transfer_id_len: JIntArray<'local>,
+    out_file_name: JByteArray<'local>,
+    out_file_name_len: JIntArray<'local>,
+    out_total_size: JLongArray<'local>,
+    out_total_hash: JByteArray<'local>,
+    out_total_hash_len: JIntArray<'local>,
+) -> jint {
+    if out_transfer_id_len.is_null()
+        || out_file_name_len.is_null()
+        || out_total_size.is_null()
+        || out_total_hash_len.is_null()
+    {
+        return crate::FL_ERR_INVALID_ARG;
+    }
+    let bytes = match env.convert_byte_array(&body) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+
+    let tid_cap = match env.get_array_length(&out_transfer_id) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+    let name_cap = match env.get_array_length(&out_file_name) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+    let hash_cap = match env.get_array_length(&out_total_hash) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+
+    let mut tid_buf = vec![0u8; tid_cap.max(1)];
+    let mut name_buf = vec![0u8; name_cap.max(1)];
+    let mut hash_buf = vec![0u8; hash_cap.max(1)];
+    let mut tid_len = 0usize;
+    let mut name_len = 0usize;
+    let mut size = 0u64;
+    let mut hash_len = 0usize;
+
+    let status = unsafe {
+        crate::fl_file_offer_read(
+            bytes.as_ptr(),
+            bytes.len(),
+            tid_buf.as_mut_ptr(),
+            tid_cap,
+            &mut tid_len,
+            name_buf.as_mut_ptr(),
+            name_cap,
+            &mut name_len,
+            &mut size,
+            hash_buf.as_mut_ptr(),
+            hash_cap,
+            &mut hash_len,
+        )
+    };
+    if status != FL_OK {
+        return status;
+    }
+
+    if env
+        .set_byte_array_region(
+            &out_transfer_id,
+            0,
+            &to_signed(&tid_buf[..tid_len.min(tid_cap)]),
+        )
+        .is_err()
+        || env
+            .set_int_array_region(&out_transfer_id_len, 0, &[tid_len as jint])
+            .is_err()
+        || env
+            .set_byte_array_region(
+                &out_file_name,
+                0,
+                &to_signed(&name_buf[..name_len.min(name_cap)]),
+            )
+            .is_err()
+        || env
+            .set_int_array_region(&out_file_name_len, 0, &[name_len as jint])
+            .is_err()
+        || env
+            .set_long_array_region(&out_total_size, 0, &[size as jlong])
+            .is_err()
+        || env
+            .set_byte_array_region(
+                &out_total_hash,
+                0,
+                &to_signed(&hash_buf[..hash_len.min(hash_cap)]),
+            )
+            .is_err()
+        || env
+            .set_int_array_region(&out_total_hash_len, 0, &[hash_len as jint])
+            .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    FL_OK
+}
+
+/// Собирает кадр `FileBlock`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileBlockBuild<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    transfer_id: JByteArray<'local>,
+    offset: jlong,
+    data: JByteArray<'local>,
+    out: JByteArray<'local>,
+    out_len: JIntArray<'local>,
+) -> jint {
+    if out_len.is_null() {
+        return crate::FL_ERR_INVALID_ARG;
+    }
+    let tid = match env.convert_byte_array(&transfer_id) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+    let block_data = match env.convert_byte_array(&data) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+
+    let mut мест = match env.get_array_length(&out) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+    let mut буфер = vec![0u8; мест.max(1)];
+
+    let status = unsafe {
+        crate::fl_file_block_build(
+            tid.as_ptr(),
+            tid.len(),
+            offset as u64,
+            block_data.as_ptr(),
+            block_data.len(),
+            буфер.as_mut_ptr(),
+            &mut мест,
+        )
+    };
+    if status != FL_OK {
+        return status;
+    }
+
+    let срез = буфер[..мест.min(буфер.len())].to_vec();
+    if env
+        .set_byte_array_region(&out, 0, &to_signed(&срез))
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+    if env
+        .set_int_array_region(&out_len, 0, &[мест as jint])
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    FL_OK
+}
+
+/// Разбирает тело `FileBlock`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileBlockRead<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    body: JByteArray<'local>,
+    out_transfer_id: JByteArray<'local>,
+    out_transfer_id_len: JIntArray<'local>,
+    out_offset: JLongArray<'local>,
+    out_data: JByteArray<'local>,
+    out_data_len: JIntArray<'local>,
+) -> jint {
+    if out_transfer_id_len.is_null() || out_offset.is_null() || out_data_len.is_null() {
+        return crate::FL_ERR_INVALID_ARG;
+    }
+    let bytes = match env.convert_byte_array(&body) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+
+    let tid_cap = match env.get_array_length(&out_transfer_id) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+    let data_cap = match env.get_array_length(&out_data) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+
+    let mut tid_buf = vec![0u8; tid_cap.max(1)];
+    let mut data_buf = vec![0u8; data_cap.max(1)];
+    let mut tid_len = 0usize;
+    let mut offset = 0u64;
+    let mut data_len = 0usize;
+
+    let status = unsafe {
+        crate::fl_file_block_read(
+            bytes.as_ptr(),
+            bytes.len(),
+            tid_buf.as_mut_ptr(),
+            tid_cap,
+            &mut tid_len,
+            &mut offset,
+            data_buf.as_mut_ptr(),
+            data_cap,
+            &mut data_len,
+        )
+    };
+    if status != FL_OK {
+        return status;
+    }
+
+    if env
+        .set_byte_array_region(
+            &out_transfer_id,
+            0,
+            &to_signed(&tid_buf[..tid_len.min(tid_cap)]),
+        )
+        .is_err()
+        || env
+            .set_int_array_region(&out_transfer_id_len, 0, &[tid_len as jint])
+            .is_err()
+        || env
+            .set_long_array_region(&out_offset, 0, &[offset as jlong])
+            .is_err()
+        || env
+            .set_byte_array_region(
+                &out_data,
+                0,
+                &to_signed(&data_buf[..data_len.min(data_cap)]),
+            )
+            .is_err()
+        || env
+            .set_int_array_region(&out_data_len, 0, &[data_len as jint])
+            .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    FL_OK
+}
+
+/// Вычисляет хэш BLAKE3 (32 байта) от данных.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeBlake3Hash<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    data: JByteArray<'local>,
+    out_hash: JByteArray<'local>,
+) -> jint {
+    let bytes = match env.convert_byte_array(&data) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+    let cap = match env.get_array_length(&out_hash) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+    if cap < 32 {
+        return crate::FL_ERR_INVALID_ARG;
+    }
+    let mut hash = [0u8; 32];
+    let status = unsafe { crate::fl_blake3_hash(bytes.as_ptr(), bytes.len(), hash.as_mut_ptr()) };
+    if status != FL_OK {
+        return status;
+    }
+    if env
+        .set_byte_array_region(&out_hash, 0, &to_signed(&hash))
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+    FL_OK
+}
+
+/// Создаёт инкрементальный вычислитель хэша BLAKE3.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeBlake3HasherCreate<
+    'local,
+>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    out_handle: JLongArray<'local>,
+) -> jint {
+    let mut handle = 0u64;
+    let status = unsafe { crate::fl_blake3_hasher_create(&mut handle) };
+    if status != FL_OK {
+        return status;
+    }
+    if env
+        .set_long_array_region(&out_handle, 0, &[handle as jlong])
+        .is_err()
+    {
+        unsafe { crate::fl_blake3_hasher_free(handle) };
+        return crate::FL_ERR_INTERNAL;
+    }
+    FL_OK
+}
+
+/// Добавляет порцию данных в инкрементальный вычислитель BLAKE3.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeBlake3HasherUpdate<
+    'local,
+>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    data: JByteArray<'local>,
+) -> jint {
+    let bytes = match env.convert_byte_array(&data) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+    unsafe { crate::fl_blake3_hasher_update(handle as u64, bytes.as_ptr(), bytes.len()) }
+}
+
+/// Финализирует BLAKE3 хэш (32 байта).
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeBlake3HasherFinalize<
+    'local,
+>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    out_hash: JByteArray<'local>,
+) -> jint {
+    let cap = match env.get_array_length(&out_hash) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+    if cap < 32 {
+        return crate::FL_ERR_INVALID_ARG;
+    }
+    let mut hash = [0u8; 32];
+    let status = unsafe { crate::fl_blake3_hasher_finalize(handle as u64, hash.as_mut_ptr()) };
+    if status != FL_OK {
+        return status;
+    }
+    if env
+        .set_byte_array_region(&out_hash, 0, &to_signed(&hash))
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+    FL_OK
+}
+
+/// Освобождает инкрементальный вычислитель BLAKE3.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeBlake3HasherFree<'local>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jint {
+    unsafe { crate::fl_blake3_hasher_free(handle as u64) }
+}

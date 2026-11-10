@@ -16,6 +16,17 @@ import java.util.Date
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import com.naua_braidwork.app.ui.state.ClipboardItem
+import android.net.Uri
+import android.os.Environment
+import android.provider.OpenableColumns
+import com.naua_braidwork.app.ui.state.Transfer
+import java.io.File
+import java.io.FileInputStream
+import java.io.RandomAccessFile
+import java.security.SecureRandom
+import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 
 /**
  * Владелец канала локальной сети.
@@ -381,6 +392,98 @@ class DeviceDiscovery(
                 вставитьВБуфер(текст, кто)
             }
 
+            KIND_FILE_OFFER -> {
+                val offer = BraidworkCore.readFileOffer(кадр.body)
+                if (offer == null) {
+                    записать("от $кто: предложение файла не разобрано, ${кадр.body.size} байт")
+                    return
+                }
+                val tidHex = offer.transferId.joinToString("") { "%02x".format(it) }
+                val sizeStr = formatBytes(offer.totalSize)
+                записать("от $кто: входящий файл «${offer.fileName}» ($sizeStr)")
+
+                mainHandler.post {
+                    Toast.makeText(context, "Входящий файл: ${offer.fileName} ($sizeStr)", Toast.LENGTH_SHORT).show()
+                }
+
+                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Braidwork")
+                dir.mkdirs()
+                val tempFile = File(dir, "${offer.fileName}.$tidHex.part")
+
+                val transfer = ActiveTransfer(
+                    transferIdHex = tidHex,
+                    peerId = кто,
+                    peerName = кто,
+                    fileName = offer.fileName,
+                    totalSize = offer.totalSize,
+                    totalHash = offer.totalHash,
+                    isIncoming = true,
+                    tempFile = tempFile,
+                )
+                activeTransfers[tidHex] = transfer
+            }
+
+            KIND_FILE_BLOCK -> {
+                val block = BraidworkCore.readFileBlock(кадр.body)
+                if (block == null) {
+                    записать("от $кто: повреждённый или неразобранный блок файла (${кадр.body.size} байт)")
+                    return
+                }
+                val tidHex = block.transferId.joinToString("") { "%02x".format(it) }
+                val transfer = activeTransfers[tidHex]
+                if (transfer == null || transfer.cancelled) {
+                    return
+                }
+
+                try {
+                    val file = transfer.tempFile ?: return
+                    RandomAccessFile(file, "rw").use { raf ->
+                        raf.seek(block.offset)
+                        raf.write(block.data)
+                    }
+                    transfer.transferredBytes += block.data.size
+
+                    val now = System.currentTimeMillis()
+                    val elapsed = now - transfer.lastCalcTime
+                    if (elapsed >= 500) {
+                        val bytesDelta = transfer.transferredBytes - transfer.lastCalcBytes
+                        transfer.speedMbps = (bytesDelta * 8.0) / (elapsed * 1000.0)
+                        transfer.lastCalcBytes = transfer.transferredBytes
+                        transfer.lastCalcTime = now
+                    }
+
+                    if (transfer.transferredBytes >= transfer.totalSize) {
+                        val fileHash = FileInputStream(file).use { fis ->
+                            BraidworkCore.blake3Stream(fis)
+                        }
+                        if (fileHash.contentEquals(transfer.totalHash)) {
+                            val dir = file.parentFile ?: File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Braidwork")
+                            val finalFile = findUniqueFile(dir, transfer.fileName)
+                            file.renameTo(finalFile)
+                            android.media.MediaScannerConnection.scanFile(context, arrayOf(finalFile.absolutePath), null, null)
+
+                            transfer.done = true
+                            activeTransfers.remove(tidHex)
+
+                            записать("файл «${transfer.fileName}» принят в Загрузки/Braidwork")
+                            mainHandler.post {
+                                Toast.makeText(context, "Файл получен: ${transfer.fileName}", Toast.LENGTH_LONG).show()
+                            }
+                        } else {
+                            file.delete()
+                            transfer.error = "хэш не совпал"
+                            activeTransfers.remove(tidHex)
+                            записать("ошибка: хэш файла «${transfer.fileName}» не совпал — удалён")
+                            mainHandler.post {
+                                Toast.makeText(context, "Ошибка: файл ${transfer.fileName} повреждён", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    записать("ошибка записи блока файла: ${e.message}")
+                }
+            }
+
             else -> записать(
                 // Неизвестный тип: это не ошибка и не повод молчать. Напарник
                 // может быть новее, и тогда незнакомый кадр — норма.
@@ -434,6 +537,28 @@ class DeviceDiscovery(
      */
     private fun время(мс: Long): String =
         DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(мс))
+
+    /** Активная передача файла (входящая или исходящая). */
+    data class ActiveTransfer(
+        val transferIdHex: String,
+        val peerId: String,
+        val peerName: String,
+        val fileName: String,
+        val totalSize: Long,
+        val totalHash: ByteArray,
+        val isIncoming: Boolean,
+        @Volatile var transferredBytes: Long = 0L,
+        @Volatile var lastCalcBytes: Long = 0L,
+        @Volatile var lastCalcTime: Long = System.currentTimeMillis(),
+        @Volatile var speedMbps: Double = 0.0,
+        var tempFile: File? = null,
+        @Volatile var cancelled: Boolean = false,
+        @Volatile var done: Boolean = false,
+        @Volatile var error: String? = null,
+    )
+
+    private val activeTransfers = ConcurrentHashMap<String, ActiveTransfer>()
+    private val fileTransferExecutor = Executors.newSingleThreadExecutor()
 
     /** Пришедшее содержимое, новые сверху. */
     private val полученное =
@@ -833,6 +958,190 @@ class DeviceDiscovery(
         return послатьБуфер(conn, текст)
     }
 
+    /**
+     * Отправляет файл выбранному устройству.
+     */
+    fun отправитьФайлУстройству(deviceId: String, uri: Uri): String? {
+        val h = хэндл.get()
+        if (h == 0L) return "канал не поднят"
+        val conn = connУстройства[deviceId] ?: return "нет соединения с устройством"
+        val peerName = снимки.get().devices.firstOrNull { it.deviceId.идентификатор() == deviceId }?.name ?: deviceId
+
+        fileTransferExecutor.execute {
+            try {
+                выполнитьОтправкуФайла(h, conn, deviceId, peerName, uri)
+            } catch (e: Exception) {
+                записать("ошибка отправки файла: ${e.message}")
+                mainHandler.post {
+                    Toast.makeText(context, "Ошибка отправки: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        return null
+    }
+
+    private fun выполнитьОтправкуФайла(h: Long, conn: Long, peerId: String, peerName: String, uri: Uri) {
+        var fileName = "file"
+        var fileSize = 0L
+
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (nameIdx >= 0) fileName = cursor.getString(nameIdx) ?: "file"
+                val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (sizeIdx >= 0) fileSize = cursor.getLong(sizeIdx)
+            }
+        }
+        if (fileSize <= 0L) {
+            context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                fileSize = pfd.statSize
+            }
+        }
+        if (fileSize <= 0L) {
+            записать("файл пуст или недоступен: $fileName")
+            mainHandler.post {
+                Toast.makeText(context, "Файл пуст или недоступен", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+
+        val sizeStr = formatBytes(fileSize)
+        записать("подготовка к отправке «$fileName» ($sizeStr)...")
+        mainHandler.post {
+            Toast.makeText(context, "Отправка $fileName...", Toast.LENGTH_SHORT).show()
+        }
+
+        // Считаем общий BLAKE3 хэш файла
+        val totalHash = context.contentResolver.openInputStream(uri)?.use { fis ->
+            BraidworkCore.blake3Stream(fis)
+        } ?: run {
+            записать("не удалось прочитать файл для хэширования")
+            return
+        }
+
+        val transferId = ByteArray(16).apply { SecureRandom().nextBytes(this) }
+        val tidHex = transferId.joinToString("") { "%02x".format(it) }
+
+        val transfer = ActiveTransfer(
+            transferIdHex = tidHex,
+            peerId = peerId,
+            peerName = peerName,
+            fileName = fileName,
+            totalSize = fileSize,
+            totalHash = totalHash,
+            isIncoming = false,
+        )
+        activeTransfers[tidHex] = transfer
+
+        // Отправляем FileOffer
+        val offerFrame = BraidworkCore.fileOfferFrame(transferId, fileName, fileSize, totalHash)
+        BraidworkCore.transportSend(h, conn, offerFrame)
+        записать("предложение файла «$fileName» отправлено")
+
+        // Читаем и отправляем блоками по 64 КиБ
+        val buffer = ByteArray(64 * 1024)
+        var offset = 0L
+        context.contentResolver.openInputStream(uri)?.use { stream ->
+            var read: Int
+            while (stream.read(buffer).also { read = it } != -1) {
+                if (transfer.cancelled) {
+                    записать("отправка «$fileName» отменена")
+                    activeTransfers.remove(tidHex)
+                    return
+                }
+                if (read <= 0) continue
+
+                val chunk = if (read == buffer.size) buffer else buffer.copyOf(read)
+                val blockFrame = BraidworkCore.fileBlockFrame(transferId, offset, chunk)
+                BraidworkCore.transportSend(h, conn, blockFrame)
+
+                offset += read
+                transfer.transferredBytes = offset
+
+                val now = System.currentTimeMillis()
+                val elapsed = now - transfer.lastCalcTime
+                if (elapsed >= 500) {
+                    val bytesDelta = transfer.transferredBytes - transfer.lastCalcBytes
+                    transfer.speedMbps = (bytesDelta * 8.0) / (elapsed * 1000.0)
+                    transfer.lastCalcBytes = transfer.transferredBytes
+                    transfer.lastCalcTime = now
+                }
+
+                Thread.sleep(2)
+            }
+        }
+
+        transfer.done = true
+        activeTransfers.remove(tidHex)
+        записать("файл «$fileName» ($sizeStr) отправлен на $peerName")
+        mainHandler.post {
+            Toast.makeText(context, "Файл «$fileName» отправлен!", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** Список активных передач для экрана «Файлы». */
+    fun getActiveTransfers(): List<Transfer> {
+        return activeTransfers.values.filter { !it.done && !it.cancelled }.map { at ->
+            val fraction = if (at.totalSize > 0) (at.transferredBytes.toFloat() / at.totalSize).coerceIn(0f, 1f) else 0f
+            val sentMb = String.format(Locale.US, "%.1f", at.transferredBytes / (1024.0 * 1024.0))
+            val totalMb = String.format(Locale.US, "%.1f", at.totalSize / (1024.0 * 1024.0))
+            val remainingBytes = (at.totalSize - at.transferredBytes).coerceAtLeast(0)
+            val leftSec = if (at.speedMbps > 0.05) ((remainingBytes * 8) / (at.speedMbps * 1_000_000.0)).toLong() else 0L
+            val leftStr = if (leftSec > 60) "${leftSec / 60} мин" else if (leftSec > 0) "$leftSec с" else "..."
+            Transfer(
+                name = at.fileName,
+                target = if (at.isIncoming) "от ${at.peerName}" else "на ${at.peerName}",
+                progress = fraction,
+                speedMbps = Math.round(at.speedMbps * 10.0) / 10.0,
+                leftText = if (fraction >= 1f) "Готово" else "Осталось $leftStr",
+                sentText = "$sentMb из $totalMb МБ",
+            )
+        }
+    }
+
+    /** Отменяет передачу файла. */
+    fun cancelTransfer(name: String) {
+        val t = activeTransfers.values.firstOrNull { it.fileName == name }
+        if (t != null) {
+            t.cancelled = true
+            t.tempFile?.delete()
+            activeTransfers.remove(t.transferIdHex)
+            записать("передача ${t.fileName} отменена")
+        }
+    }
+
+    /** Занятое место в папке Загрузки/Braidwork. */
+    fun getStorageUsageText(): String {
+        val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Braidwork")
+        if (!dir.exists() || !dir.isDirectory) return "0 МБ на диске"
+        val totalBytes = dir.listFiles()?.sumOf { if (it.isFile) it.length() else 0L } ?: 0L
+        return "${formatBytes(totalBytes)} на диске"
+    }
+
+    private fun formatBytes(bytes: Long): String {
+        if (bytes < 1024) return "$bytes Б"
+        val kb = bytes / 1024.0
+        if (kb < 1024) return String.format(Locale.US, "%.1f КБ", kb)
+        val mb = kb / 1024.0
+        if (mb < 1024) return String.format(Locale.US, "%.1f МБ", mb)
+        val gb = mb / 1024.0
+        return String.format(Locale.US, "%.2f ГБ", gb)
+    }
+
+    private fun findUniqueFile(dir: File, baseName: String): File {
+        val file = File(dir, baseName)
+        if (!file.exists()) return file
+        val dotIndex = baseName.lastIndexOf('.')
+        val namePart = if (dotIndex > 0) baseName.substring(0, dotIndex) else baseName
+        val extPart = if (dotIndex > 0) baseName.substring(dotIndex) else ""
+        var counter = 1
+        while (true) {
+            val candidate = File(dir, "$namePart ($counter)$extPart")
+            if (!candidate.exists()) return candidate
+            counter++
+        }
+    }
+
     /** Один опрос: забираем события и обновляем список. */
     private fun обработать(h: Long) {
         val события = BraidworkCore.transportPoll(h, максимум_событий, запас_под_кадры)
@@ -1135,6 +1444,8 @@ class DeviceDiscovery(
          */
         const val KIND_HEARTBEAT = 16
         const val KIND_CLIPBOARD_CONTENT = 34
+        const val KIND_FILE_OFFER = 35
+        const val KIND_FILE_BLOCK = 36
 
         /**
          * Граница «телефон или планшет» в dp.
