@@ -514,6 +514,9 @@ fl_status fl_transport_connect(uint64_t handle,
 fl_status fl_transport_send(uint64_t handle, uint64_t conn,
                             const uint8_t *frame, size_t frame_len);
 
+/* Возвращает объём неотправленных данных в очереди соединения (в байтах). */
+fl_status fl_transport_outbox_len(uint64_t handle, uint64_t conn, size_t *out_len);
+
 /* Закрывает соединение, оставляя транспорт работать. */
 fl_status fl_transport_conn_close(uint64_t handle, uint64_t conn);
 

@@ -655,6 +655,31 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTranspor
     }
 }
 
+/// Возвращает размер очереди неотправленных данных соединения (в байтах).
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTransportOutboxLen<
+    'local,
+>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    conn: jlong,
+) -> jlong {
+    let mut out_len = 0usize;
+    let status = unsafe {
+        crate::fl_transport_outbox_len(
+            FlHandle(handle as u64),
+            conn as u64,
+            &mut out_len as *mut usize,
+        )
+    };
+    if status == crate::FL_OK {
+        out_len as jlong
+    } else {
+        0
+    }
+}
+
 /// Собирает кадр `Heartbeat` из настоящих значений устройства.
 ///
 /// Ошибка возвращается кодом, а не пустым массивом: молчаливая пустота была бы

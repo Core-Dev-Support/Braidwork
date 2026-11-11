@@ -451,6 +451,19 @@ impl LanTransport {
         Ok(std::mem::take(&mut self.events))
     }
 
+    /// Возвращает неотданные события обратно в голову очереди.
+    pub fn return_events(&mut self, mut events: Vec<TransportEvent>) {
+        if !events.is_empty() {
+            events.append(&mut self.events);
+            self.events = events;
+        }
+    }
+
+    /// Длина очереди неотправленных исходящих данных соединения (в байтах).
+    pub fn outbox_len(&self, conn: u64) -> usize {
+        self.peers.get(&conn).map(|p| p.outbox.len()).unwrap_or(0)
+    }
+
     /// Повторяет объявление, если подошло время.
     fn announce_if_due(&mut self) {
         let Some(discovery) = &self.discovery else {
@@ -1088,6 +1101,7 @@ impl Channel for LanTransport {
         let frame = frame::encode_raw(MessageKind::KindSealed as i32, 0, &sealed)
             .map_err(TransportError::Frame)?;
         peer.outbox.extend_from_slice(&frame);
+        peer.сбросить_очередь();
         Ok(())
     }
 

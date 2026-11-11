@@ -49,9 +49,9 @@ pub use abi_session::{
 #[cfg(feature = "transport-lan")]
 pub use abi_transport::{
     fl_frame_encode, fl_transport_conn_close, fl_transport_connect, fl_transport_event_size,
-    fl_transport_free, fl_transport_lan_start, fl_transport_poll, fl_transport_port,
-    fl_transport_send, fl_transport_stop, FlTransEvent, FL_EV_CLOSED, FL_EV_CONNECTED,
-    FL_EV_DISCOVERED, FL_EV_FRAME, FL_EV_INCOMING, FL_EV_NOTICE, FL_EV_STATE,
+    fl_transport_free, fl_transport_lan_start, fl_transport_outbox_len, fl_transport_poll,
+    fl_transport_port, fl_transport_send, fl_transport_stop, FlTransEvent, FL_EV_CLOSED,
+    FL_EV_CONNECTED, FL_EV_DISCOVERED, FL_EV_FRAME, FL_EV_INCOMING, FL_EV_NOTICE, FL_EV_STATE,
 };
 pub use crypto::{verify_handshake, CryptoError, DeviceId, DeviceKeys, DEVICE_KEYS_BLOB_LEN};
 pub use frame::{

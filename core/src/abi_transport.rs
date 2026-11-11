@@ -255,19 +255,20 @@ pub unsafe extern "C" fn fl_transport_poll(
             return FL_OK;
         }
 
+        let mut unconsumed = Vec::new();
         let mut used = 0usize;
         let mut count = 0usize;
 
-        for событие in &события {
+        for событие in события {
             if count >= max_events {
-                break;
+                unconsumed.push(событие);
+                continue;
             }
-            let (запись, тело) = в_c(событие, used);
+            let (запись, тело) = в_c(&событие, used);
             let конец = used + тело.len();
             if конец > payloads_cap {
-                // Тело не влезло: событие пропускаем целиком, а не половиной.
-                // Половина тела хуже, чем ничего: клиент не отличил бы обрыв
-                // от короткого сообщения.
+                // Тело не влезло: сохраняем событие для следующего опроса
+                unconsumed.push(событие);
                 continue;
             }
 
@@ -280,6 +281,10 @@ pub unsafe extern "C" fn fl_transport_poll(
             if !out_events.is_null() {
                 std::ptr::write(out_events.add(count - 1), запись);
             }
+        }
+
+        if !unconsumed.is_empty() {
+            let _ = реестр().with(handle, |t| t.return_events(unconsumed));
         }
 
         *out_count = count;
@@ -473,6 +478,30 @@ pub unsafe extern "C" fn fl_transport_send(
         match реестр().with(handle, |t| t.send(conn, данные)) {
             Some(Ok(())) => FL_OK,
             Some(Err(_)) => crate::FL_ERR_TRANSPORT,
+            None => FL_ERR_INVALID_ARG,
+        }
+    })
+}
+
+/// Возвращает объём неотправленных данных в очереди соединения (в байтах).
+///
+/// # Safety
+/// `out_len` должен указывать на доступную для записи ячейку `usize`.
+#[no_mangle]
+pub unsafe extern "C" fn fl_transport_outbox_len(
+    handle: FlHandle,
+    conn: u64,
+    out_len: *mut usize,
+) -> FlStatus {
+    guard(|| {
+        if out_len.is_null() {
+            return FL_ERR_INVALID_ARG;
+        }
+        match реестр().with(handle, |t| t.outbox_len(conn)) {
+            Some(len) => {
+                *out_len = len;
+                FL_OK
+            }
             None => FL_ERR_INVALID_ARG,
         }
     })

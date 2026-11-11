@@ -699,6 +699,16 @@ object BraidworkCore {
      * Тип сообщения объявляется один раз, в своём заголовке: иначе получателю
      * пришлось бы угадывать его по содержимому.
      */
+    /**
+     * Объём неотправленных данных в очереди соединения (в байтах).
+     *
+     * Используется для противодавления (backpressure) при передаче файлов.
+     */
+    fun transportOutboxLen(handle: Long, conn: Long): Long {
+        ensureLoaded()
+        return nativeTransportOutboxLen(handle, conn)
+    }
+
     fun transportSend(handle: Long, conn: Long, frame: ByteArray) {
         require(frame.isNotEmpty()) { "пустой кадр отправлять нечем" }
         ensureLoaded()
@@ -1065,6 +1075,11 @@ object BraidworkCore {
         conn: Long,
         frame: ByteArray,
     ): Int
+
+    private external fun nativeTransportOutboxLen(
+        handle: Long,
+        conn: Long,
+    ): Long
 
     private external fun nativeHeartbeatBuild(
         unixTimeMs: Long,

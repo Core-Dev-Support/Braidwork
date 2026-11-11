@@ -437,10 +437,14 @@ class DeviceDiscovery(
 
                 try {
                     val file = transfer.tempFile ?: return
-                    RandomAccessFile(file, "rw").use { raf ->
-                        raf.seek(block.offset)
-                        raf.write(block.data)
+                    var raf = transfer.raf
+                    if (raf == null) {
+                        raf = RandomAccessFile(file, "rw")
+                        transfer.raf = raf
                     }
+                    raf.seek(block.offset)
+                    raf.write(block.data)
+
                     transfer.transferredBytes += block.data.size
 
                     val now = System.currentTimeMillis()
@@ -453,6 +457,11 @@ class DeviceDiscovery(
                     }
 
                     if (transfer.transferredBytes >= transfer.totalSize) {
+                        try {
+                            transfer.raf?.close()
+                        } catch (_: Exception) {}
+                        transfer.raf = null
+
                         val fileHash = FileInputStream(file).use { fis ->
                             BraidworkCore.blake3Stream(fis)
                         }
@@ -552,6 +561,7 @@ class DeviceDiscovery(
         @Volatile var lastCalcTime: Long = System.currentTimeMillis(),
         @Volatile var speedMbps: Double = 0.0,
         var tempFile: File? = null,
+        var raf: RandomAccessFile? = null,
         @Volatile var cancelled: Boolean = false,
         @Volatile var done: Boolean = false,
         @Volatile var error: String? = null,
@@ -808,7 +818,8 @@ class DeviceDiscovery(
                 publish(снимки.get().copy(problem = e.message ?: "ошибка опроса"))
             }
 
-            Thread.sleep(пауза_между_опросами_мс)
+            val пауза = if (activeTransfers.isNotEmpty()) 10L else пауза_между_опросами_мс
+            Thread.sleep(пауза)
         }
     }
 
@@ -1038,8 +1049,8 @@ class DeviceDiscovery(
         BraidworkCore.transportSend(h, conn, offerFrame)
         записать("предложение файла «$fileName» отправлено")
 
-        // Читаем и отправляем блоками по 64 КиБ
-        val buffer = ByteArray(64 * 1024)
+        // Читаем и отправляем блоками по 32 КиБ (укладывается в предел Noise MAX_MESSAGE с запасом)
+        val buffer = ByteArray(32 * 1024)
         var offset = 0L
         context.contentResolver.openInputStream(uri)?.use { stream ->
             var read: Int
@@ -1050,6 +1061,14 @@ class DeviceDiscovery(
                     return
                 }
                 if (read <= 0) continue
+
+                // Противодавление (backpressure): ждём, если сокет не успевает сбрасывать данные в сеть
+                var waitCount = 0
+                while (BraidworkCore.transportOutboxLen(h, conn) > 256 * 1024 && waitCount < 300) {
+                    if (transfer.cancelled) break
+                    Thread.sleep(5)
+                    waitCount++
+                }
 
                 val chunk = if (read == buffer.size) buffer else buffer.copyOf(read)
                 val blockFrame = BraidworkCore.fileBlockFrame(transferId, offset, chunk)
@@ -1067,7 +1086,7 @@ class DeviceDiscovery(
                     transfer.lastCalcTime = now
                 }
 
-                Thread.sleep(2)
+                Thread.sleep(1)
             }
         }
 
@@ -1104,6 +1123,10 @@ class DeviceDiscovery(
         val t = activeTransfers.values.firstOrNull { it.fileName == name }
         if (t != null) {
             t.cancelled = true
+            try {
+                t.raf?.close()
+            } catch (_: Exception) {}
+            t.raf = null
             t.tempFile?.delete()
             activeTransfers.remove(t.transferIdHex)
             записать("передача ${t.fileName} отменена")
@@ -1495,16 +1518,13 @@ class DeviceDiscovery(
          * Больше брать незачем: каждое событие — это запись в копию списка,
          * а сеть в доме даёт десяток устройств, не больше.
          */
-        const val максимум_событий = 32
+        const val максимум_событий = 64
 
         /**
          * Запас под кадры в одной порции.
-         *
-         * Объявление занимает меньше сотни байт, и на первом шаге кадров в
-         * порции нет вовсе. Запас нужен на будущее, когда через канал пойдут
-         * данные, и нехватка означала бы потерю кадра без предупреждения.
+         * 512 КиБ — вмещает порцию блоков файла для высокой скорости передачи.
          */
-        const val запас_под_кадры = 64 * 1024
+        const val запас_под_кадры = 512 * 1024
 
         /** Пауза между опросами: объявления идут каждые две секунды. */
         const val пауза_между_опросами_мс = 500L
