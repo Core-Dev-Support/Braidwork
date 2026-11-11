@@ -14,6 +14,7 @@ import android.util.Log
 import java.text.DateFormat
 import java.util.Date
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import com.naua_braidwork.app.ui.state.ClipboardItem
 import android.net.Uri
@@ -153,6 +154,33 @@ class DeviceDiscovery(
         fun свежее(сейчас: Long) = сейчас - вМс < СВЕЖЕСТЬ_СЕРДЦЕБИЕНИЯ_МС
     }
 
+    /** Сводка обмена за сегодня для экрана «Обмен». */
+    data class ShareStats(
+        val todayBytesText: String = "0 МБ",
+        val clipboardCount: Int = 0,
+        val filesCount: Int = 0,
+        val notifsCount: Int = 0,
+        val queueCount: Int = 0,
+        val clipboardProgress: Float = 0f,
+        val filesProgress: Float = 0f,
+        val queueProgress: Float = 0f,
+    ) {
+        companion object {
+            val EMPTY = ShareStats()
+        }
+    }
+
+    /** Завершённая передача файла для истории на экране «Файлы». */
+    data class CompletedTransfer(
+        val fileName: String,
+        val peerName: String,
+        val totalSize: Long,
+        val isIncoming: Boolean,
+        val success: Boolean,
+        val error: String? = null,
+        val timestamp: Long = System.currentTimeMillis(),
+    )
+
     /** Состояние для интерфейса. */
     data class Snapshot(
         /** Найденные устройства. */
@@ -171,6 +199,8 @@ class DeviceDiscovery(
          * не говорит ничего.
          */
         val пульсы: Map<String, PeerPulse> = emptyMap(),
+        val shareStats: ShareStats = ShareStats.EMPTY,
+        val transfers: List<Transfer> = emptyList(),
     ) {
         companion object {
             val EMPTY = Snapshot(emptyList(), 0, false, "")
@@ -296,6 +326,7 @@ class DeviceDiscovery(
 
         return try {
             BraidworkCore.transportSend(h, conn, кадр)
+            sentClipboardCount.incrementAndGet()
             записать("буфер отправлен: ${текст.кратко()} (${текст.length} символов)")
             mainHandler.post {
                 Toast.makeText(context, "Буфер отправлен (${текст.length} симв.)", Toast.LENGTH_SHORT).show()
@@ -410,10 +441,11 @@ class DeviceDiscovery(
                 dir.mkdirs()
                 val tempFile = File(dir, "${offer.fileName}.$tidHex.part")
 
+                val peerDisplayName = прежние[кто]?.name ?: кто
                 val transfer = ActiveTransfer(
                     transferIdHex = tidHex,
                     peerId = кто,
-                    peerName = кто,
+                    peerName = peerDisplayName,
                     fileName = offer.fileName,
                     totalSize = offer.totalSize,
                     totalHash = offer.totalHash,
@@ -473,6 +505,16 @@ class DeviceDiscovery(
 
                             transfer.done = true
                             activeTransfers.remove(tidHex)
+                            bytesTransferredToday.addAndGet(transfer.totalSize)
+                            filesTransferredCount.incrementAndGet()
+                            completedTransfers.add(0, CompletedTransfer(
+                                fileName = transfer.fileName,
+                                peerName = transfer.peerName,
+                                totalSize = transfer.totalSize,
+                                isIncoming = true,
+                                success = true,
+                            ))
+                            if (completedTransfers.size > 20) completedTransfers.removeAt(completedTransfers.size - 1)
 
                             записать("файл «${transfer.fileName}» принят в Загрузки/Braidwork")
                             mainHandler.post {
@@ -482,6 +524,15 @@ class DeviceDiscovery(
                             file.delete()
                             transfer.error = "хэш не совпал"
                             activeTransfers.remove(tidHex)
+                            completedTransfers.add(0, CompletedTransfer(
+                                fileName = transfer.fileName,
+                                peerName = transfer.peerName,
+                                totalSize = transfer.totalSize,
+                                isIncoming = true,
+                                success = false,
+                                error = "хэш не совпал",
+                            ))
+                            if (completedTransfers.size > 20) completedTransfers.removeAt(completedTransfers.size - 1)
                             записать("ошибка: хэш файла «${transfer.fileName}» не совпал — удалён")
                             mainHandler.post {
                                 Toast.makeText(context, "Ошибка: файл ${transfer.fileName} повреждён", Toast.LENGTH_SHORT).show()
@@ -568,6 +619,10 @@ class DeviceDiscovery(
     )
 
     private val activeTransfers = ConcurrentHashMap<String, ActiveTransfer>()
+    private val completedTransfers = java.util.concurrent.CopyOnWriteArrayList<CompletedTransfer>()
+    private val bytesTransferredToday = AtomicLong(0L)
+    private val filesTransferredCount = AtomicInteger(0)
+    private val sentClipboardCount = AtomicInteger(0)
     private val fileTransferExecutor = Executors.newSingleThreadExecutor()
 
     /** Пришедшее содержимое, новые сверху. */
@@ -725,7 +780,10 @@ class DeviceDiscovery(
     }
 
     /** Текущее состояние для интерфейса. */
-    fun snapshot(): Snapshot = снимки.get()
+    fun snapshot(): Snapshot = снимки.get().copy(
+        shareStats = getShareStats(),
+        transfers = getActiveTransfers(),
+    )
 
     /**
      * Просит подключиться к устройству.
@@ -1056,8 +1114,17 @@ class DeviceDiscovery(
             var read: Int
             while (stream.read(buffer).also { read = it } != -1) {
                 if (transfer.cancelled) {
-                    записать("отправка «$fileName» отменена")
                     activeTransfers.remove(tidHex)
+                    completedTransfers.add(0, CompletedTransfer(
+                        fileName = fileName,
+                        peerName = peerName,
+                        totalSize = transfer.totalSize,
+                        isIncoming = false,
+                        success = false,
+                        error = "отменено",
+                    ))
+                    if (completedTransfers.size > 20) completedTransfers.removeAt(completedTransfers.size - 1)
+                    записать("отправка «$fileName» отменена")
                     return
                 }
                 if (read <= 0) continue
@@ -1092,18 +1159,62 @@ class DeviceDiscovery(
 
         transfer.done = true
         activeTransfers.remove(tidHex)
+        bytesTransferredToday.addAndGet(transfer.totalSize)
+        filesTransferredCount.incrementAndGet()
+        completedTransfers.add(0, CompletedTransfer(
+            fileName = fileName,
+            peerName = peerName,
+            totalSize = transfer.totalSize,
+            isIncoming = false,
+            success = true,
+        ))
+        if (completedTransfers.size > 20) completedTransfers.removeAt(completedTransfers.size - 1)
         записать("файл «$fileName» ($sizeStr) отправлен на $peerName")
         mainHandler.post {
             Toast.makeText(context, "Файл «$fileName» отправлен!", Toast.LENGTH_SHORT).show()
         }
     }
 
-    /** Список активных передач для экрана «Файлы». */
+    /** Есть ли текущие активные передачи файлов. */
+    fun hasActiveTransfers(): Boolean = activeTransfers.values.any { !it.done && !it.cancelled }
+
+    /** Сводная статистика для экрана «Обмен». */
+    fun getShareStats(): ShareStats {
+        val clipCount = полученное.size + sentClipboardCount.get()
+        val fileCount = filesTransferredCount.get()
+        val activeList = activeTransfers.values.filter { !it.cancelled }
+        val activeCount = activeList.count { !it.done }
+        val totalBytes = bytesTransferredToday.get() + activeList.sumOf { it.transferredBytes }
+
+        val bytesText = if (totalBytes == 0L) "0 МБ" else formatBytes(totalBytes)
+        val clipProg = if (clipCount > 0) (clipCount / 10f).coerceIn(0.15f, 1f) else 0f
+        val fileProg = if (fileCount > 0) (fileCount / 5f).coerceIn(0.15f, 1f) else 0f
+        val qProg = if (activeCount > 0) {
+            val valid = activeList.filter { !it.done && it.totalSize > 0 }
+            if (valid.isNotEmpty()) {
+                val avg = valid.map { it.transferredBytes.toFloat() / it.totalSize }.average().toFloat()
+                avg.coerceIn(0.1f, 1f)
+            } else 0.2f
+        } else if (fileCount > 0) 1f else 0f
+
+        return ShareStats(
+            todayBytesText = bytesText,
+            clipboardCount = clipCount,
+            filesCount = fileCount,
+            notifsCount = 0,
+            queueCount = activeCount,
+            clipboardProgress = clipProg,
+            filesProgress = fileProg,
+            queueProgress = qProg,
+        )
+    }
+
+    /** Список активных и недавних передач для экрана «Файлы». */
     fun getActiveTransfers(): List<Transfer> {
-        return activeTransfers.values.filter { !it.done && !it.cancelled }.map { at ->
+        val active = activeTransfers.values.filter { !it.cancelled }.map { at ->
             val fraction = if (at.totalSize > 0) (at.transferredBytes.toFloat() / at.totalSize).coerceIn(0f, 1f) else 0f
-            val sentMb = String.format(Locale.US, "%.1f", at.transferredBytes / (1024.0 * 1024.0))
-            val totalMb = String.format(Locale.US, "%.1f", at.totalSize / (1024.0 * 1024.0))
+            val sentMb = formatBytes(at.transferredBytes)
+            val totalMb = formatBytes(at.totalSize)
             val remainingBytes = (at.totalSize - at.transferredBytes).coerceAtLeast(0)
             val leftSec = if (at.speedMbps > 0.05) ((remainingBytes * 8) / (at.speedMbps * 1_000_000.0)).toLong() else 0L
             val leftStr = if (leftSec > 60) "${leftSec / 60} мин" else if (leftSec > 0) "$leftSec с" else "..."
@@ -1112,10 +1223,22 @@ class DeviceDiscovery(
                 target = if (at.isIncoming) "от ${at.peerName}" else "на ${at.peerName}",
                 progress = fraction,
                 speedMbps = Math.round(at.speedMbps * 10.0) / 10.0,
-                leftText = if (fraction >= 1f) "Готово" else "Осталось $leftStr",
-                sentText = "$sentMb из $totalMb МБ",
+                leftText = if (at.done) "Готово" else if (at.error != null) "Ошибка: ${at.error}" else "Осталось $leftStr",
+                sentText = "$sentMb из $totalMb",
             )
         }
+        val finished = completedTransfers.take(10).map { ct ->
+            val sizeStr = formatBytes(ct.totalSize)
+            Transfer(
+                name = ct.fileName,
+                target = if (ct.isIncoming) "от ${ct.peerName}" else "на ${ct.peerName}",
+                progress = if (ct.success) 1f else 0f,
+                speedMbps = 0.0,
+                leftText = if (ct.success) "Готово" else "Ошибка: ${ct.error ?: "сбой"}",
+                sentText = "$sizeStr из $sizeStr",
+            )
+        }
+        return active + finished
     }
 
     /** Отменяет передачу файла. */
@@ -1129,6 +1252,15 @@ class DeviceDiscovery(
             t.raf = null
             t.tempFile?.delete()
             activeTransfers.remove(t.transferIdHex)
+            completedTransfers.add(0, CompletedTransfer(
+                fileName = t.fileName,
+                peerName = t.peerName,
+                totalSize = t.totalSize,
+                isIncoming = t.isIncoming,
+                success = false,
+                error = "отменено пользователем",
+            ))
+            if (completedTransfers.size > 20) completedTransfers.removeAt(completedTransfers.size - 1)
             записать("передача ${t.fileName} отменена")
         }
     }
@@ -1141,12 +1273,13 @@ class DeviceDiscovery(
         return "${formatBytes(totalBytes)} на диске"
     }
 
-    private fun formatBytes(bytes: Long): String {
-        if (bytes < 1024) return "$bytes Б"
+    fun formatBytes(bytes: Long): String {
+        if (bytes <= 0L) return "0 МБ"
+        if (bytes < 1024L) return "$bytes Б"
         val kb = bytes / 1024.0
-        if (kb < 1024) return String.format(Locale.US, "%.1f КБ", kb)
+        if (kb < 1024.0) return String.format(Locale.US, "%.1f КБ", kb)
         val mb = kb / 1024.0
-        if (mb < 1024) return String.format(Locale.US, "%.1f МБ", mb)
+        if (mb < 1024.0) return String.format(Locale.US, "%.1f МБ", mb)
         val gb = mb / 1024.0
         return String.format(Locale.US, "%.2f ГБ", gb)
     }

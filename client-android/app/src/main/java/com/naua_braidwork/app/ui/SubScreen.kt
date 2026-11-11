@@ -248,7 +248,8 @@ fun SubScreen(
 
                 LaunchedEffect(Unit) {
                     while (true) {
-                        delay(500)
+                        val hasActive = discovery?.hasActiveTransfers() == true
+                        delay(if (hasActive) 100L else 500L)
                         tick++
                     }
                 }
@@ -275,8 +276,8 @@ fun SubScreen(
                     }
                 }
 
-                val currentTransfers = discovery?.getActiveTransfers().orEmpty()
-                val storageUsage = discovery?.getStorageUsageText() ?: "0 МБ на диске"
+                val currentTransfers = remember(tick) { discovery?.getActiveTransfers().orEmpty() }
+                val storageUsage = remember(tick) { discovery?.getStorageUsageText() ?: "0 МБ на диске" }
 
                 FilesScreen(
                     state = Sample.filesState().copy(

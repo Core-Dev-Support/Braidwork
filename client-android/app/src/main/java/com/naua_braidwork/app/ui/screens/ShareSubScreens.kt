@@ -219,6 +219,7 @@ private fun TransferList(
 /** Строка передачи: имя, получатель, доля, скорость и отмена. */
 @Composable
 private fun TransferRow(transfer: Transfer, onCancel: () -> Unit) {
+    val isFinished = transfer.progress >= 1f || transfer.leftText.startsWith("Готово")
     Column(modifier = Modifier.padding(18.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconTileGreen()
@@ -232,8 +233,19 @@ private fun TransferRow(transfer: Transfer, onCancel: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                 )
+                val targetLabel = if (transfer.target.startsWith("от ") || transfer.target.startsWith("на ") ||
+                    transfer.target.startsWith("От ") || transfer.target.startsWith("На ")) {
+                    transfer.target
+                } else {
+                    "На ${transfer.target}"
+                }
+                val subText = if (isFinished) {
+                    "$targetLabel · ${transfer.leftText}"
+                } else {
+                    "$targetLabel · ${transfer.speedMbps} Мбит/с"
+                }
                 Text(
-                    text = "На ${transfer.target} · ${transfer.speedMbps} Мбит/с",
+                    text = subText,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -243,7 +255,7 @@ private fun TransferRow(transfer: Transfer, onCancel: () -> Unit) {
                 text = "${(transfer.progress * 100).toInt()}%",
                 fontSize = 18.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = Color(0xFF1A6FDB),
+                color = if (isFinished) Color(0xFF2E7D32) else Color(0xFF1A6FDB),
             )
         }
         Spacer(Modifier.height(14.dp))
@@ -257,7 +269,7 @@ private fun TransferRow(transfer: Transfer, onCancel: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth(transfer.progress.coerceIn(0f, 1f))
                     .height(8.dp)
-                    .background(Color(0xFF2B8CF5), RoundedCornerShape(4.dp)),
+                    .background(if (isFinished) Color(0xFF4CAF50) else Color(0xFF2B8CF5), RoundedCornerShape(4.dp)),
             )
         }
         Spacer(Modifier.height(8.dp))
@@ -279,15 +291,17 @@ private fun TransferRow(transfer: Transfer, onCancel: () -> Unit) {
                     lineHeight = 18.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.width(12.dp))
-                Text(
-                    text = "Отменить",
-                    fontSize = 13.sp,
-                    lineHeight = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.tapNoRipple(onClick = onCancel),
-                )
+                if (!isFinished) {
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        text = "Отменить",
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.tapNoRipple(onClick = onCancel),
+                    )
+                }
             }
         }
     }

@@ -46,6 +46,7 @@ import com.naua_braidwork.app.ui.icons.IcwUpload
  */
 @Composable
 fun ShareScreen(
+    stats: com.naua_braidwork.app.DeviceDiscovery.ShareStats = com.naua_braidwork.app.DeviceDiscovery.ShareStats.EMPTY,
     onQuickAction: (String) -> Unit,
     onAddDevice: () -> Unit,
     modifier: Modifier = Modifier,
@@ -95,7 +96,10 @@ fun ShareScreen(
                 .size(250.dp),
             contentAlignment = Alignment.Center,
         ) {
-            ActivityRings(colors = listOf(orange, green, cyan))
+            ActivityRings(
+                colors = listOf(orange, green, cyan),
+                progresses = listOf(stats.clipboardProgress, stats.filesProgress, stats.queueProgress),
+            )
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     text = "Сегодня",
@@ -104,7 +108,7 @@ fun ShareScreen(
                     color = Color(0xFFB4B7C0),
                 )
                 Text(
-                    text = "0 МБ",
+                    text = stats.todayBytesText,
                     fontSize = 22.sp,
                     lineHeight = 28.sp,
                     fontWeight = FontWeight.Bold,
@@ -124,13 +128,13 @@ fun ShareScreen(
         ) {
             Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 18.dp)) {
                 Row(modifier = Modifier.fillMaxWidth()) {
-                    StatCell("Буфер", "0", "записей", IcwClipboard, orange, Modifier.weight(1f)) {
+                    StatCell("Буфер", "${stats.clipboardCount}", "записей", IcwClipboard, orange, Modifier.weight(1f)) {
                         onQuickAction("clipboard")
                     }
-                    StatCell("Файлы", "0", "штук", IcwFolder, green, Modifier.weight(1f)) {
+                    StatCell("Файлы", "${stats.filesCount}", "штук", IcwFolder, green, Modifier.weight(1f)) {
                         onQuickAction("files")
                     }
-                    StatCell("Уведом.", "0", "пересылок", IcwBell, cyan, Modifier.weight(1f)) {
+                    StatCell("Уведом.", "${stats.notifsCount}", "пересылок", IcwBell, cyan, Modifier.weight(1f)) {
                         onQuickAction("notifs")
                     }
                 }
@@ -148,7 +152,7 @@ fun ShareScreen(
                         // Минимум: строка файла несёт имя и размер, оба
                         // переносятся при крупном шрифте.
                         .heightIn(min = 52.dp)
-                        .tapNoRipple { },
+                        .tapNoRipple { onQuickAction("files") },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -160,8 +164,9 @@ fun ShareScreen(
                             modifier = Modifier.size(20.dp),
                         )
                         Spacer(Modifier.width(10.dp))
+                        val queueText = if (stats.queueCount > 0) "Передач сейчас (${stats.queueCount})" else "Очередь отправки (0)"
                         Text(
-                            text = "Очередь отправки (0)",
+                            text = queueText,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Medium,
                             color = Color.White,
@@ -189,6 +194,7 @@ fun ShareScreen(
 @Composable
 private fun ActivityRings(
     colors: List<Color>,
+    progresses: List<Float> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     Canvas(modifier = modifier) {
@@ -199,6 +205,9 @@ private fun ActivityRings(
 
         radii.forEachIndexed { index, radius ->
             val color = colors.getOrElse(index) { Color.Gray }
+            val progress = progresses.getOrElse(index) { 0f }.coerceIn(0f, 1f)
+
+            // Фоновая подложка
             drawArc(
                 color = color.copy(alpha = 0.18f),
                 startAngle = -90f,
@@ -208,6 +217,19 @@ private fun ActivityRings(
                 size = androidx.compose.ui.geometry.Size(radius * 2, radius * 2),
                 style = Stroke(width = stroke, cap = StrokeCap.Round),
             )
+
+            // Заполненная часть дуги активности
+            if (progress > 0.001f) {
+                drawArc(
+                    color = color,
+                    startAngle = -90f,
+                    sweepAngle = 360f * progress,
+                    useCenter = false,
+                    topLeft = Offset(center.x - radius, center.y - radius),
+                    size = androidx.compose.ui.geometry.Size(radius * 2, radius * 2),
+                    style = Stroke(width = stroke, cap = StrokeCap.Round),
+                )
+            }
         }
     }
 }

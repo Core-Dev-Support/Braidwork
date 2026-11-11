@@ -184,7 +184,8 @@ fun BraidworkApp(
             val свежий = LinkService.поиск
             if (поиск.value !== свежий) поиск.value = свежий
             снимок.value = свежий?.snapshot() ?: DeviceDiscovery.Snapshot.EMPTY
-            delay(ОПРОС_СНИМКА_МС)
+            val hasActive = свежий?.hasActiveTransfers() == true
+            delay(if (hasActive) 100L else ОПРОС_СНИМКА_МС)
         }
     }
 
@@ -407,6 +408,7 @@ fun BraidworkApp(
                     )
 
                     Tab.Share -> ShareScreen(
+                        stats = снимок.value.shareStats,
                         // Идентификаторы ячеек совпадают с маршрутами подэкранов.
                         onQuickAction = { id -> открыть(quickRoute(id)) },
                         onAddDevice = { открыть(Route.PAIR) },
