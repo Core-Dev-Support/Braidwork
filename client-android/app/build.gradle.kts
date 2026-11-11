@@ -57,7 +57,7 @@ val кодВерсии: Int = версия.split("-").first()
         // ×100 и ×10000 держат порядок: 0.7.1 → 701, 0.10.0 → 1000.
         основа * 10000 + дополнительное * 100 + исправление
     }
-    .coerceAtLeast(931)
+    .coerceAtLeast(932)
 
 android {
     namespace = "com.naua_braidwork.app"

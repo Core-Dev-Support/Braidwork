@@ -1310,15 +1310,27 @@ class DeviceDiscovery(
         val totalBytes = bytesTransferredToday.get() + activeList.sumOf { it.transferredBytes }
 
         val bytesText = if (totalBytes == 0L) "0 МБ" else formatBytes(totalBytes)
-        val clipProg = if (clipCount > 0) (clipCount / 10f).coerceIn(0.15f, 1f) else 0f
-        val fileProg = if (fileCount > 0) (fileCount / 5f).coerceIn(0.15f, 1f) else 0f
+
+        // 1. Оранжевое кольцо (Буфер): 5 записей = 100%
+        val clipProg = if (clipCount > 0) (clipCount / 5f).coerceIn(0.15f, 1f) else 0f
+
+        // 2. Зелёное кольцо (Файлы): прогресс по количеству файлов (до 5) или объёму (до 25 МБ)
+        val fileProgByCount = (fileCount / 5f).coerceIn(0f, 1f)
+        val fileProgByBytes = if (totalBytes > 0) (totalBytes.toFloat() / (25 * 1024 * 1024f)).coerceIn(0f, 1f) else 0f
+        val fileProg = if (fileCount > 0 || totalBytes > 0) {
+            maxOf(fileProgByCount, fileProgByBytes).coerceIn(0.18f, 1f)
+        } else 0f
+
+        // 3. Голубое кольцо (Очередь / Активность)
         val qProg = if (activeCount > 0) {
             val valid = activeList.filter { !it.done && it.totalSize > 0 }
             if (valid.isNotEmpty()) {
                 val avg = valid.map { it.transferredBytes.toFloat() / it.totalSize }.average().toFloat()
                 avg.coerceIn(0.1f, 1f)
-            } else 0.2f
-        } else if (fileCount > 0) 1f else 0f
+            } else 0.25f
+        } else if (fileCount > 0 || clipCount > 0) {
+            ((clipProg + fileProg) / 2f).coerceIn(0.2f, 1f)
+        } else 0f
 
         return ShareStats(
             todayBytesText = bytesText,

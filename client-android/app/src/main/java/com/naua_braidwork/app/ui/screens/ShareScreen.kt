@@ -1,6 +1,8 @@
 package com.naua_braidwork.app.ui.screens
 
 import com.naua_braidwork.app.ui.components.tapNoRipple
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -99,6 +101,7 @@ fun ShareScreen(
             ActivityRings(
                 colors = listOf(orange, green, cyan),
                 progresses = listOf(stats.clipboardProgress, stats.filesProgress, stats.queueProgress),
+                modifier = Modifier.fillMaxSize(),
             )
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
@@ -197,29 +200,38 @@ private fun ActivityRings(
     progresses: List<Float> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
-    Canvas(modifier = modifier) {
+    val animated0 = animateFloatAsState(targetValue = progresses.getOrElse(0) { 0f }.coerceIn(0f, 1f), animationSpec = tween(600), label = "p0").value
+    val animated1 = animateFloatAsState(targetValue = progresses.getOrElse(1) { 0f }.coerceIn(0f, 1f), animationSpec = tween(600), label = "p1").value
+    val animated2 = animateFloatAsState(targetValue = progresses.getOrElse(2) { 0f }.coerceIn(0f, 1f), animationSpec = tween(600), label = "p2").value
+    val animatedList = listOf(animated0, animated1, animated2)
+
+    Canvas(modifier = modifier.fillMaxSize()) {
         val center = Offset(size.width / 2f, size.height / 2f)
         val scale = size.minDimension / 250f
-        val stroke = 22f * scale
-        val radii = listOf(108f, 82f, 56f).map { it * scale }
+        val stroke = 20f * scale
+        val radii = listOf(105f, 80f, 55f).map { it * scale }
 
         radii.forEachIndexed { index, radius ->
             val color = colors.getOrElse(index) { Color.Gray }
-            val progress = progresses.getOrElse(index) { 0f }.coerceIn(0f, 1f)
+            val progress = animatedList.getOrElse(index) { 0f }.coerceIn(0f, 1f)
 
-            // Фоновая подложка
-            drawArc(
-                color = color.copy(alpha = 0.18f),
-                startAngle = -90f,
-                sweepAngle = 360f,
-                useCenter = false,
-                topLeft = Offset(center.x - radius, center.y - radius),
-                size = androidx.compose.ui.geometry.Size(radius * 2, radius * 2),
-                style = Stroke(width = stroke, cap = StrokeCap.Round),
+            // 1. Фоновая подложка (целое кольцо с полупрозрачностью)
+            drawCircle(
+                color = color.copy(alpha = 0.20f),
+                radius = radius,
+                center = center,
+                style = Stroke(width = stroke),
             )
 
-            // Заполненная часть дуги активности
-            if (progress > 0.001f) {
+            // 2. Заполненная часть дуги активности
+            if (progress >= 0.999f) {
+                drawCircle(
+                    color = color,
+                    radius = radius,
+                    center = center,
+                    style = Stroke(width = stroke),
+                )
+            } else if (progress > 0.005f) {
                 drawArc(
                     color = color,
                     startAngle = -90f,
