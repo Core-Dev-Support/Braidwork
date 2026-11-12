@@ -224,6 +224,7 @@ fl_status fl_keys_fingerprint(const uint8_t *blob, size_t blob_len,
 #define FL_FILE_BLOCK_MAX (256u * 1024u)
 #define FL_FILE_BLOCK_FRAME_MAX (FL_FILE_BLOCK_MAX + 1024u)
 #define FL_FILE_OFFER_FRAME_MAX 4096u
+#define FL_FILE_REQUEST_FRAME_MAX (16u * 1024u)
 #define FL_HASH_LEN 32u
 
 /* Собирает кадр Heartbeat — первое, что уходит по установленному каналу.
@@ -308,6 +309,18 @@ fl_status fl_file_block_read(const uint8_t *body, size_t body_len,
                             uint8_t *out_transfer_id, size_t transfer_id_cap, size_t *out_transfer_id_len,
                             uint64_t *out_offset,
                             uint8_t *out_data, size_t data_cap, size_t *out_data_len);
+
+/* Собирает кадр FileRequest (запрос недостающих смещений при докачке).
+ * missing_offsets — массив смещений недостающих блоков длины missing_offsets_len.
+ * out_data — не менее FL_FILE_REQUEST_FRAME_MAX байт. Длина кадра в out_len. */
+fl_status fl_file_request_build(const uint8_t *transfer_id, size_t transfer_id_len,
+                               const uint64_t *missing_offsets, size_t missing_offsets_len,
+                               uint8_t *out_data, size_t *out_len);
+
+/* Разбирает тело FileRequest. */
+fl_status fl_file_request_read(const uint8_t *body, size_t body_len,
+                              uint8_t *out_transfer_id, size_t transfer_id_cap, size_t *out_transfer_id_len,
+                              uint64_t *out_missing_offsets, size_t missing_offsets_cap, size_t *out_missing_offsets_len);
 
 fl_status fl_keys_device_id(const uint8_t *blob, size_t blob_len,
                             uint8_t *out_id, size_t *out_len);
