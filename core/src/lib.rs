@@ -21,6 +21,8 @@ pub mod android_log;
 // должен платить за мёртвый код.
 #[cfg(feature = "transport-lan")]
 mod abi_transport;
+#[cfg(feature = "transport-lan")]
+pub mod discovery;
 mod crypto;
 mod frame;
 mod registry;

@@ -33,12 +33,17 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.graphics.Brush
 import com.naua_braidwork.app.ui.icons.IcwBell
+import com.naua_braidwork.app.ui.icons.IcwBolt
 import com.naua_braidwork.app.ui.icons.IcwChevron
 import com.naua_braidwork.app.ui.icons.IcwClipboard
 import com.naua_braidwork.app.ui.icons.IcwFolder
 import com.naua_braidwork.app.ui.icons.IcwPlus
 import com.naua_braidwork.app.ui.icons.IcwUpload
+import com.naua_braidwork.app.ui.icons.IcwWifi
 
 /**
  * Обмен по спецификации `design/spec/SPEC.txt`.
@@ -60,7 +65,9 @@ fun ShareScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(Color.Black)
+            .verticalScroll(rememberScrollState())
+            .padding(bottom = 20.dp),
     ) {
         Row(
             modifier = Modifier
@@ -137,7 +144,7 @@ fun ShareScreen(
                     StatCell("Файлы", "${stats.filesCount}", "штук", IcwFolder, green, Modifier.weight(1f)) {
                         onQuickAction("files")
                     }
-                    StatCell("Уведом.", "${stats.notifsCount}", "пересылок", IcwBell, cyan, Modifier.weight(1f)) {
+                    StatCell("Уведом.", "${stats.notifsCount}", "шт.", IcwBell, cyan, Modifier.weight(1f)) {
                         onQuickAction("notifs")
                     }
                 }
@@ -181,6 +188,152 @@ fun ShareScreen(
                         tint = Color(0xFFA9ACB6),
                         modifier = Modifier.size(20.dp),
                     )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // Две карточки по спецификации Share.dc.html: Связь и Скорость
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            // Карточка «Связь»
+            Surface(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(176.dp),
+                shape = RoundedCornerShape(26.dp),
+                color = Color(0xFF1C1C1F),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .background(Color(0xFF3A6BFF), RoundedCornerShape(18.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = IcwWifi,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = "Связь",
+                        fontSize = 20.sp,
+                        lineHeight = 26.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                    )
+                    Text(
+                        text = "Задержка < 12 мс",
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = Color(0xFFB4B7C0),
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(14.dp)
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(Color(0xFFFF5A5A), Color(0xFFFFC247), Color(0xFF3DDC84))
+                                ),
+                                RoundedCornerShape(7.dp)
+                            ),
+                    ) {
+                        // Засечка качества связи (82% в макете: отлично)
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .padding(end = 18.dp)
+                                .size(width = 6.dp, height = 20.dp)
+                                .background(Color.White, RoundedCornerShape(3.dp))
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(text = "Плохо", fontSize = 13.sp, color = Color(0xFFA9ACB6))
+                        Text(text = "Отлично", fontSize = 13.sp, color = Color(0xFFA9ACB6))
+                    }
+                }
+            }
+
+            // Карточка «Скорость»
+            Surface(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(176.dp),
+                shape = RoundedCornerShape(26.dp),
+                color = Color(0xFF1C1C1F),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .background(Color(0xFF12A8B8), RoundedCornerShape(18.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = IcwBolt,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = "Скорость",
+                        fontSize = 20.sp,
+                        lineHeight = 26.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                    )
+                    Text(
+                        text = "38 Мбит/с",
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = Color(0xFFB4B7C0),
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp),
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                        verticalAlignment = Alignment.Bottom,
+                    ) {
+                        val heights = listOf(10, 14, 22, 18, 30, 26, 16, 12, 24, 34, 40, 28, 20, 14, 26, 36, 30, 18)
+                        heights.forEachIndexed { i, h ->
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(h.dp)
+                                    .background(
+                                        if (i > 12) Color(0xFF4FE3F2) else Color(0xFF2C7F89),
+                                        RoundedCornerShape(2.dp)
+                                    )
+                            )
+                        }
+                    }
                 }
             }
         }

@@ -257,3 +257,13 @@ val IcwAddress: ImageVector by lazy {
 val IcwSettings: ImageVector by lazy {
     bwIcon("settings", "M4 7h9M17 7h3M4 17h3M11 17h9M13 7a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7 17a2 2 0 1 0 4 0a2 2 0 1 0-4 0")
 }
+
+/** Молния: скорость передачи данных. */
+val IcwBolt: ImageVector by lazy {
+    bwIcon("bolt", "M13 3L5 13h6l-1 8 8-10h-6z", 2f)
+}
+
+/** Ключ: выдача и проверка ключей семьи. */
+val IcwKey: ImageVector by lazy {
+    bwIcon("key", "M3 14a4 4 0 1 0 8 0a4 4 0 1 0-8 0M10.5 12l9.5-9M16 7l3 3M14 9l2 2", 1.8f)
+}

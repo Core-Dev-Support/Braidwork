@@ -29,8 +29,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.naua_braidwork.app.ui.icons.IcwChevron
+import com.naua_braidwork.app.ui.icons.IcwGlobe
+import com.naua_braidwork.app.ui.icons.IcwKey
 import com.naua_braidwork.app.ui.icons.IcwPlus
 import com.naua_braidwork.app.ui.icons.IcwQr
+import com.naua_braidwork.app.ui.icons.IcwRefresh
 import com.naua_braidwork.app.ui.state.FamilyState
 import com.naua_braidwork.app.ui.state.FamilyMember
 import com.naua_braidwork.app.ui.theme.LocalBwColors
@@ -45,6 +48,7 @@ import com.naua_braidwork.app.ui.theme.LocalBwColors
 fun FamilyScreen(
     members: FamilyState,
     onInvite: () -> Unit,
+    onOpenRoute: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -168,7 +172,118 @@ fun FamilyScreen(
             MemberList(members.members)
         }
 
+        Spacer(Modifier.height(22.dp))
+        Text(
+            text = "Сеть семьи",
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier.padding(horizontal = 24.dp),
+        )
+        Spacer(Modifier.height(10.dp))
+
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface,
+        ) {
+            Column {
+                FamilyNetRow(
+                    icon = IcwRefresh,
+                    iconBg = Color(0xFFE4F1FF),
+                    iconFg = Color(0xFF1A6FDB),
+                    title = "Адреса устройств",
+                    subtitle = "Обновлены только что",
+                    onClick = { onOpenRoute("network") },
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant),
+                )
+                FamilyNetRow(
+                    icon = IcwGlobe,
+                    iconBg = Color(0xFFE8F6EE),
+                    iconFg = Color(0xFF16804A),
+                    title = "Прямые соединения",
+                    subtitle = "Локальная сеть · Авто",
+                    onClick = { onOpenRoute("network") },
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant),
+                )
+                FamilyNetRow(
+                    icon = IcwKey,
+                    iconBg = Color(0xFFEFEAFB),
+                    iconFg = Color(0xFF6038C9),
+                    title = "Кто выдаёт ключи",
+                    subtitle = "Доверенные участники семьи",
+                    onClick = { onOpenRoute("security") },
+                )
+            }
+        }
+
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun FamilyNetRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    iconBg: Color,
+    iconFg: Color,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .tapNoRipple(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .background(iconBg, RoundedCornerShape(12.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconFg,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                fontSize = 16.sp,
+                lineHeight = 22.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = subtitle,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Icon(
+            imageVector = IcwChevron,
+            contentDescription = null,
+            tint = Color(0xFF8A8D97),
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 

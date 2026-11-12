@@ -417,6 +417,7 @@ fun BraidworkApp(
                     Tab.Family -> FamilyScreen(
                         members = Sample.familyState(),
                         onInvite = { открыть(Route.PAIR) },
+                        onOpenRoute = { открыть(it) },
                     )
 
                     Tab.Settings -> SettingsScreen(

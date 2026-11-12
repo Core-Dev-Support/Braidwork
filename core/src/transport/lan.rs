@@ -35,24 +35,24 @@
 
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream, UdpSocket};
-use std::time::{Duration, Instant};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream};
+use std::time::Duration;
 
 use crate::crypto::DeviceKeys;
 use crate::frame::{self, FrameReader};
-use crate::pb::{Hello, MessageKind};
-use crate::session::{build_hello, default_capabilities, Handshake, HandshakeStep, Role, Session};
+use crate::pb::MessageKind;
+#[cfg(test)]
+use crate::pb::Hello;
+use crate::session::{Handshake, HandshakeStep, Role, Session};
 use crate::transport::{
     Channel, CloseReason, Connection, Transport, TransportError, TransportEvent, TransportState,
     ANNOUNCE_INTERVAL_MS, BROADCAST_ADDR, DISCOVERY_PORT,
 };
-use prost::Message;
+
+pub const МАКСИМУМ_ИМЕНИ: usize = crate::discovery::MAX_NAME_LEN;
 
 /// Сколько данных пробуем прочитать за один заход.
 const READ_CHUNK: usize = 8 * 1024;
-
-/// Размер буфера приёма объявлений.
-const DISCOVERY_BUF: usize = 2048;
 
 /// На какой стадии находится соединение.
 ///
@@ -191,7 +191,7 @@ const ПРЕДЕЛ_ПРЕРЫВАНИЙ: u32 = 8;
 pub struct LanTransport {
     state: TransportState,
     listener: Option<TcpListener>,
-    discovery: Option<UdpSocket>,
+    discovery: crate::discovery::UdpDiscovery,
     /// Ключи устройства. Приватные не покидают ядро.
     keys: DeviceKeys,
     peers: HashMap<u64, Peer>,
@@ -216,25 +216,7 @@ pub struct LanTransport {
     device_kind: String,
     /// Порт, на котором реально слушает сокет.
     port: u16,
-    last_announce: Option<Instant>,
     next_handle: u64,
-}
-
-/// Устройство, объявившее себя по UDP.
-///
-/// Разобранное объявление целиком, до превращения в событие. Существует ради
-/// одного: список накопленных объявлений собирается за один проход и
-/// разбирается после, а кортеж из семи полей на этом пути разъезжается молча —
-/// соседние однотипные позиции меняются местами без единой ошибки.
-struct Объявленное {
-    device_id: Vec<u8>,
-    addr: SocketAddr,
-    name: String,
-    fingerprint: String,
-    platform: String,
-    core_version: String,
-    /// Пусто, если напарник старый и поля в объявлении не было.
-    device_kind: String,
 }
 
 impl LanTransport {
@@ -281,16 +263,10 @@ impl LanTransport {
         // посторонней программой. Это не повод отказывать в канале — работать
         // можно и по адресу, введённому вручную. Объявление о неудаче уходит
         // клиенту событием, а не ошибкой возврата.
-        let discovery = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT))
-            .and_then(|sock| {
-                sock.set_nonblocking(true)?;
-                sock.set_broadcast(true)?;
-                Ok(sock)
-            })
-            .ok();
+        let discovery = crate::discovery::UdpDiscovery::bind(DISCOVERY_PORT);
 
         Ok(LanTransport {
-            state: if discovery.is_some() {
+            state: if discovery.is_bound() {
                 TransportState::Announcing
             } else {
                 TransportState::Ready
@@ -304,7 +280,6 @@ impl LanTransport {
             platform,
             device_kind: String::new(),
             port,
-            last_announce: None,
             next_handle: 1,
         })
     }
@@ -353,23 +328,15 @@ impl LanTransport {
         nonce: u64,
         unix_time_ms: u64,
     ) -> Result<Vec<u8>, TransportError> {
-        let body = build_hello(
+        crate::discovery::build_announcement(
             &self.keys,
-            &crate::session::Профиль::new(
-                &self.display_name,
-                &self.platform,
-                &self.device_kind,
-            ),
-            &default_capabilities(),
+            &self.display_name,
+            &self.platform,
+            &self.device_kind,
+            self.port,
             nonce,
             unix_time_ms,
-            // Настоящий порт, а не константа: клиент подключается именно туда,
-            // и угадывать было бы вслепую.
-            self.port,
         )
-        .map_err(|e| TransportError::Other(e.to_string()))?;
-
-        frame::encode_raw(MessageKind::KindHello as i32, 0, &body).map_err(TransportError::Frame)
     }
 
     /// Подключается к устройству и начинает рукопожатие.
@@ -466,18 +433,9 @@ impl LanTransport {
 
     /// Повторяет объявление, если подошло время.
     fn announce_if_due(&mut self) {
-        let Some(discovery) = &self.discovery else {
-            return;
-        };
-
-        let due = self
-            .last_announce
-            .map(|t| t.elapsed() >= Duration::from_millis(ANNOUNCE_INTERVAL_MS))
-            .unwrap_or(true);
-        if !due {
+        if !self.discovery.is_bound() {
             return;
         }
-        self.last_announce = Some(Instant::now());
 
         let msg = match self.build_announcement(now_ms(), now_ms()) {
             Ok(m) => m,
@@ -488,24 +446,13 @@ impl LanTransport {
             }
         };
 
-        let target = SocketAddrV4::new(
-            Ipv4Addr::new(
-                BROADCAST_ADDR[0],
-                BROADCAST_ADDR[1],
-                BROADCAST_ADDR[2],
-                BROADCAST_ADDR[3],
-            ),
+        if let Err(e) = self.discovery.announce_if_due(
+            &msg,
+            BROADCAST_ADDR,
             DISCOVERY_PORT,
-        );
-
-        // Ошибка отправки не фатальна: подсеть вправе запрещать широковещание.
-        // Тогда устройство найдут по адресу вручную, и это честнее отказа в
-        // канале.
-        if let Err(e) = discovery.send_to(&msg, target) {
-            if e.kind() != ErrorKind::WouldBlock {
-                self.events
-                    .push(TransportEvent::Notice(TransportError::Io(e)));
-            }
+            Duration::from_millis(ANNOUNCE_INTERVAL_MS),
+        ) {
+            self.events.push(TransportEvent::Notice(e));
         }
     }
 
@@ -577,141 +524,22 @@ impl LanTransport {
         }
     }
 
-    /// Читает объявления соседей.
-    ///
-    /// Подпись здесь не сверяется: по UDP у нас нет ключа напарника, есть только
-    /// его собственное заявление. Сверка происходит на соединении, где ключ
-    /// известен. Поэтому объявление годится, чтобы показать «устройство
-    /// рядом», и не годится, чтобы пустить в дом.
+    /// Читает объявления соседей через модуль обнаружения.
     fn read_discovery(&mut self) {
-        // Объявленное устройство целиком, а не кортеж из семи элементов.
-        //
-        // Семь полей подряд — это семь позиций, и разъехаться они могут молча:
-        // `найдено.4` и `найдено.5` одного типа, переставить их — ни одна
-        // проверка не заметит, а на экране вместо версии ядра встанет платформа.
-        // Имена полей читаются, компилятор ловит опечатку.
-        let mut найдено: Vec<Объявленное> = Vec::new();
-        let mut сбой: Option<TransportError> = None;
-
-        if let Some(discovery) = &self.discovery {
-            let mut buf = [0u8; DISCOVERY_BUF];
-            loop {
-                let (n, откуда) = match discovery.recv_from(&mut buf) {
-                    Ok(v) => v,
-                    Err(ref e) if e.kind() == ErrorKind::WouldBlock => break,
-                    Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
-                    Err(e) => {
-                        сбой = Some(TransportError::Io(e));
-                        break;
-                    }
-                };
-
-                let Ok((header, body, _)) = frame::split(&buf[..n]) else {
-                    // Чужой пакет в нашем порту — обычное дело, не ошибка.
-                    continue;
-                };
-                if header.kind != MessageKind::KindHello as i32 {
-                    continue;
-                }
-
-                let Ok(hello) = Hello::decode(body) else {
-                    continue;
-                };
-                let Some(identity) = hello.identity.as_ref() else {
-                    continue;
-                };
-                if identity.device_id.is_empty() || identity.signing.is_none() {
-                    continue;
-                }
-
-                // Ключ подписи нужен не только для отпечатка. Идентификатор —
-                // это хэш ключа, и объявление присылает оба, значит заявление
-                // проверяется прямо здесь, без соединения.
-                //
-                // Раньше ключ только проверялся на существование и выбрасывался,
-                // а идентификатор принимался как есть. Устройство из подсети могло
-                // назваться чужим идентификатором, и в списке это выглядело
-                // как обычное устройство — отличить его было нечем.
-                let Some(ключ) = identity
-                    .signing
-                    .as_ref()
-                    .and_then(|s| <[u8; 32]>::try_from(&s.key[..]).ok())
-                else {
-                    continue;
-                };
-                let отпечаток = crate::crypto::fingerprint_from_signing(&ключ);
-                if !crate::crypto::device_id_matches_signing(&identity.device_id, &ключ) {
-                    crate::android_log::предостережение(&format!(
-                        "объявление с {}: идентификатор {} не соответствует ключу {отпечаток}, отброшено",
-                        откуда,
-                        пригодное_имя(&String::from_utf8_lossy(&identity.device_id))
-                    ));
-                    continue;
-                }
-
-                // Подпись. Без неё объявление можно было пересказать: чужой
-                // идентификатор с чужим ключом честно сошёлся бы сам с собой,
-                // а подпись — нет.
-                //
-                // Проверяется тем же ключом, который пришёл в сообщении. Это
-                // не доказывает, кто перед нами, — но доказывает, что приватный
-                // ключ у отправителя есть.
-                if let Err(e) = crate::session::verify_announcement(&hello) {
-                    crate::android_log::предостережение(&format!(
-                        "объявление с {} не подписано ключом {отпечаток}: {e}, отброшено",
-                        откуда
-                    ));
-                    continue;
-                }
-
-                // Порт данных объявлен в самом сообщении. Портом отправки
-                // подставлять нельзя: UDP-объявление уходит с порта обнаружения,
-                // и клиент подключался бы туда, где никто не слушает.
-                let порт = u16::try_from(hello.lan_port).unwrap_or(0);
-                if порт == 0 {
-                    // Устройство объявило себя, но данных не принимает. Показывать
-                    // его незачем: нажать будет не на что.
-                    continue;
-                }
-
-                let id = identity.device_id.to_vec();
-                // Своё объявление слышно и себе: напарником оно не является.
-                if id.as_slice() == self.keys.device_id().as_bytes() {
-                    continue;
-                }
-
-                // IPv4 обязателен: клиент на Android передаёт адрес четырьмя
-                // байтами, и для IPv6 пришлось бы менять контракт. Объявление по
-                // IPv6 сюда не дойдёт, поэтому отбрасываем его молча — это не
-                // ошибка, а «канал так не работает».
-                let IpAddr::V4(ip) = откуда.ip() else {
-                    continue;
-                };
-
-                найдено.push(Объявленное {
-                    device_id: id,
-                    addr: SocketAddr::from((ip, порт)),
-                    name: пригодное_имя(&identity.display_name),
-                    fingerprint: отпечаток,
-                    platform: пригодное_имя(&hello.platform),
-                    core_version: пригодное_имя(&hello.core_version),
-                    device_kind: пригодное_имя(&hello.device_kind),
-                });
-            }
-        }
+        let (найдено, сбой) = self.discovery.poll_discovered(self.keys.device_id().as_bytes());
 
         if let Some(e) = сбой {
             self.events.push(TransportEvent::Notice(e));
         }
-        for объявленное in найдено {
+        for dev in найдено {
             self.events.push(TransportEvent::Discovered {
-                device_id: объявленное.device_id,
-                addr: объявленное.addr,
-                name: объявленное.name,
-                fingerprint: объявленное.fingerprint,
-                platform: объявленное.platform,
-                core_version: объявленное.core_version,
-                device_kind: объявленное.device_kind,
+                device_id: dev.device_id,
+                addr: dev.addr,
+                name: dev.name,
+                fingerprint: dev.fingerprint,
+                platform: dev.platform,
+                core_version: dev.core_version,
+                device_kind: dev.device_kind,
             });
         }
     }
@@ -1018,44 +846,10 @@ fn queue_handshake_step(outbox: &mut Vec<u8>, step: HandshakeStep) -> Result<(),
 /// Сколько байт имени можно показать в списке.
 ///
 /// Модель телефона — это десятка-двадцать символов. Всё, что длиннее, не модель,
-/// а мусор: либо чужое объявление, либо устройство, назвавшее себя описанием.
-/// Обрезается здесь же, а не на экране, потому что длинная строка в списке
-/// устройств ломает вёрстку плитки, и это видно сразу.
-const МАКСИМУМ_ИМЕНИ: usize = 64;
-
 /// Приводит имя из объявления к виду, безопасному для показа.
-///
-/// Объявление пришло от кого угодно в подсети и подписи не проверено, поэтому
-/// проверяется всё, что может испортить интерфейс:
-///
-/// * управляющие символы — иначе имя может стереть строку после себя или
-///   испортить вывод в журнал;
-/// * длина — иначе плитка растянется;
-/// * пустое имя — тогда показывать нечего, и подставляется честное «Устройство».
-///
-/// Возвращается `String`, а не срез: проверка границы UTF-8 обязана произойти
-/// до отсечения, иначе обрыв в середине кириллического символа дал бы
-/// невалидный UTF-8 на выходе.
-fn пригодное_имя(сырое: &str) -> String {
-    let чистое: String = сырое
-        .chars()
-        .filter(|c| !c.is_control())
-        .collect::<String>()
-        .trim()
-        .to_owned();
-
-    if чистое.is_empty() {
-        return "Устройство".to_owned();
-    }
-
-    // Обрезка по границе символов: `.take()` на байтах мог бы разрезать
-    // многобайтовый символ, и имя пришло бы в интерфейс битым.
-    let обрезанное: String = чистое.chars().take(МАКСИМУМ_ИМЕНИ).collect();
-    if обрезанное.is_empty() {
-        "Устройство".to_owned()
-    } else {
-        обрезанное
-    }
+#[inline]
+pub fn пригодное_имя(сырое: &str) -> String {
+    crate::discovery::sanitize_name(сырое)
 }
 
 /// Текущее время в миллисекундах.
@@ -1135,13 +929,13 @@ impl Channel for LanTransport {
         self.peers.clear();
         self.events.clear();
         self.listener = None;
-        self.discovery = None;
+        self.discovery.close();
         self.state = TransportState::Idle;
         Ok(())
     }
 
     fn announce(&mut self) -> Result<(), TransportError> {
-        self.last_announce = None;
+        self.discovery.reset_announce_timer();
         self.announce_if_due();
         Ok(())
     }

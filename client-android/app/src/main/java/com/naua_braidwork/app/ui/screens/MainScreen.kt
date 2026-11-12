@@ -94,7 +94,7 @@ fun MainScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Моя сеть",
+                        text = "Моя семья",
                         style = MaterialTheme.typography.displaySmall,
                         color = MaterialTheme.colorScheme.onBackground,
                     )
@@ -258,7 +258,6 @@ private fun HeaderIcon(
 /** Карточка «это устройство» с тремя режимами связи. */
 @Composable
 private fun ThisDeviceBlock(state: MainState) {
-    val bw = LocalBwColors.current
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -285,25 +284,6 @@ private fun ThisDeviceBlock(state: MainState) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-    }
-
-    Spacer(Modifier.height(14.dp))
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = bw.onlineSubtle,
-        contentColor = bw.online,
-    ) {
-        Text(
-            text = state.thisDeviceId,
-            fontSize = 17.sp,
-            fontFamily = FontFamily.Monospace,
-            letterSpacing = 1.sp,
-            maxLines = 2,
-            textAlign = TextAlign.Center,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-        )
     }
 }
 
@@ -355,11 +335,10 @@ private fun ModeRow(current: LinkMode, onPick: (LinkMode) -> Unit) {
 }
 
 /**
- * Канал «рядом»: иконка, подпись и тумблер.
+ * Кнопка резервного канала (BLE / Точка доступа).
  *
- * Отдельная форма вместо кружка режима. Прямоугольная плашка с тумблером читается
- * как «включить и выключить», круг с заливкой — как «выбрать один из трёх».
- * Смешивать эти два смысла в одной форме нельзя.
+ * По макету Main.dc.html: высота 56 dp, скругление 28 dp, иконка 22 dp,
+ * текст 15-16 sp, вес 500. При включении подсвечивается синим акцентом.
  */
 @Composable
 private fun ChannelRow(
@@ -369,33 +348,38 @@ private fun ChannelRow(
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val activeBg = MaterialTheme.colorScheme.primaryContainer
+    val activeFg = MaterialTheme.colorScheme.primary
+    val idleBg = MaterialTheme.colorScheme.surfaceVariant
+    val idleFg = MaterialTheme.colorScheme.onSurface
+
     Surface(
         modifier = modifier.height(56.dp),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(28.dp),
+        color = if (checked) activeBg else idleBg,
+        contentColor = if (checked) activeFg else idleFg,
     ) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
                 .tapNoRipple { onCheckedChange(!checked) }
-                .padding(start = 14.dp, end = 8.dp),
+                .padding(horizontal = 12.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(20.dp))
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(22.dp),
+                tint = if (checked) activeFg else idleFg,
+            )
             Spacer(Modifier.width(8.dp))
             Text(
                 text = label,
-                style = MaterialTheme.typography.bodyMedium,
+                fontSize = 15.sp,
+                lineHeight = 20.sp,
+                fontWeight = FontWeight.Medium,
                 maxLines = 1,
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(Modifier.width(6.dp))
-            BwSwitch(
-                checked = checked,
-                enabled = true,
-                onCheckedChange = onCheckedChange,
             )
         }
     }

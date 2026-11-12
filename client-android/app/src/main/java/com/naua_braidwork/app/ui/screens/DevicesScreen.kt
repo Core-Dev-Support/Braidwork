@@ -110,7 +110,7 @@ fun DevicesScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Устройства",
+                        text = "Устройства семьи",
                         style = MaterialTheme.typography.displaySmall,
                         color = foregroundOn(isDark),
                     )
@@ -169,12 +169,15 @@ fun DevicesScreen(
                 items(state.devices, key = { it.id }) { device ->
                     DeviceCard(device = device, onClick = { onDevice(device) })
                 }
+                item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(колонки) }) {
+                    Column {
+                        Spacer(Modifier.height(4.dp))
+                        DashedAddButton(onAdd = onAdd, isDark = isDark)
+                        Spacer(Modifier.height(16.dp))
+                    }
+                }
             }
         }
-
-        Spacer(Modifier.height(12.dp))
-        DashedAddButton(onAdd = onAdd, isDark = isDark, modifier = Modifier.padding(horizontal = поле))
-        Spacer(Modifier.height(12.dp))
     }
 }
 
