@@ -636,6 +636,16 @@ class DeviceDiscovery(
                 }
             }
 
+            KIND_FILE_REQUEST -> {
+                val req = BraidworkCore.readFileRequest(кадр.body)
+                if (req == null) {
+                    записать("от $кто: запрос докачки (FileRequest) не разобран")
+                    return
+                }
+                val tidHex = req.transferId.joinToString("") { "%02x".format(it) }
+                записать("от $кто: запрос докачки для transfer_id=$tidHex (пропущено блоков: ${req.missingOffsets.size})")
+            }
+
             else -> записать(
                 // Неизвестный тип: это не ошибка и не повод молчать. Напарник
                 // может быть новее, и тогда незнакомый кадр — норма.
@@ -1737,6 +1747,7 @@ class DeviceDiscovery(
         const val KIND_CLIPBOARD_CONTENT = 34
         const val KIND_FILE_OFFER = 35
         const val KIND_FILE_BLOCK = 36
+        const val KIND_FILE_REQUEST = 37
 
         /**
          * Граница «телефон или планшет» в dp.

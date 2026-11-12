@@ -27,6 +27,7 @@ mod crypto;
 mod frame;
 mod registry;
 mod session;
+pub mod transfer;
 pub mod transport;
 
 // Мост к JVM нужен только под Android. На десктопе клиент обращается к ядру
@@ -42,11 +43,12 @@ pub mod pb {
 pub use abi_session::{
     fl_blake3_hash, fl_blake3_hasher_create, fl_blake3_hasher_finalize, fl_blake3_hasher_free,
     fl_blake3_hasher_update, fl_clipboard_build, fl_clipboard_read, fl_file_block_build,
-    fl_file_block_read, fl_file_offer_build, fl_file_offer_read, fl_heartbeat_build,
-    fl_heartbeat_read, fl_hello_build, fl_hello_verify, fl_session_create, fl_session_finish,
-    fl_session_free, fl_session_open, fl_session_ready, fl_session_seal, fl_session_step,
-    CLIPBOARD_MAX, FILE_BLOCK_FRAME_MAX, FILE_BLOCK_MAX, FILE_OFFER_FRAME_MAX, FL_ROLE_INITIATOR,
-    FL_ROLE_RESPONDER, FL_STEP_COMPLETE, FL_STEP_SEND, FL_STEP_WAIT, HASH_LEN, HEARTBEAT_FRAME_MAX,
+    fl_file_block_read, fl_file_offer_build, fl_file_offer_read, fl_file_request_build,
+    fl_file_request_read, fl_heartbeat_build, fl_heartbeat_read, fl_hello_build, fl_hello_verify,
+    fl_session_create, fl_session_finish, fl_session_free, fl_session_open, fl_session_ready,
+    fl_session_seal, fl_session_step, CLIPBOARD_MAX, FILE_BLOCK_FRAME_MAX, FILE_BLOCK_MAX,
+    FILE_OFFER_FRAME_MAX, FILE_REQUEST_FRAME_MAX, FL_ROLE_INITIATOR, FL_ROLE_RESPONDER,
+    FL_STEP_COMPLETE, FL_STEP_SEND, FL_STEP_WAIT, HASH_LEN, HEARTBEAT_FRAME_MAX,
 };
 #[cfg(feature = "transport-lan")]
 pub use abi_transport::{

@@ -560,6 +560,9 @@ pub const FILE_BLOCK_FRAME_MAX: usize = FILE_BLOCK_MAX + 1024;
 /// Буфер под кадр предложения файла.
 pub const FILE_OFFER_FRAME_MAX: usize = 4096;
 
+/// Буфер под кадр запроса недостающих смещений при докачке файла.
+pub const FILE_REQUEST_FRAME_MAX: usize = 16 * 1024;
+
 /// Длина хэша BLAKE3.
 pub const HASH_LEN: usize = 32;
 
@@ -1197,6 +1200,119 @@ pub unsafe extern "C" fn fl_file_block_read(
             std::slice::from_raw_parts_mut(out_data, block.data.len()).copy_from_slice(&block.data);
         }
         *out_data_len = block.data.len();
+
+        FL_OK
+    })
+}
+
+/// Собирает кадр `FileRequest` (запрос недостающих смещений при докачке).
+///
+/// # Safety
+/// `transfer_id` и `missing_offsets` должны указывать на валидную память.
+/// `out_data` и `out_len` должны удовлетворять протоколу `copy_out`.
+#[no_mangle]
+pub unsafe extern "C" fn fl_file_request_build(
+    transfer_id: *const u8,
+    transfer_id_len: usize,
+    missing_offsets: *const u64,
+    missing_offsets_len: usize,
+    out_data: *mut u8,
+    out_len: *mut usize,
+) -> FlStatus {
+    guard(|| {
+        if out_data.is_null() || out_len.is_null() {
+            return FL_ERR_INVALID_ARG;
+        }
+        if transfer_id.is_null() || transfer_id_len == 0 || transfer_id_len > 64 {
+            return FL_ERR_INVALID_ARG;
+        }
+        if missing_offsets.is_null() && missing_offsets_len > 0 {
+            return FL_ERR_INVALID_ARG;
+        }
+
+        let id_slice = std::slice::from_raw_parts(transfer_id, transfer_id_len);
+        let offsets_vec = if missing_offsets_len == 0 {
+            Vec::new()
+        } else {
+            std::slice::from_raw_parts(missing_offsets, missing_offsets_len).to_vec()
+        };
+
+        let тело = crate::pb::FileRequest {
+            transfer_id: prost::bytes::Bytes::copy_from_slice(id_slice),
+            missing_offsets: offsets_vec,
+            partial_hash: prost::bytes::Bytes::new(),
+        };
+
+        let кадр = match crate::frame::encode(
+            crate::pb::MessageKind::KindFileRequest as i32,
+            0,
+            &тело,
+        ) {
+            Ok(f) => f,
+            Err(_) => return crate::FL_ERR_INTERNAL,
+        };
+
+        copy_out(&кадр, out_data, out_len)
+    })
+}
+
+/// Разбирает тело `FileRequest`.
+///
+/// # Safety
+/// Все указатели должны указывать на валидную память соответствующих размеров.
+#[no_mangle]
+pub unsafe extern "C" fn fl_file_request_read(
+    body: *const u8,
+    body_len: usize,
+    out_transfer_id: *mut u8,
+    transfer_id_cap: usize,
+    out_transfer_id_len: *mut usize,
+    out_missing_offsets: *mut u64,
+    missing_offsets_cap: usize,
+    out_missing_offsets_len: *mut usize,
+) -> FlStatus {
+    guard(|| {
+        if body.is_null()
+            || out_transfer_id_len.is_null()
+            || out_missing_offsets_len.is_null()
+        {
+            return FL_ERR_INVALID_ARG;
+        }
+        let bytes = if body_len == 0 {
+            &[][..]
+        } else {
+            std::slice::from_raw_parts(body, body_len)
+        };
+
+        let req = match crate::pb::FileRequest::decode(bytes) {
+            Ok(r) => r,
+            Err(_) => return FL_ERR_INVALID_ARG,
+        };
+
+        let места_хватает = |нужно: usize, есть: usize| есть == 0 || нужно <= есть;
+        if !места_хватает(req.transfer_id.len(), transfer_id_cap)
+            || !места_хватает(req.missing_offsets.len(), missing_offsets_cap)
+        {
+            return FL_ERR_INVALID_ARG;
+        }
+
+        if (transfer_id_cap > 0 && out_transfer_id.is_null())
+            || (missing_offsets_cap > 0 && out_missing_offsets.is_null())
+        {
+            return FL_ERR_INVALID_ARG;
+        }
+
+        if transfer_id_cap > 0 && !req.transfer_id.is_empty() {
+            std::slice::from_raw_parts_mut(out_transfer_id, req.transfer_id.len())
+                .copy_from_slice(&req.transfer_id);
+        }
+        *out_transfer_id_len = req.transfer_id.len();
+
+        if missing_offsets_cap > 0 && !req.missing_offsets.is_empty() {
+            std::slice::from_raw_parts_mut(out_missing_offsets, req.missing_offsets.len())
+                .copy_from_slice(&req.missing_offsets);
+        }
+        *out_missing_offsets_len = req.missing_offsets.len();
 
         FL_OK
     })
@@ -2066,5 +2182,51 @@ mod tests {
 
         assert_eq!(direct_hash, stream_hash);
         assert_eq!(direct_hash, *blake3::hash(data).as_bytes());
+    }
+
+    #[test]
+    fn file_request_собирается_и_разбирается() {
+        let tid = b"req_tid_999";
+        let missing = vec![0u64, 32768, 65536];
+        let mut frame = vec![0u8; FILE_REQUEST_FRAME_MAX];
+        let mut frame_len = 0usize;
+
+        let code = unsafe {
+            fl_file_request_build(
+                tid.as_ptr(),
+                tid.len(),
+                missing.as_ptr(),
+                missing.len(),
+                frame.as_mut_ptr(),
+                &mut frame_len as *mut usize,
+            )
+        };
+        assert_eq!(code, FL_OK);
+        assert!(frame_len > 0);
+        frame.truncate(frame_len);
+
+        let (header, body, _) = crate::frame::split(&frame).unwrap();
+        assert_eq!(header.kind, MessageKind::KindFileRequest as i32);
+
+        let mut out_tid = vec![0u8; 64];
+        let mut out_tid_len = 0usize;
+        let mut out_missing = vec![0u64; 16];
+        let mut out_missing_len = 0usize;
+
+        let read_code = unsafe {
+            fl_file_request_read(
+                body.as_ptr(),
+                body.len(),
+                out_tid.as_mut_ptr(),
+                out_tid.len(),
+                &mut out_tid_len as *mut usize,
+                out_missing.as_mut_ptr(),
+                out_missing.len(),
+                &mut out_missing_len as *mut usize,
+            )
+        };
+        assert_eq!(read_code, FL_OK);
+        assert_eq!(&out_tid[..out_tid_len], tid);
+        assert_eq!(&out_missing[..out_missing_len], &missing[..]);
     }
 }

@@ -74,6 +74,9 @@ object BraidworkCore {
     /** Буфер под кадр предложения файла. */
     const val FILE_OFFER_FRAME_MAX = 4096
 
+    /** Буфер под кадр запроса недостающих смещений при докачке. */
+    const val FILE_REQUEST_FRAME_MAX = 16 * 1024
+
     /** Длина хэша BLAKE3. */
     const val HASH_LEN = 32
 
@@ -854,6 +857,25 @@ object BraidworkCore {
         }
     }
 
+    /** Разобранный запрос недостающих блоков при докачке. */
+    data class FileRequestData(
+        val transferId: ByteArray,
+        val missingOffsets: LongArray,
+    ) {
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is FileRequestData) return false
+            return transferId.contentEquals(other.transferId) &&
+                missingOffsets.contentEquals(other.missingOffsets)
+        }
+
+        override fun hashCode(): Int {
+            var result = transferId.contentHashCode()
+            result = 31 * result + missingOffsets.contentHashCode()
+            return result
+        }
+    }
+
     /** Собирает кадр `FileOffer`. */
     fun fileOfferFrame(
         transferId: ByteArray,
@@ -923,6 +945,34 @@ object BraidworkCore {
             transferId = tid.copyOf(tidLen[0]),
             offset = offset[0],
             data = data.copyOf(dataLen[0]),
+        )
+    }
+
+    /** Собирает кадр `FileRequest`. */
+    fun fileRequestFrame(transferId: ByteArray, missingOffsets: LongArray): ByteArray {
+        ensureLoaded()
+        val out = ByteArray(FILE_REQUEST_FRAME_MAX)
+        val len = IntArray(1)
+        val status = nativeFileRequestBuild(transferId, missingOffsets, out, len)
+        if (status != STATUS_OK) {
+            throw BraidworkException(status, "ошибка сборки file_request")
+        }
+        return out.copyOf(len[0])
+    }
+
+    /** Разбирает тело `FileRequest`. */
+    fun readFileRequest(body: ByteArray): FileRequestData? {
+        ensureLoaded()
+        val tid = ByteArray(64)
+        val tidLen = IntArray(1)
+        val offsets = LongArray(1024)
+        val offsetsLen = IntArray(1)
+
+        val status = nativeFileRequestRead(body, tid, tidLen, offsets, offsetsLen)
+        if (status != STATUS_OK) return null
+        return FileRequestData(
+            transferId = tid.copyOf(tidLen[0]),
+            missingOffsets = offsets.copyOf(offsetsLen[0]),
         )
     }
 
@@ -1140,6 +1190,21 @@ object BraidworkCore {
         outOffset: LongArray,
         outData: ByteArray,
         outDataLen: IntArray,
+    ): Int
+
+    private external fun nativeFileRequestBuild(
+        transferId: ByteArray,
+        missingOffsets: LongArray,
+        out: ByteArray,
+        outLen: IntArray,
+    ): Int
+
+    private external fun nativeFileRequestRead(
+        body: ByteArray,
+        outTransferId: ByteArray,
+        outTransferIdLen: IntArray,
+        outMissingOffsets: LongArray,
+        outMissingOffsetsLen: IntArray,
     ): Int
 
     private external fun nativeBlake3Hash(data: ByteArray, outHash: ByteArray): Int

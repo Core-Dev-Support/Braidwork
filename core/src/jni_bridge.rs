@@ -1382,6 +1382,146 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileBloc
     FL_OK
 }
 
+/// Собирает кадр `FileRequest`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRequestBuild<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    transfer_id: JByteArray<'local>,
+    missing_offsets: JLongArray<'local>,
+    out_frame: JByteArray<'local>,
+    out_len: JIntArray<'local>,
+) -> jint {
+    if out_len.is_null() {
+        return crate::FL_ERR_INVALID_ARG;
+    }
+    let tid = match env.convert_byte_array(&transfer_id) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+    let offsets_len = match env.get_array_length(&missing_offsets) {
+        Ok(l) => l as usize,
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+    let mut offsets = vec![0i64; offsets_len];
+    if offsets_len > 0 {
+        if env.get_long_array_region(&missing_offsets, 0, &mut offsets).is_err() {
+            return crate::FL_ERR_INTERNAL;
+        }
+    }
+    let offsets_u64: Vec<u64> = offsets.into_iter().map(|o| o as u64).collect();
+
+    let out_cap = match env.get_array_length(&out_frame) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+    let mut frame_buf = vec![0u8; out_cap.max(1)];
+    let mut produced = 0usize;
+
+    let status = unsafe {
+        crate::fl_file_request_build(
+            tid.as_ptr(),
+            tid.len(),
+            offsets_u64.as_ptr(),
+            offsets_u64.len(),
+            frame_buf.as_mut_ptr(),
+            &mut produced,
+        )
+    };
+    if status != FL_OK {
+        return status;
+    }
+
+    if env
+        .set_byte_array_region(&out_frame, 0, &to_signed(&frame_buf[..produced.min(out_cap)]))
+        .is_err()
+        || env
+            .set_int_array_region(&out_len, 0, &[produced as jint])
+            .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    FL_OK
+}
+
+/// Разбирает тело `FileRequest`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRequestRead<'local>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    body: JByteArray<'local>,
+    out_transfer_id: JByteArray<'local>,
+    out_transfer_id_len: JIntArray<'local>,
+    out_missing_offsets: JLongArray<'local>,
+    out_missing_offsets_len: JIntArray<'local>,
+) -> jint {
+    if out_transfer_id_len.is_null() || out_missing_offsets_len.is_null() {
+        return crate::FL_ERR_INVALID_ARG;
+    }
+    let bytes = match env.convert_byte_array(&body) {
+        Ok(v) => v,
+        Err(_) => return crate::FL_ERR_INVALID_ARG,
+    };
+
+    let tid_cap = match env.get_array_length(&out_transfer_id) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+    let offsets_cap = match env.get_array_length(&out_missing_offsets) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+
+    let mut tid_buf = vec![0u8; tid_cap.max(1)];
+    let mut offsets_buf = vec![0u64; offsets_cap.max(1)];
+    let mut tid_len = 0usize;
+    let mut offsets_len = 0usize;
+
+    let status = unsafe {
+        crate::fl_file_request_read(
+            bytes.as_ptr(),
+            bytes.len(),
+            tid_buf.as_mut_ptr(),
+            tid_cap,
+            &mut tid_len,
+            offsets_buf.as_mut_ptr(),
+            offsets_cap,
+            &mut offsets_len,
+        )
+    };
+    if status != FL_OK {
+        return status;
+    }
+
+    let offsets_i64: Vec<jlong> = offsets_buf[..offsets_len.min(offsets_cap)]
+        .iter()
+        .map(|&o| o as jlong)
+        .collect();
+
+    if env
+        .set_byte_array_region(
+            &out_transfer_id,
+            0,
+            &to_signed(&tid_buf[..tid_len.min(tid_cap)]),
+        )
+        .is_err()
+        || env
+            .set_int_array_region(&out_transfer_id_len, 0, &[tid_len as jint])
+            .is_err()
+        || env
+            .set_long_array_region(&out_missing_offsets, 0, &offsets_i64)
+            .is_err()
+        || env
+            .set_int_array_region(&out_missing_offsets_len, 0, &[offsets_len as jint])
+            .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+
+    FL_OK
+}
+
 /// Вычисляет хэш BLAKE3 (32 байта) от данных.
 #[no_mangle]
 pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeBlake3Hash<'local>(
