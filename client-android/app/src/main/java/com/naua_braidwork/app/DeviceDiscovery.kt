@@ -557,10 +557,12 @@ class DeviceDiscovery(
 
                         // Отправляем Positive Completion ACK (пустой список missingOffsets подтверждает 100% приём)
                         val ackFrame = BraidworkCore.fileRequestFrame(block.transferId, LongArray(0))
-                        val h = coreHandle
+                        val h = хэндл.get()
                         val conn = if (transfer.conn != 0L) transfer.conn else кадр.conn
                         if (h != 0L && conn != 0L) {
-                            BraidworkCore.transportSend(h, conn, ackFrame)
+                            try {
+                                BraidworkCore.transportSend(h, conn, ackFrame)
+                            } catch (_: Exception) {}
                         }
 
                         val targetFile = transfer.finalFile ?: File(
