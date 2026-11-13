@@ -1640,7 +1640,7 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeBlake3Ha
 /// Создаёт отправитель `FileSender` в Rust.
 #[no_mangle]
 pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileSenderCreate<'local>(
-    env: JNIEnv<'local>,
+    mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     transfer_id: JByteArray<'local>,
     file_name: JString<'local>,
@@ -1825,7 +1825,7 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileSend
 /// Создаёт получатель `FileReceiver` на основе тела `FileOffer`.
 #[no_mangle]
 pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileReceiverCreate<'local>(
-    env: JNIEnv<'local>,
+    mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     offer_body: JByteArray<'local>,
     temp_path: JString<'local>,
