@@ -361,6 +361,9 @@ fl_status fl_file_receiver_write_block(uint64_t handle, const uint8_t *block_bod
 /* Формирует кадр FileRequest со списком недостающих блоков. */
 fl_status fl_file_receiver_build_request(uint64_t handle, uint8_t *out_data, size_t *out_len);
 
+/* Возвращает количество уже принятых блоков для получателя (полезно для обнаружения и ведения Resume). */
+fl_status fl_file_receiver_received_chunks(uint64_t handle, size_t *out_count);
+
 /* Финализирует приём: проверяет BLAKE3 и переименовывает файл в целевую директорию. */
 fl_status fl_file_receiver_finish(uint64_t handle);
 

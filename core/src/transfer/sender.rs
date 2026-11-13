@@ -217,7 +217,9 @@ impl FileSender {
     }
 
     /// Обрабатывает запрос недостающих блоков `FileRequest` от получателя.
+    /// Обрабатывает запрос недостающих блоков `FileRequest` от получателя.
     /// Ставит в очередь на повторную отправку только указанные блоки.
+    /// При Resume в начале передачи пропускает уже имеющиеся у получателя блоки.
     pub fn handle_request(&mut self, req: &FileRequest) -> Result<usize, TransferError> {
         if req.transfer_id != self.transfer_id.as_slice() {
             return Err(TransferError::TransferMismatch {
@@ -229,9 +231,25 @@ impl FileSender {
         let missing = parse_missing_chunks(req, &self.plan)?;
         let count = missing.len();
 
-        for idx in missing {
-            if !self.pending_retransmit.contains(&idx) {
-                self.pending_retransmit.push_back(idx);
+        if self.next_chunk_idx == 0 {
+            // Если запрос поступил в начале передачи (Resume), мы не должны гнать
+            // весь файл с 0-го чанка. Пропускаем уже имеющиеся у получателя блоки:
+            // переводим next_chunk_idx в конец, а в очередь повторной отправки
+            // помещаем ТОЛЬКО недостающие чанки!
+            self.next_chunk_idx = self.plan.total_chunks();
+            self.pending_retransmit.clear();
+            for idx in &missing {
+                self.pending_retransmit.push_back(*idx);
+            }
+            let already_received_chunks = self.plan.total_chunks().saturating_sub(count);
+            self.bytes_sent = (already_received_chunks as u64)
+                .saturating_mul(self.plan.chunk_size() as u64)
+                .min(self.total_size);
+        } else {
+            for idx in missing {
+                if !self.pending_retransmit.contains(&idx) {
+                    self.pending_retransmit.push_back(idx);
+                }
             }
         }
 

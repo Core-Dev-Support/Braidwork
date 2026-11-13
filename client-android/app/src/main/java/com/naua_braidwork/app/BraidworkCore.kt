@@ -1001,13 +1001,29 @@ object BraidworkCore {
     /** Формирует кадр FileRequest со списком недостающих блоков для докачки. */
     fun fileReceiverBuildRequest(handle: Long): ByteArray {
         ensureLoaded()
-        val out = ByteArray(FILE_REQUEST_FRAME_MAX)
-        val outLen = IntArray(1)
-        val status = nativeFileReceiverBuildRequest(handle, out, outLen)
-        if (status != STATUS_OK) {
-            throw BraidworkException(status, "ошибка формирования FileRequest в FileReceiver")
+        var bufSize = FILE_REQUEST_FRAME_MAX
+        while (true) {
+            val out = ByteArray(bufSize)
+            val outLen = IntArray(1) { out.size }
+            val status = nativeFileReceiverBuildRequest(handle, out, outLen)
+            if (status == STATUS_OK) {
+                return out.copyOf(outLen[0])
+            } else if (outLen[0] > bufSize) {
+                bufSize = outLen[0]
+            } else {
+                throw BraidworkException(status, "ошибка формирования FileRequest в FileReceiver")
+            }
         }
-        return out.copyOf(outLen[0])
+    }
+
+    /** Возвращает количество уже принятых блоков для получателя (для обнаружения Resume). */
+    fun fileReceiverReceivedChunks(handle: Long): Long {
+        ensureLoaded()
+        val count = nativeFileReceiverReceivedChunks(handle)
+        if (count < 0) {
+            throw BraidworkException(STATUS_INVALID_ARG, "ошибка получения числа принятых блоков в FileReceiver")
+        }
+        return count
     }
 
     /** Финализирует приём: проверяет полный BLAKE3 хэш и атомарно перемещает файл на постоянное место. */
@@ -1410,6 +1426,8 @@ object BraidworkCore {
         out: ByteArray,
         outLen: IntArray,
     ): Int
+
+    private external fun nativeFileReceiverReceivedChunks(handle: Long): Long
 
     private external fun nativeFileReceiverFinish(handle: Long): Int
 

@@ -7,8 +7,11 @@
 //! - Повреждённые или усечённые блоки автоматически сбрасываются и запрашиваются повторно.
 
 use crate::transfer::ack::ChunkBitmap;
-use crate::transfer::chunk::ChunkPlan;
+use crate::transfer::chunk::{
+    ChunkPlan, MAX_CHUNKS, MAX_CHUNK_SIZE, MAX_FILE_SIZE, MIN_CHUNK_SIZE,
+};
 use crate::transfer::errors::TransferError;
+use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -25,7 +28,7 @@ pub struct ResumeState {
     pub total_hash: [u8; 32],
     pub chunk_size: u32,
     pub bitmap: ChunkBitmap,
-    pub chunk_hashes: Vec<Option<[u8; 32]>>,
+    pub chunk_hashes: HashMap<usize, [u8; 32]>,
 }
 
 impl ResumeState {
@@ -44,7 +47,7 @@ impl ResumeState {
             total_hash,
             chunk_size,
             bitmap: ChunkBitmap::new(total_chunks),
-            chunk_hashes: vec![None; total_chunks],
+            chunk_hashes: HashMap::new(),
         }
     }
 
@@ -52,10 +55,7 @@ impl ResumeState {
     pub fn record_chunk(&mut self, chunk_idx: usize, hash: [u8; 32]) {
         if chunk_idx < self.bitmap.total_chunks() {
             self.bitmap.mark_received(chunk_idx);
-            if chunk_idx >= self.chunk_hashes.len() {
-                self.chunk_hashes.resize(self.bitmap.total_chunks(), None);
-            }
-            self.chunk_hashes[chunk_idx] = Some(hash);
+            self.chunk_hashes.insert(chunk_idx, hash);
         }
     }
 
@@ -89,11 +89,7 @@ impl ResumeState {
         // chunk_hashes: сохраняем хэши для всех принятых блоков
         for i in 0..total_chunks {
             if self.bitmap.is_received(i) {
-                let h = self
-                    .chunk_hashes
-                    .get(i)
-                    .and_then(|x| *x)
-                    .unwrap_or([0u8; 32]);
+                let h = self.chunk_hashes.get(&i).copied().unwrap_or([0u8; 32]);
                 buf.extend_from_slice(&h);
             }
         }
@@ -101,8 +97,16 @@ impl ResumeState {
         buf
     }
 
-    /// Десериализует состояние из байтов.
+    /// Десериализует состояние из байтов с пре-валидацией лимитов безопасности.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, TransferError> {
+        let total_input_len = bytes.len();
+        // Минимальный размер заголовка: 8 magic + 4 ver + 2 tid_len + 8 size + 32 hash + 4 chunk_size + 2 name_len + 8 chunks + 8 bmp_len = 76
+        if total_input_len < 76 {
+            return Err(TransferError::InvalidState(
+                "файл состояния слишком короткий для корректного заголовка".to_string(),
+            ));
+        }
+
         let mut cursor = std::io::Cursor::new(bytes);
 
         let mut magic = [0u8; 8];
@@ -126,12 +130,24 @@ impl ResumeState {
         let mut tid_len_bytes = [0u8; 2];
         cursor.read_exact(&mut tid_len_bytes)?;
         let tid_len = u16::from_le_bytes(tid_len_bytes) as usize;
+        if tid_len == 0 || tid_len > 256 {
+            return Err(TransferError::InvalidState(format!(
+                "недопустимая длина transfer_id: {}",
+                tid_len
+            )));
+        }
         let mut transfer_id = vec![0u8; tid_len];
         cursor.read_exact(&mut transfer_id)?;
 
         let mut size_bytes = [0u8; 8];
         cursor.read_exact(&mut size_bytes)?;
         let total_size = u64::from_le_bytes(size_bytes);
+        if total_size > MAX_FILE_SIZE {
+            return Err(TransferError::MalformedOffer(format!(
+                "размер файла в состоянии {} превышает лимит ядра {}",
+                total_size, MAX_FILE_SIZE
+            )));
+        }
 
         let mut total_hash = [0u8; 32];
         cursor.read_exact(&mut total_hash)?;
@@ -139,36 +155,74 @@ impl ResumeState {
         let mut chunk_size_bytes = [0u8; 4];
         cursor.read_exact(&mut chunk_size_bytes)?;
         let chunk_size = u32::from_le_bytes(chunk_size_bytes);
+        if !(MIN_CHUNK_SIZE..=MAX_CHUNK_SIZE).contains(&chunk_size) {
+            return Err(TransferError::InvalidChunkSize(chunk_size));
+        }
 
         let mut name_len_bytes = [0u8; 2];
         cursor.read_exact(&mut name_len_bytes)?;
         let name_len = u16::from_le_bytes(name_len_bytes) as usize;
+        if name_len == 0 || name_len > 4096 {
+            return Err(TransferError::InvalidState(format!(
+                "недопустимая длина имени файла: {}",
+                name_len
+            )));
+        }
         let mut name_bytes = vec![0u8; name_len];
         cursor.read_exact(&mut name_bytes)?;
         let file_name = String::from_utf8(name_bytes).map_err(|_| {
             TransferError::InvalidState("имя файла в состоянии не является UTF-8".to_string())
         })?;
 
+        let plan = ChunkPlan::new(total_size, chunk_size)?;
+
         let mut total_chunks_bytes = [0u8; 8];
         cursor.read_exact(&mut total_chunks_bytes)?;
         let total_chunks = u64::from_le_bytes(total_chunks_bytes) as usize;
+        if total_chunks != plan.total_chunks() || total_chunks > MAX_CHUNKS {
+            return Err(TransferError::InvalidState(format!(
+                "несоответствие числа чанков в состоянии: ожидалось {}, получено {}",
+                plan.total_chunks(),
+                total_chunks
+            )));
+        }
 
         let mut bmp_len_bytes = [0u8; 8];
         cursor.read_exact(&mut bmp_len_bytes)?;
         let bmp_len = u64::from_le_bytes(bmp_len_bytes) as usize;
+        let expected_bmp_len = total_chunks.div_ceil(8);
+        if bmp_len != expected_bmp_len {
+            return Err(TransferError::InvalidState(format!(
+                "несоответствие длины битовой карты: ожидалось {}, получено {}",
+                expected_bmp_len, bmp_len
+            )));
+        }
+
         let mut bmp_bytes = vec![0u8; bmp_len];
         cursor.read_exact(&mut bmp_bytes)?;
 
         let bitmap = ChunkBitmap::from_bytes(total_chunks, &bmp_bytes)?;
-        let mut chunk_hashes = vec![None; total_chunks];
+        let received_count = bitmap.received_count();
 
-        if version >= 2 {
-            for (i, hash_slot) in chunk_hashes.iter_mut().enumerate().take(total_chunks) {
-                if bitmap.is_received(i) {
-                    let mut h = [0u8; 32];
-                    cursor.read_exact(&mut h)?;
-                    *hash_slot = Some(h);
-                }
+        // Проверяем оставшиеся байты в буфере перед чтением хэшей (каждый принятый чанк имеет ровно 32 байта хэша)
+        let pos = cursor.position() as usize;
+        let expected_hash_bytes = received_count.checked_mul(32).ok_or_else(|| {
+            TransferError::InvalidState("переполнение при подсчёте байтов хэшей".to_string())
+        })?;
+        let remaining_bytes = total_input_len.saturating_sub(pos);
+        if remaining_bytes < expected_hash_bytes {
+            return Err(TransferError::InvalidState(format!(
+                "файл состояния усечён: ожидалось {} байт для {} хэшей, осталось {}",
+                expected_hash_bytes, received_count, remaining_bytes
+            )));
+        }
+
+        let mut chunk_hashes = HashMap::with_capacity(received_count);
+        for i in 0..total_chunks {
+            if bitmap.is_received(i) {
+                let mut h = [0u8; 32];
+                cursor.read_exact(&mut h)?;
+                chunk_hashes.insert(i, h);
             }
         }
 
@@ -183,16 +237,48 @@ impl ResumeState {
         })
     }
 
-    /// Сохраняет состояние передачи в файл на диске.
+    /// Атомарно сохраняет состояние передачи в файл на диске через временный файл и rename.
     pub fn save_to_file(&self, path: &Path) -> Result<(), TransferError> {
         let bytes = self.to_bytes();
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(path)?;
-        file.write_all(&bytes)?;
-        file.flush()?;
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let file_stem = path.file_name().unwrap_or_default().to_string_lossy();
+        let tmp_path = parent.join(format!(
+            ".{}.tmp_{}_{}",
+            file_stem,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+
+        {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&tmp_path)?;
+            file.write_all(&bytes)?;
+            file.flush()?;
+            let _ = file.sync_all();
+        }
+
+        #[cfg(windows)]
+        {
+            if path.exists() {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+
+        if let Err(e) = std::fs::rename(&tmp_path, path) {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(TransferError::Io(e));
+        }
+
         Ok(())
     }
 
@@ -246,9 +332,7 @@ impl ResumeState {
                 Some(i) => i,
                 None => {
                     self.bitmap.clear_received(idx);
-                    if idx < self.chunk_hashes.len() {
-                        self.chunk_hashes[idx] = None;
-                    }
+                    self.chunk_hashes.remove(&idx);
                     continue;
                 }
             };
@@ -256,28 +340,24 @@ impl ResumeState {
             // Проверяем позиционирование
             if reader.seek(SeekFrom::Start(info.offset)).is_err() {
                 self.bitmap.clear_received(idx);
-                if idx < self.chunk_hashes.len() {
-                    self.chunk_hashes[idx] = None;
-                }
+                self.chunk_hashes.remove(&idx);
                 continue;
             }
 
             let mut buf = vec![0u8; info.length as usize];
             if reader.read_exact(&mut buf).is_err() {
                 self.bitmap.clear_received(idx);
-                if idx < self.chunk_hashes.len() {
-                    self.chunk_hashes[idx] = None;
-                }
+                self.chunk_hashes.remove(&idx);
                 continue;
             }
 
             // Если сохранён хэш блока, проверяем его!
-            if let Some(expected_hash) = self.chunk_hashes.get(idx).and_then(|h| *h) {
+            if let Some(&expected_hash) = self.chunk_hashes.get(&idx) {
                 let actual_hash = crate::transfer::checksum::compute_block_hash(&buf);
                 if actual_hash != expected_hash {
                     // Блок на диске повреждён! Сбрасываем его
                     self.bitmap.clear_received(idx);
-                    self.chunk_hashes[idx] = None;
+                    self.chunk_hashes.remove(&idx);
                     continue;
                 }
             }
@@ -329,9 +409,49 @@ mod tests {
         assert_eq!(state.chunk_size, restored.chunk_size);
         assert_eq!(state.bitmap, restored.bitmap);
         assert_eq!(restored.bitmap.received_count(), 2);
-        assert_eq!(restored.chunk_hashes[0], Some([0x11; 32]));
-        assert_eq!(restored.chunk_hashes[1], None);
-        assert_eq!(restored.chunk_hashes[2], Some([0x22; 32]));
+        assert_eq!(restored.chunk_hashes.get(&0), Some(&[0x11; 32]));
+        assert_eq!(restored.chunk_hashes.get(&1), None);
+        assert_eq!(restored.chunk_hashes.get(&2), Some(&[0x22; 32]));
+    }
+
+    #[test]
+    fn тест_защиты_парсера_состояния_от_битых_данных() {
+        // Слишком короткий буфер
+        assert!(ResumeState::from_bytes(b"short").is_err());
+
+        // Неверный magic
+        let mut bad_magic = vec![0u8; 128];
+        bad_magic[..8].copy_from_slice(b"BADMAGIC");
+        assert!(ResumeState::from_bytes(&bad_magic).is_err());
+    }
+
+    #[test]
+    fn тест_атомарного_сохранения_состояния() {
+        let dir = std::env::temp_dir().join(format!("bw_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let state_path = dir.join("test_state.state");
+        let mut state = ResumeState::new(
+            b"atomic_test".to_vec(),
+            "doc.pdf".to_string(),
+            50_000,
+            [0xbb; 32],
+            32 * 1024,
+            2,
+        );
+        state.record_chunk(0, [0x33; 32]);
+        state.save_to_file(&state_path).unwrap();
+
+        let loaded = ResumeState::load_from_file(&state_path).unwrap();
+        assert_eq!(loaded.transfer_id, b"atomic_test");
+        assert_eq!(loaded.chunk_hashes.get(&0), Some(&[0x33; 32]));
+
+        // Перезапись существующего файла (атомарная замена)
+        state.record_chunk(1, [0x44; 32]);
+        state.save_to_file(&state_path).unwrap();
+        let loaded2 = ResumeState::load_from_file(&state_path).unwrap();
+        assert_eq!(loaded2.chunk_hashes.get(&1), Some(&[0x44; 32]));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

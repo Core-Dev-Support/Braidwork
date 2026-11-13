@@ -161,4 +161,117 @@ mod tests {
         let _ = std::fs::remove_file(dest_path);
         let _ = std::fs::remove_dir_all(dir);
     }
+
+    #[test]
+    fn тест_возобновления_передачи_со_state_файла_и_пропуска_блоков_отправителем() {
+        let dir = std::env::temp_dir().join(format!("bw_resume_flow_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+
+        let temp_path = dir.join(".bw_resume.part");
+        let dest_path = dir.join("resume_received.dat");
+        let state_path = dir.join(".bw_resume.state");
+
+        // 128 КБ (4 блока по 32КБ)
+        let mut data = Vec::with_capacity(128 * 1024);
+        for i in 0..(128 * 1024) {
+            data.push(((i * 7) % 256) as u8);
+        }
+        let transfer_id = b"resume_flow_tid_99".to_vec();
+
+        // ФАЗА 1: Передаём только блоки 0 и 1, затем имитируем обрыв связи
+        {
+            let mut reader = Cursor::new(data.clone());
+            let mut sender1 = FileSender::from_reader(
+                transfer_id.clone(),
+                "test.bin".to_string(),
+                &mut reader,
+                DEFAULT_CHUNK_SIZE,
+            )
+            .unwrap();
+
+            let offer = sender1.build_offer();
+            let mut receiver1 = FileReceiver::from_offer(
+                &offer,
+                temp_path.clone(),
+                dest_path.clone(),
+                Some(state_path.clone()),
+                DEFAULT_CHUNK_SIZE,
+            )
+            .unwrap();
+
+            let b0 = sender1.next_block(&mut reader).unwrap().unwrap();
+            let b1 = sender1.next_block(&mut reader).unwrap().unwrap();
+            receiver1.write_block(&b0).unwrap();
+            receiver1.write_block(&b1).unwrap();
+
+            assert_eq!(receiver1.received_chunks_count(), 2);
+            // Drop receiver1 и sender1 (симуляция обрыва соединения или перезапуска)
+        }
+
+        assert!(state_path.exists());
+        assert!(temp_path.exists());
+
+        // ФАЗА 2: Возобновление после перезапуска / повторное подключение
+        {
+            let mut reader2 = Cursor::new(data.clone());
+            let mut sender2 = FileSender::from_reader(
+                transfer_id.clone(),
+                "test.bin".to_string(),
+                &mut reader2,
+                DEFAULT_CHUNK_SIZE,
+            )
+            .unwrap();
+
+            let offer2 = sender2.build_offer();
+            // Получатель создаётся с тем же offer и путями к .part и .state
+            let mut receiver2 = FileReceiver::from_offer(
+                &offer2,
+                temp_path.clone(),
+                dest_path.clone(),
+                Some(state_path.clone()),
+                DEFAULT_CHUNK_SIZE,
+            )
+            .unwrap();
+
+            // Проверяем, что receiver2 автоматически восстановил 2 блока
+            assert_eq!(receiver2.received_chunks_count(), 2);
+
+            // Получатель формирует FileRequest со списком недостающих блоков (2 и 3)
+            let req = receiver2.build_request();
+            assert_eq!(req.missing_offsets.len(), 2);
+            assert_eq!(req.missing_offsets, vec![64 * 1024, 96 * 1024]);
+
+            // Отправитель принимает FileRequest в начале сессии:
+            // пропускает блоки 0 и 1 и ставит в очередь ТОЛЬКО блоки 2 и 3!
+            let missing_count = sender2.handle_request(&req).unwrap();
+            assert_eq!(missing_count, 2);
+
+            // Отправитель высылает блоки: проверяем, что высылаются ровно блоки 2 и 3, а не 0 и 1!
+            let sent_b2 = sender2.next_block(&mut reader2).unwrap().unwrap();
+            assert_eq!(sent_b2.offset, 64 * 1024);
+            receiver2.write_block(&sent_b2).unwrap();
+
+            let sent_b3 = sender2.next_block(&mut reader2).unwrap().unwrap();
+            assert_eq!(sent_b3.offset, 96 * 1024);
+            let res = receiver2.write_block(&sent_b3).unwrap();
+            assert_eq!(res, BlockWriteResult::Complete);
+
+            // Больше блоков отправителю передавать не нужно
+            assert!(sender2.next_block(&mut reader2).unwrap().is_none());
+
+            // Итоговая верификация BLAKE3 всего собранного файла
+            let final_path = receiver2.finish_and_verify().unwrap();
+            assert_eq!(final_path, dest_path);
+
+            let disk_bytes = std::fs::read(&dest_path).unwrap();
+            assert_eq!(disk_bytes, data);
+
+            // Временные файлы удалены
+            assert!(!state_path.exists());
+            assert!(!temp_path.exists());
+        }
+
+        let _ = std::fs::remove_file(&dest_path);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

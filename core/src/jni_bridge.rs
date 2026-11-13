@@ -1984,23 +1984,39 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRece
         Err(_) => return crate::FL_ERR_INTERNAL,
     };
     let mut frame_buf = vec![0u8; cap.max(1)];
-    let mut produced = 0usize;
+    let mut produced = cap;
     let status = unsafe {
         crate::fl_file_receiver_build_request(handle as u64, frame_buf.as_mut_ptr(), &mut produced)
     };
+    let _ = env.set_int_array_region(&out_len, 0, &[produced as jint]);
     if status != FL_OK {
         return status;
     }
     if env
         .set_byte_array_region(&out_frame, 0, &to_signed(&frame_buf[..produced.min(cap)]))
         .is_err()
-        || env
-            .set_int_array_region(&out_len, 0, &[produced as jint])
-            .is_err()
     {
         return crate::FL_ERR_INTERNAL;
     }
     FL_OK
+}
+
+/// Возвращает количество уже принятых блоков для получателя.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileReceiverReceivedChunks<
+    'local,
+>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jlong {
+    let mut count = 0usize;
+    let status = unsafe { crate::fl_file_receiver_received_chunks(handle as u64, &mut count) };
+    if status == crate::FL_OK {
+        count as jlong
+    } else {
+        -1
+    }
 }
 
 /// Финализирует приём: проверяет полный BLAKE3 хэш файла и перемещает его на постоянное место.

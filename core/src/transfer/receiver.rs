@@ -13,6 +13,7 @@ use crate::transfer::checksum::{verify_block_hash, verify_file_hash};
 use crate::transfer::chunk::ChunkPlan;
 use crate::transfer::errors::TransferError;
 use crate::transfer::resume::{cleanup_files, ResumeState};
+use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -40,7 +41,7 @@ pub struct FileReceiver {
     chunk_size: u32,
     plan: ChunkPlan,
     bitmap: ChunkBitmap,
-    chunk_hashes: Vec<Option<[u8; 32]>>,
+    chunk_hashes: HashMap<usize, [u8; 32]>,
     temp_path: PathBuf,
     dest_path: PathBuf,
     state_path: Option<PathBuf>,
@@ -94,7 +95,7 @@ impl FileReceiver {
 
         let plan = ChunkPlan::new(offer.total_size, chunk_size)?;
         let bitmap = ChunkBitmap::new(plan.total_chunks());
-        let chunk_hashes = vec![None; plan.total_chunks()];
+        let chunk_hashes = HashMap::new();
 
         // Открываем или создаём временный файл
         if let Some(parent) = temp_path.parent() {
@@ -196,6 +197,12 @@ impl FileReceiver {
         self.bitmap.is_complete()
     }
 
+    /// Количество уже полученных блоков (используется для отображения и подтверждения Resume).
+    #[inline]
+    pub fn received_chunks_count(&self) -> usize {
+        self.bitmap.received_count()
+    }
+
     /// Записывает блок данных в файл после проверки контрольной суммы.
     pub fn write_block(&mut self, block: &FileBlock) -> Result<BlockWriteResult, TransferError> {
         if self.cancelled {
@@ -247,9 +254,7 @@ impl FileReceiver {
         self.bitmap.mark_received(chunk.index);
         let mut block_hash_arr = [0u8; 32];
         block_hash_arr.copy_from_slice(&block.block_hash);
-        if chunk.index < self.chunk_hashes.len() {
-            self.chunk_hashes[chunk.index] = Some(block_hash_arr);
-        }
+        self.chunk_hashes.insert(chunk.index, block_hash_arr);
 
         self.save_state_if_needed()?;
 

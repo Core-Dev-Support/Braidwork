@@ -43,12 +43,18 @@ unsafe fn copy_out(data: &[u8], out: *mut u8, out_len: *mut usize) -> FlStatus {
         return FL_ERR_INVALID_ARG;
     }
     let needed = data.len();
+    let passed_cap = *out_len;
     if needed > 0 {
         if out.is_null() {
+            *out_len = needed;
+            return FL_OK;
+        }
+        if passed_cap > 0 && passed_cap < needed {
+            *out_len = needed;
             return FL_ERR_INVALID_ARG;
         }
-        let cap = std::slice::from_raw_parts_mut(out, needed);
-        cap.copy_from_slice(data);
+        let dest = std::slice::from_raw_parts_mut(out, needed);
+        dest.copy_from_slice(data);
     }
     *out_len = needed;
     FL_OK
@@ -404,6 +410,31 @@ pub unsafe extern "C" fn fl_file_receiver_build_request(
             };
 
         copy_out(&frame, out_data, out_len)
+    })
+}
+
+/// Возвращает количество уже принятых блоков для получателя (полезно для обнаружения и ведения Resume).
+///
+/// # Safety
+/// `out_count` должен указывать на валидную переменную `size_t`.
+#[no_mangle]
+pub unsafe extern "C" fn fl_file_receiver_received_chunks(
+    handle: u64,
+    out_count: *mut usize,
+) -> FlStatus {
+    guard(|| {
+        if out_count.is_null() {
+            return FL_ERR_INVALID_ARG;
+        }
+
+        let h = FlHandle(handle);
+        let count = match receivers().with(h, |receiver| receiver.received_chunks_count()) {
+            Some(c) => c,
+            None => return FL_ERR_INVALID_ARG,
+        };
+
+        *out_count = count;
+        FL_OK
     })
 }
 
