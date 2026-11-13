@@ -876,6 +876,154 @@ object BraidworkCore {
         }
     }
 
+    /** Дефолтный размер чанка — 32 КиБ. */
+    const val DEFAULT_CHUNK_SIZE = 32 * 1024
+
+    /** Информация о следующем чанке для отправки из FileSender. */
+    data class FileSenderChunk(
+        var offset: Long = 0L,
+        var length: Int = 0,
+        var chunkIndex: Long = 0L,
+    )
+
+    enum class BlockWriteResult {
+        ACCEPTED,
+        DUPLICATE,
+        COMPLETE,
+    }
+
+    data class BlockWriteOutcome(
+        val chunkIndex: Long,
+        val result: BlockWriteResult,
+    )
+
+    /** Создаёт отправитель файла FileSender в ядре Rust. */
+    fun createFileSender(
+        transferId: ByteArray,
+        fileName: String,
+        totalSize: Long,
+        totalHash: ByteArray,
+        chunkSize: Int = DEFAULT_CHUNK_SIZE,
+    ): Long {
+        ensureLoaded()
+        val handle = LongArray(1)
+        val status = nativeFileSenderCreate(transferId, fileName, totalSize, totalHash, chunkSize, handle)
+        if (status != STATUS_OK) {
+            throw BraidworkException(status, "ошибка создания FileSender")
+        }
+        return handle[0]
+    }
+
+    /** Запрашивает следующий чанк для отправки. Возвращает false, если все чанки отправлены. */
+    fun fileSenderNextChunk(handle: Long, outChunk: FileSenderChunk): Boolean {
+        ensureLoaded()
+        val offset = LongArray(1)
+        val length = IntArray(1)
+        val idx = LongArray(1)
+        val isDone = IntArray(1)
+        val status = nativeFileSenderNextChunk(handle, offset, length, idx, isDone)
+        if (status != STATUS_OK) {
+            throw BraidworkException(status, "ошибка получения следующего чанка")
+        }
+        if (isDone[0] == 1) {
+            return false
+        }
+        outChunk.offset = offset[0]
+        outChunk.length = length[0]
+        outChunk.chunkIndex = idx[0]
+        return true
+    }
+
+    /** Собирает кадр FileBlock через FileSender ядра. */
+    fun fileSenderBuildBlock(handle: Long, offset: Long, data: ByteArray): ByteArray {
+        ensureLoaded()
+        val out = ByteArray(FILE_BLOCK_FRAME_MAX)
+        val outLen = IntArray(1)
+        val status = nativeFileSenderBuildBlock(handle, offset, data, out, outLen)
+        if (status != STATUS_OK) {
+            throw BraidworkException(status, "ошибка сборки блока через FileSender")
+        }
+        return out.copyOf(outLen[0])
+    }
+
+    /** Передаёт FileRequest в FileSender для повторной отправки утерянных блоков. */
+    fun fileSenderHandleRequest(handle: Long, requestBody: ByteArray): Int {
+        ensureLoaded()
+        val count = IntArray(1)
+        val status = nativeFileSenderHandleRequest(handle, requestBody, count)
+        if (status != STATUS_OK) {
+            throw BraidworkException(status, "ошибка обработки FileRequest в FileSender")
+        }
+        return count[0]
+    }
+
+    /** Освобождает объект FileSender. */
+    fun fileSenderFree(handle: Long) {
+        ensureLoaded()
+        nativeFileSenderFree(handle)
+    }
+
+    /** Создаёт получатель файла FileReceiver в ядре Rust на основе FileOffer. */
+    fun createFileReceiver(
+        offerBody: ByteArray,
+        tempPath: String,
+        destPath: String,
+        chunkSize: Int = DEFAULT_CHUNK_SIZE,
+    ): Long {
+        ensureLoaded()
+        val handle = LongArray(1)
+        val status = nativeFileReceiverCreate(offerBody, tempPath, destPath, chunkSize, handle)
+        if (status != STATUS_OK) {
+            throw BraidworkException(status, "ошибка создания FileReceiver")
+        }
+        return handle[0]
+    }
+
+    /** Принимает, валидирует по BLAKE3 и записывает блок файла через FileReceiver ядра. */
+    fun fileReceiverWriteBlock(handle: Long, blockBody: ByteArray): BlockWriteOutcome {
+        ensureLoaded()
+        val chunkIdx = LongArray(1)
+        val result = IntArray(1)
+        val status = nativeFileReceiverWriteBlock(handle, blockBody, chunkIdx, result)
+        if (status != STATUS_OK) {
+            throw BraidworkException(status, "ошибка записи блока в FileReceiver")
+        }
+        val outcome = when (result[0]) {
+            0 -> BlockWriteResult.ACCEPTED
+            1 -> BlockWriteResult.DUPLICATE
+            2 -> BlockWriteResult.COMPLETE
+            else -> BlockWriteResult.ACCEPTED
+        }
+        return BlockWriteOutcome(chunkIdx[0], outcome)
+    }
+
+    /** Формирует кадр FileRequest со списком недостающих блоков для докачки. */
+    fun fileReceiverBuildRequest(handle: Long): ByteArray {
+        ensureLoaded()
+        val out = ByteArray(FILE_REQUEST_FRAME_MAX)
+        val outLen = IntArray(1)
+        val status = nativeFileReceiverBuildRequest(handle, out, outLen)
+        if (status != STATUS_OK) {
+            throw BraidworkException(status, "ошибка формирования FileRequest в FileReceiver")
+        }
+        return out.copyOf(outLen[0])
+    }
+
+    /** Финализирует приём: проверяет полный BLAKE3 хэш и атомарно перемещает файл на постоянное место. */
+    fun fileReceiverFinish(handle: Long) {
+        ensureLoaded()
+        val status = nativeFileReceiverFinish(handle)
+        if (status != STATUS_OK) {
+            throw BraidworkException(status, "ошибка финализации и сверки хэша в FileReceiver")
+        }
+    }
+
+    /** Освобождает объект FileReceiver (при отмене удаляет временный .part файл). */
+    fun fileReceiverFree(handle: Long) {
+        ensureLoaded()
+        nativeFileReceiverFree(handle)
+    }
+
     /** Собирает кадр `FileOffer`. */
     fun fileOfferFrame(
         transferId: ByteArray,
@@ -1206,6 +1354,64 @@ object BraidworkCore {
         outMissingOffsets: LongArray,
         outMissingOffsetsLen: IntArray,
     ): Int
+
+    private external fun nativeFileSenderCreate(
+        transferId: ByteArray,
+        fileName: String,
+        totalSize: Long,
+        totalHash: ByteArray,
+        chunkSize: Int,
+        outHandle: LongArray,
+    ): Int
+
+    private external fun nativeFileSenderNextChunk(
+        handle: Long,
+        outOffset: LongArray,
+        outLength: IntArray,
+        outChunkIdx: LongArray,
+        outIsDone: IntArray,
+    ): Int
+
+    private external fun nativeFileSenderBuildBlock(
+        handle: Long,
+        offset: Long,
+        data: ByteArray,
+        out: ByteArray,
+        outLen: IntArray,
+    ): Int
+
+    private external fun nativeFileSenderHandleRequest(
+        handle: Long,
+        requestBody: ByteArray,
+        outRetransmitCount: IntArray,
+    ): Int
+
+    private external fun nativeFileSenderFree(handle: Long): Int
+
+    private external fun nativeFileReceiverCreate(
+        offerBody: ByteArray,
+        tempPath: String,
+        destPath: String,
+        chunkSize: Int,
+        outHandle: LongArray,
+    ): Int
+
+    private external fun nativeFileReceiverWriteBlock(
+        handle: Long,
+        blockBody: ByteArray,
+        outChunkIdx: LongArray,
+        outResult: IntArray,
+    ): Int
+
+    private external fun nativeFileReceiverBuildRequest(
+        handle: Long,
+        out: ByteArray,
+        outLen: IntArray,
+    ): Int
+
+    private external fun nativeFileReceiverFinish(handle: Long): Int
+
+    private external fun nativeFileReceiverFree(handle: Long): Int
 
     private external fun nativeBlake3Hash(data: ByteArray, outHash: ByteArray): Int
     private external fun nativeBlake3HasherCreate(outHandle: LongArray): Int

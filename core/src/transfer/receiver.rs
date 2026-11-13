@@ -40,6 +40,7 @@ pub struct FileReceiver {
     chunk_size: u32,
     plan: ChunkPlan,
     bitmap: ChunkBitmap,
+    chunk_hashes: Vec<Option<[u8; 32]>>,
     temp_path: PathBuf,
     dest_path: PathBuf,
     state_path: Option<PathBuf>,
@@ -76,6 +77,7 @@ impl FileReceiver {
 
         let plan = ChunkPlan::new(offer.total_size, chunk_size)?;
         let bitmap = ChunkBitmap::new(plan.total_chunks());
+        let chunk_hashes = vec![None; plan.total_chunks()];
 
         // Открываем или создаём временный файл
         if let Some(parent) = temp_path.parent() {
@@ -95,6 +97,7 @@ impl FileReceiver {
             chunk_size,
             plan,
             bitmap,
+            chunk_hashes,
             temp_path,
             dest_path,
             state_path,
@@ -115,10 +118,14 @@ impl FileReceiver {
     ) -> Result<Self, TransferError> {
         state.validate_part_file(&temp_path)?;
 
-        let file = OpenOptions::new()
+        let mut file = OpenOptions::new()
             .read(true)
             .write(true)
             .open(&temp_path)?;
+
+        let mut state = state;
+        // Криптографическая проверка каждого ранее сохранённого блока на диске
+        state.reconcile_and_verify_part_file(&mut file)?;
 
         let plan = ChunkPlan::new(state.total_size, state.chunk_size)?;
 
@@ -130,6 +137,7 @@ impl FileReceiver {
             chunk_size: state.chunk_size,
             plan,
             bitmap: state.bitmap,
+            chunk_hashes: state.chunk_hashes,
             temp_path,
             dest_path,
             state_path,
@@ -199,6 +207,14 @@ impl FileReceiver {
                 ))
             })?;
 
+        // Строгая проверка: смещение и длина блока обязаны точно совпадать с ожидаемым чанком
+        if block.offset != chunk.offset || block.data.len() != chunk.length as usize {
+            return Err(TransferError::MalformedBlock(format!(
+                "несовпадение границ чанка {}: ожидалось offset={}, len={}, получено offset={}, len={}",
+                chunk.index, chunk.offset, chunk.length, block.offset, block.data.len()
+            )));
+        }
+
         // Проверяем дубликат
         if self.bitmap.is_received(chunk.index) {
             return Ok(BlockWriteResult::Duplicate {
@@ -218,8 +234,13 @@ impl FileReceiver {
         file.seek(SeekFrom::Start(block.offset))?;
         file.write_all(&block.data)?;
 
-        // Отмечаем в битовой карте
+        // Отмечаем в битовой карте и сохраняем проверенный хэш блока
         self.bitmap.mark_received(chunk.index);
+        let mut block_hash_arr = [0u8; 32];
+        block_hash_arr.copy_from_slice(&block.block_hash);
+        if chunk.index < self.chunk_hashes.len() {
+            self.chunk_hashes[chunk.index] = Some(block_hash_arr);
+        }
 
         self.save_state_if_needed()?;
 
@@ -315,6 +336,7 @@ impl FileReceiver {
                 total_hash: self.total_hash,
                 chunk_size: self.chunk_size,
                 bitmap: self.bitmap.clone(),
+                chunk_hashes: self.chunk_hashes.clone(),
             };
             state.save_to_file(state_path)?;
         }
@@ -416,11 +438,12 @@ mod tests {
         )
         .unwrap();
 
-        // Подсовываем неправильный block_hash
+        // Подсовываем блок правильного размера (100 байт), но с неправильным block_hash
+        let block_data = vec![0x42u8; 100];
         let block = FileBlock {
             offset: 0,
-            length: 10,
-            data: Bytes::from_static(b"0123456789"),
+            length: 100,
+            data: Bytes::copy_from_slice(&block_data),
             block_hash: Bytes::copy_from_slice(&[0xff; 32]),
             transfer_id: Bytes::from_static(b"tid_bad"),
         };
@@ -430,6 +453,69 @@ mod tests {
             TransferError::CorruptedBlock { .. } => {}
             _ => panic!("ожидалась ошибка CorruptedBlock, получено {:?}", err),
         }
+
+        receiver.cancel();
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn тест_отклонения_неполного_или_несмещённого_блока() {
+        let dir = std::env::temp_dir().join("bw_test_recv_partial");
+        let _ = std::fs::create_dir_all(&dir);
+
+        let temp_path = dir.join(".bw_part.part");
+        let dest_path = dir.join("part.bin");
+
+        let total_size = 64 * 1024; // 2 чанка по 32 КБ
+        let offer = FileOffer {
+            transfer_id: Bytes::from_static(b"tid_partial"),
+            file_name: "partial.txt".to_string(),
+            total_size,
+            total_hash: Bytes::copy_from_slice(&[0u8; 32]),
+            blocks: Vec::new(),
+            origin: None,
+        };
+
+        let mut receiver = FileReceiver::from_offer(
+            &offer,
+            temp_path.clone(),
+            dest_path,
+            None,
+            DEFAULT_CHUNK_SIZE,
+        )
+        .unwrap();
+
+        // 1. Посылаем блок правильного смещения 0, но короче ожидаемого чанка (1000 байт вместо 32768)
+        let short_data = vec![0x42u8; 1000];
+        let short_block = FileBlock {
+            offset: 0,
+            length: 1000,
+            data: Bytes::copy_from_slice(&short_data),
+            block_hash: Bytes::copy_from_slice(&compute_block_hash(&short_data)),
+            transfer_id: Bytes::from_static(b"tid_partial"),
+        };
+
+        let err = receiver.write_block(&short_block).unwrap_err();
+        match err {
+            TransferError::MalformedBlock(msg) => {
+                assert!(msg.contains("несовпадение границ чанка"));
+            }
+            _ => panic!("ожидалась ошибка MalformedBlock, получено {:?}", err),
+        }
+
+        // Блок не должен был быть помечен как полученный
+        assert!(!receiver.bitmap().is_received(0));
+
+        // 2. Посылаем блок с невыровненным смещением (например, 500)
+        let misaligned_block = FileBlock {
+            offset: 500,
+            length: DEFAULT_CHUNK_SIZE,
+            data: Bytes::copy_from_slice(&vec![0x42u8; DEFAULT_CHUNK_SIZE as usize]),
+            block_hash: Bytes::copy_from_slice(&compute_block_hash(&vec![0x42u8; DEFAULT_CHUNK_SIZE as usize])),
+            transfer_id: Bytes::from_static(b"tid_partial"),
+        };
+
+        assert!(receiver.write_block(&misaligned_block).is_err());
 
         receiver.cancel();
         let _ = std::fs::remove_dir_all(dir);

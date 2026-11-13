@@ -1,19 +1,20 @@
 //! Сохранение состояния и возобновление передачи (Resume).
 //!
 //! Защищает передачу от обрывов сети и перезапуска приложения:
-//! - Сохраняет метаданные файла, параметры нарезки и битовую карту подтверждённых блоков.
-//! - Проверяет целостность временного файла (`.bw_<tid>.part`) перед возобновлением.
-//! - Не позволяет повреждённому или усечённому файлу сойти за готовый.
+//! - Сохраняет метаданные файла, параметры нарезки, битовую карту и криптографические хэши блоков.
+//! - Проверяет целостность временного файла (`.bw_<tid>.part`) перед возобновлением:
+//!   каждый ранее подтверждённый блок перепроверяется по BLAKE3 прямо с диска.
+//! - Повреждённые или усечённые блоки автоматически сбрасываются и запрашиваются повторно.
 
 use crate::transfer::ack::ChunkBitmap;
 use crate::transfer::chunk::ChunkPlan;
 use crate::transfer::errors::TransferError;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 const RESUME_MAGIC: &[u8; 8] = b"BWRESUME";
-const RESUME_VERSION: u32 = 1;
+const RESUME_VERSION: u32 = 2;
 
 /// Метаданные и сохранённое состояние незавершённой передачи.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +25,7 @@ pub struct ResumeState {
     pub total_hash: [u8; 32],
     pub chunk_size: u32,
     pub bitmap: ChunkBitmap,
+    pub chunk_hashes: Vec<Option<[u8; 32]>>,
 }
 
 impl ResumeState {
@@ -42,6 +44,18 @@ impl ResumeState {
             total_hash,
             chunk_size,
             bitmap: ChunkBitmap::new(total_chunks),
+            chunk_hashes: vec![None; total_chunks],
+        }
+    }
+
+    /// Записывает факт успешного приёма блока и его хэш.
+    pub fn record_chunk(&mut self, chunk_idx: usize, hash: [u8; 32]) {
+        if chunk_idx < self.bitmap.total_chunks() {
+            self.bitmap.mark_received(chunk_idx);
+            if chunk_idx >= self.chunk_hashes.len() {
+                self.chunk_hashes.resize(self.bitmap.total_chunks(), None);
+            }
+            self.chunk_hashes[chunk_idx] = Some(hash);
         }
     }
 
@@ -66,10 +80,19 @@ impl ResumeState {
         buf.extend_from_slice(name_bytes);
 
         // bitmap
-        buf.extend_from_slice(&(self.bitmap.total_chunks() as u64).to_le_bytes());
+        let total_chunks = self.bitmap.total_chunks();
+        buf.extend_from_slice(&(total_chunks as u64).to_le_bytes());
         let bmp_bytes = self.bitmap.as_bytes();
         buf.extend_from_slice(&(bmp_bytes.len() as u64).to_le_bytes());
         buf.extend_from_slice(bmp_bytes);
+
+        // chunk_hashes: сохраняем хэши для всех принятых блоков
+        for i in 0..total_chunks {
+            if self.bitmap.is_received(i) {
+                let h = self.chunk_hashes.get(i).and_then(|x| *x).unwrap_or([0u8; 32]);
+                buf.extend_from_slice(&h);
+            }
+        }
 
         buf
     }
@@ -89,7 +112,7 @@ impl ResumeState {
         let mut ver_bytes = [0u8; 4];
         cursor.read_exact(&mut ver_bytes)?;
         let version = u32::from_le_bytes(ver_bytes);
-        if version != RESUME_VERSION {
+        if version != 1 && version != RESUME_VERSION {
             return Err(TransferError::InvalidState(format!(
                 "неподдерживаемая версия файла состояния: {}",
                 version
@@ -133,6 +156,17 @@ impl ResumeState {
         cursor.read_exact(&mut bmp_bytes)?;
 
         let bitmap = ChunkBitmap::from_bytes(total_chunks, &bmp_bytes)?;
+        let mut chunk_hashes = vec![None; total_chunks];
+
+        if version >= 2 {
+            for i in 0..total_chunks {
+                if bitmap.is_received(i) {
+                    let mut h = [0u8; 32];
+                    cursor.read_exact(&mut h)?;
+                    chunk_hashes[i] = Some(h);
+                }
+            }
+        }
 
         Ok(Self {
             transfer_id,
@@ -141,6 +175,7 @@ impl ResumeState {
             total_hash,
             chunk_size,
             bitmap,
+            chunk_hashes,
         })
     }
 
@@ -185,23 +220,68 @@ impl ResumeState {
             });
         }
 
-        // Проверяем, что размер файла не меньше последнего принятого чанка
+        Ok(())
+    }
+
+    /// Криптографическая сверка: проверяет BLAKE3 хэш каждого принятого чанка в файле `.part`.
+    /// Если чанк повреждён, усечён или не читается, он сбрасывается из битовой карты
+    /// для последующей чистой докачки.
+    pub fn reconcile_and_verify_part_file<R: Read + Seek>(
+        &mut self,
+        reader: &mut R,
+    ) -> Result<usize, TransferError> {
         let plan = ChunkPlan::new(self.total_size, self.chunk_size)?;
+        let mut verified = 0;
+
         for idx in 0..self.bitmap.total_chunks() {
-            if self.bitmap.is_received(idx) {
-                if let Some(info) = plan.chunk_at(idx) {
-                    let needed_len = info.offset + info.length as u64;
-                    if file_len < needed_len {
-                        return Err(TransferError::InvalidState(format!(
-                            "размер файла {} меньше ожидаемого смещения чанка {}",
-                            file_len, needed_len
-                        )));
+            if !self.bitmap.is_received(idx) {
+                continue;
+            }
+
+            let info = match plan.chunk_at(idx) {
+                Some(i) => i,
+                None => {
+                    self.bitmap.clear_received(idx);
+                    if idx < self.chunk_hashes.len() {
+                        self.chunk_hashes[idx] = None;
                     }
+                    continue;
+                }
+            };
+
+            // Проверяем позиционирование
+            if reader.seek(SeekFrom::Start(info.offset)).is_err() {
+                self.bitmap.clear_received(idx);
+                if idx < self.chunk_hashes.len() {
+                    self.chunk_hashes[idx] = None;
+                }
+                continue;
+            }
+
+            let mut buf = vec![0u8; info.length as usize];
+            if reader.read_exact(&mut buf).is_err() {
+                self.bitmap.clear_received(idx);
+                if idx < self.chunk_hashes.len() {
+                    self.chunk_hashes[idx] = None;
+                }
+                continue;
+            }
+
+            // Если сохранён хэш блока, проверяем его!
+            if let Some(expected_hash) = self.chunk_hashes.get(idx).and_then(|h| *h) {
+                let actual_hash = crate::transfer::checksum::compute_block_hash(&buf);
+                if actual_hash != expected_hash {
+                    // Блок на диске повреждён! Сбрасываем его
+                    self.bitmap.clear_received(idx);
+                    self.chunk_hashes[idx] = None;
+                    continue;
                 }
             }
+
+            verified += 1;
         }
 
-        Ok(())
+        Ok(verified)
     }
 }
 
@@ -220,6 +300,7 @@ pub fn cleanup_files(part_path: &Path, state_path: Option<&Path>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
 
     #[test]
     fn тест_сериализации_и_восстановления_состояния() {
@@ -231,8 +312,8 @@ mod tests {
             32 * 1024,
             4,
         );
-        state.bitmap.mark_received(0);
-        state.bitmap.mark_received(2);
+        state.record_chunk(0, [0x11; 32]);
+        state.record_chunk(2, [0x22; 32]);
 
         let bytes = state.to_bytes();
         let restored = ResumeState::from_bytes(&bytes).unwrap();
@@ -244,5 +325,47 @@ mod tests {
         assert_eq!(state.chunk_size, restored.chunk_size);
         assert_eq!(state.bitmap, restored.bitmap);
         assert_eq!(restored.bitmap.received_count(), 2);
+        assert_eq!(restored.chunk_hashes[0], Some([0x11; 32]));
+        assert_eq!(restored.chunk_hashes[1], None);
+        assert_eq!(restored.chunk_hashes[2], Some([0x22; 32]));
+    }
+
+    #[test]
+    fn тест_сверки_повреждённого_файла_при_возобновлении() {
+        let chunk_size = 32 * 1024;
+        let mut state = ResumeState::new(
+            b"tid_reconcile".to_vec(),
+            "data.bin".to_string(),
+            64 * 1024,
+            [0xaa; 32],
+            chunk_size,
+            2,
+        );
+
+        let chunk0_data = vec![0x11u8; chunk_size as usize];
+        let chunk1_data = vec![0x22u8; chunk_size as usize];
+
+        let hash0 = crate::transfer::checksum::compute_block_hash(&chunk0_data);
+        let hash1 = crate::transfer::checksum::compute_block_hash(&chunk1_data);
+
+        state.record_chunk(0, hash0);
+        state.record_chunk(1, hash1);
+
+        // Создаём образ диска: блок 0 целый, блок 1 повреждён (заменен байт)
+        let mut disk_data = Vec::new();
+        disk_data.extend_from_slice(&chunk0_data);
+        let mut corrupted_chunk1 = chunk1_data.clone();
+        corrupted_chunk1[500] = 0x99;
+        disk_data.extend_from_slice(&corrupted_chunk1);
+
+        let mut cursor = Cursor::new(disk_data);
+        let verified = state.reconcile_and_verify_part_file(&mut cursor).unwrap();
+
+        // Должен подтвердиться только блок 0, а блок 1 должен быть сброшен
+        assert_eq!(verified, 1);
+        assert!(state.bitmap.is_received(0));
+        assert!(!state.bitmap.is_received(1));
+        assert_eq!(state.bitmap.received_count(), 1);
+        assert_eq!(state.bitmap.missing_indices(), vec![1]);
     }
 }

@@ -92,6 +92,25 @@ impl ChunkBitmap {
         }
     }
 
+    /// Сбрасывает отметку о получении чанка (например, если при проверке возобновления блок на диске оказался повреждён).
+    pub fn clear_received(&mut self, chunk_idx: usize) -> bool {
+        if chunk_idx >= self.total_chunks {
+            return false;
+        }
+
+        let byte_idx = chunk_idx / 8;
+        let bit_idx = chunk_idx % 8;
+        let mask = 1 << bit_idx;
+
+        if (self.bits[byte_idx] & mask) != 0 {
+            self.bits[byte_idx] &= !mask;
+            self.received_count = self.received_count.saturating_sub(1);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Проверяет, был ли принят чанк с указанным индексом.
     pub fn is_received(&self, chunk_idx: usize) -> bool {
         if chunk_idx >= self.total_chunks {
@@ -137,6 +156,22 @@ pub fn build_file_request(
             Some(h) => Bytes::copy_from_slice(&h),
             None => Bytes::new(),
         },
+    }
+}
+
+/// Проверяет, является ли FileRequest положительным подтверждением (ACK) полного завершения приёма файла.
+/// Если missing_offsets пуст — получатель подтверждает, что все блоки приняты и проверены.
+#[inline]
+pub fn is_transfer_complete_ack(req: &FileRequest) -> bool {
+    req.missing_offsets.is_empty()
+}
+
+/// Формирует положительное подтверждение (ACK) успешного завершения приёма файла.
+pub fn build_completion_ack(transfer_id: &[u8]) -> FileRequest {
+    FileRequest {
+        transfer_id: Bytes::copy_from_slice(transfer_id),
+        missing_offsets: Vec::new(),
+        partial_hash: Bytes::new(),
     }
 }
 

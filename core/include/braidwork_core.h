@@ -322,6 +322,50 @@ fl_status fl_file_request_read(const uint8_t *body, size_t body_len,
                               uint8_t *out_transfer_id, size_t transfer_id_cap, size_t *out_transfer_id_len,
                               uint64_t *out_missing_offsets, size_t missing_offsets_cap, size_t *out_missing_offsets_len);
 
+/* Создаёт объект FileSender для управления отправкой файла. */
+fl_status fl_file_sender_create(const uint8_t *transfer_id, size_t transfer_id_len,
+                               const uint8_t *file_name, size_t file_name_len,
+                               uint64_t total_size,
+                               const uint8_t *total_hash, size_t total_hash_len,
+                               uint32_t chunk_size, uint64_t *out_handle);
+
+/* Возвращает параметры следующего блока для отправки. */
+fl_status fl_file_sender_next_chunk(uint64_t handle, uint64_t *out_offset,
+                                   uint32_t *out_length, size_t *out_chunk_idx,
+                                   uint32_t *out_is_done);
+
+/* Собирает FileBlock кадр из предоставленных байтов блока. */
+fl_status fl_file_sender_build_block(uint64_t handle, uint64_t offset,
+                                    const uint8_t *data, size_t data_len,
+                                    uint8_t *out_data, size_t *out_len);
+
+/* Передаёт FileRequest в FileSender для повторной отправки запрошенных блоков. */
+fl_status fl_file_sender_handle_request(uint64_t handle, const uint8_t *request_body,
+                                       size_t request_body_len, size_t *out_retransmit_count);
+
+/* Освобождает объект FileSender. */
+fl_status fl_file_sender_free(uint64_t handle);
+
+/* Создаёт объект FileReceiver на основе предложения FileOffer. */
+fl_status fl_file_receiver_create(const uint8_t *offer_body, size_t offer_body_len,
+                                 const uint8_t *temp_path, size_t temp_path_len,
+                                 const uint8_t *dest_path, size_t dest_path_len,
+                                 uint32_t chunk_size, uint64_t *out_handle);
+
+/* Записывает и проверяет принятый FileBlock. */
+fl_status fl_file_receiver_write_block(uint64_t handle, const uint8_t *block_body,
+                                      size_t block_body_len, size_t *out_chunk_idx,
+                                      uint32_t *out_result);
+
+/* Формирует кадр FileRequest со списком недостающих блоков. */
+fl_status fl_file_receiver_build_request(uint64_t handle, uint8_t *out_data, size_t *out_len);
+
+/* Финализирует приём: проверяет BLAKE3 и переименовывает файл в целевую директорию. */
+fl_status fl_file_receiver_finish(uint64_t handle);
+
+/* Освобождает объект FileReceiver. */
+fl_status fl_file_receiver_free(uint64_t handle);
+
 fl_status fl_keys_device_id(const uint8_t *blob, size_t blob_len,
                             uint8_t *out_id, size_t *out_len);
 

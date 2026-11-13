@@ -328,6 +328,7 @@ class DeviceDiscovery(
         return try {
             BraidworkCore.transportSend(h, conn, кадр)
             sentClipboardCount.incrementAndGet()
+            saveStats()
             записать("буфер отправлен: ${текст.кратко()} (${текст.length} символов)")
             mainHandler.post {
                 Toast.makeText(context, "Буфер отправлен (${текст.length} симв.)", Toast.LENGTH_SHORT).show()
@@ -476,6 +477,19 @@ class DeviceDiscovery(
                 val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Braidwork")
                 if (!dir.exists()) dir.mkdirs()
                 val tempFile = File(dir, ".bw_${tidHex}.part")
+                val finalFile = findUniqueFile(dir, safeName)
+
+                var rHandle = 0L
+                try {
+                    rHandle = BraidworkCore.createFileReceiver(
+                        offerBody = кадр.body,
+                        tempPath = tempFile.absolutePath,
+                        destPath = finalFile.absolutePath,
+                    )
+                } catch (e: Exception) {
+                    записать("ошибка создания FileReceiver для «$safeName»: ${e.message}")
+                    return
+                }
 
                 val transfer = ActiveTransfer(
                     transferIdHex = tidHex,
@@ -486,6 +500,8 @@ class DeviceDiscovery(
                     totalHash = offer.totalHash,
                     isIncoming = true,
                     tempFile = tempFile,
+                    finalFile = finalFile,
+                    receiverHandle = rHandle,
                 )
                 activeTransfers[tidHex] = transfer
             }
@@ -502,26 +518,16 @@ class DeviceDiscovery(
                     return
                 }
 
-                if (block.data.size > 64 * 1024) {
-                    записать("от $кто: блок файла превышает 64 КБ (${block.data.size} байт), отклонён")
-                    return
-                }
-                if (block.offset < 0 || (transfer.totalSize > 0 && block.offset + block.data.size > transfer.totalSize + 1024 * 1024)) {
-                    записать("от $кто: блок файла выходит за допустимые границы (offset=${block.offset}, size=${block.data.size})")
+                val rHandle = transfer.receiverHandle
+                if (rHandle == 0L) {
                     return
                 }
 
                 try {
-                    val file = transfer.tempFile ?: return
-                    var raf = transfer.raf
-                    if (raf == null) {
-                        raf = RandomAccessFile(file, "rw")
-                        transfer.raf = raf
+                    val outcome = BraidworkCore.fileReceiverWriteBlock(rHandle, кадр.body)
+                    if (outcome.result != BraidworkCore.BlockWriteResult.DUPLICATE) {
+                        transfer.transferredBytes += block.data.size
                     }
-                    raf.seek(block.offset)
-                    raf.write(block.data)
-
-                    transfer.transferredBytes += block.data.size
 
                     val now = System.currentTimeMillis()
                     val elapsed = now - transfer.lastCalcTime
@@ -532,95 +538,42 @@ class DeviceDiscovery(
                         transfer.lastCalcTime = now
                     }
 
-                    if (transfer.transferredBytes >= transfer.totalSize) {
-                        try {
-                            transfer.raf?.close()
-                        } catch (_: Exception) {}
-                        transfer.raf = null
+                    if (outcome.result == BraidworkCore.BlockWriteResult.COMPLETE || transfer.transferredBytes >= transfer.totalSize) {
+                        // Финализируем приём в ядре Rust: проверяется поточный BLAKE3 хэш всего файла и выполняется атомарный rename в целевую директорию
+                        BraidworkCore.fileReceiverFinish(rHandle)
+                        BraidworkCore.fileReceiverFree(rHandle)
+                        transfer.receiverHandle = 0L
 
-                        val fileHash = FileInputStream(file).use { fis ->
-                            BraidworkCore.blake3Stream(fis)
-                        }
-                        if (fileHash.contentEquals(transfer.totalHash)) {
-                            val dir = file.parentFile ?: File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Braidwork")
-                            val finalFile = findUniqueFile(dir, transfer.fileName)
-                            var moved = file.renameTo(finalFile)
-                            if (!moved) {
-                                try {
-                                    FileInputStream(file).use { input ->
-                                        FileOutputStream(finalFile).use { output ->
-                                            input.copyTo(output)
-                                        }
-                                    }
-                                    file.delete()
-                                    moved = true
-                                } catch (e: Exception) {
-                                    file.delete()
-                                    transfer.error = "ошибка сохранения: ${e.message}"
-                                    activeTransfers.remove(tidHex)
-                                    completedTransfers.add(0, CompletedTransfer(
-                                        fileName = transfer.fileName,
-                                        peerName = transfer.peerName,
-                                        totalSize = transfer.totalSize,
-                                        isIncoming = true,
-                                        success = false,
-                                        error = transfer.error,
-                                    ))
-                                    if (completedTransfers.size > 20) completedTransfers.removeAt(completedTransfers.size - 1)
-                                    записать("ошибка сохранения файла «${transfer.fileName}»: ${e.message}")
-                                    mainHandler.post {
-                                        Toast.makeText(context, "Ошибка сохранения: ${e.message}", Toast.LENGTH_SHORT).show()
-                                    }
-                                    return
-                                }
-                            }
+                        val targetFile = transfer.finalFile ?: File(dir, transfer.fileName)
+                        android.media.MediaScannerConnection.scanFile(context, arrayOf(targetFile.absolutePath), null, null)
 
-                            if (moved) {
-                                android.media.MediaScannerConnection.scanFile(context, arrayOf(finalFile.absolutePath), null, null)
+                        transfer.done = true
+                        activeTransfers.remove(tidHex)
+                        bytesTransferredToday.addAndGet(transfer.totalSize)
+                        filesTransferredCount.incrementAndGet()
+                        saveStats()
+                        completedTransfers.add(0, CompletedTransfer(
+                            fileName = transfer.fileName,
+                            peerName = transfer.peerName,
+                            totalSize = transfer.totalSize,
+                            isIncoming = true,
+                            success = true,
+                        ))
+                        if (completedTransfers.size > 20) completedTransfers.removeAt(completedTransfers.size - 1)
 
-                                transfer.done = true
-                                activeTransfers.remove(tidHex)
-                                bytesTransferredToday.addAndGet(transfer.totalSize)
-                                filesTransferredCount.incrementAndGet()
-                                completedTransfers.add(0, CompletedTransfer(
-                                    fileName = transfer.fileName,
-                                    peerName = transfer.peerName,
-                                    totalSize = transfer.totalSize,
-                                    isIncoming = true,
-                                    success = true,
-                                ))
-                                if (completedTransfers.size > 20) completedTransfers.removeAt(completedTransfers.size - 1)
-
-                                записать("файл «${transfer.fileName}» принят в Загрузки/Braidwork")
-                                mainHandler.post {
-                                    Toast.makeText(context, "Файл получен: ${transfer.fileName}", Toast.LENGTH_LONG).show()
-                                }
-                            }
-                        } else {
-                            file.delete()
-                            transfer.error = "хэш не совпал"
-                            activeTransfers.remove(tidHex)
-                            completedTransfers.add(0, CompletedTransfer(
-                                fileName = transfer.fileName,
-                                peerName = transfer.peerName,
-                                totalSize = transfer.totalSize,
-                                isIncoming = true,
-                                success = false,
-                                error = "хэш не совпал",
-                            ))
-                            if (completedTransfers.size > 20) completedTransfers.removeAt(completedTransfers.size - 1)
-                            записать("ошибка: хэш файла «${transfer.fileName}» не совпал — удалён")
-                            mainHandler.post {
-                                Toast.makeText(context, "Ошибка: файл ${transfer.fileName} повреждён", Toast.LENGTH_SHORT).show()
-                            }
+                        записать("файл «${transfer.fileName}» успешно принят и проверен ядром Rust (BLAKE3)")
+                        mainHandler.post {
+                            Toast.makeText(context, "Файл получен: ${transfer.fileName}", Toast.LENGTH_LONG).show()
                         }
                     }
                 } catch (e: Exception) {
                     записать("ошибка приёма файла «${transfer.fileName}»: ${e.message}")
-                    try {
-                        transfer.raf?.close()
-                    } catch (_: Exception) {}
-                    transfer.raf = null
+                    if (transfer.receiverHandle != 0L) {
+                        try {
+                            BraidworkCore.fileReceiverFree(transfer.receiverHandle)
+                        } catch (_: Exception) {}
+                        transfer.receiverHandle = 0L
+                    }
                     transfer.tempFile?.delete()
                     transfer.error = e.message ?: "ошибка приёма"
                     activeTransfers.remove(tidHex)
@@ -644,6 +597,16 @@ class DeviceDiscovery(
                 }
                 val tidHex = req.transferId.joinToString("") { "%02x".format(it) }
                 записать("от $кто: запрос докачки для transfer_id=$tidHex (пропущено блоков: ${req.missingOffsets.size})")
+
+                val transfer = activeTransfers[tidHex]
+                if (transfer != null && transfer.senderHandle != 0L) {
+                    try {
+                        val retransmitted = BraidworkCore.fileSenderHandleRequest(transfer.senderHandle, кадр.body)
+                        записать("FileSender: добавлено $retransmitted блоков в очередь повторной отправки")
+                    } catch (e: Exception) {
+                        записать("ошибка обработки FileRequest в FileSender: ${e.message}")
+                    }
+                }
             }
 
             else -> записать(
@@ -722,7 +685,10 @@ class DeviceDiscovery(
         @Volatile var lastCalcTime: Long = System.currentTimeMillis(),
         @Volatile var speedMbps: Double = 0.0,
         var tempFile: File? = null,
+        var finalFile: File? = null,
         var raf: RandomAccessFile? = null,
+        var senderHandle: Long = 0L,
+        var receiverHandle: Long = 0L,
         @Volatile var cancelled: Boolean = false,
         @Volatile var done: Boolean = false,
         @Volatile var error: String? = null,
@@ -735,6 +701,40 @@ class DeviceDiscovery(
     private val filesTransferredCount = AtomicInteger(0)
     private val sentClipboardCount = AtomicInteger(0)
     private val fileTransferExecutor = Executors.newSingleThreadExecutor()
+
+    private val statsPrefs by lazy {
+        context.applicationContext.getSharedPreferences("braidwork_stats", Context.MODE_PRIVATE)
+    }
+
+    init {
+        loadStats()
+    }
+
+    private fun loadStats() {
+        try {
+            val today = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())
+            val savedDay = statsPrefs.getString("stats_day", "")
+            if (savedDay == today) {
+                bytesTransferredToday.set(statsPrefs.getLong("bytes_today", 0L))
+                filesTransferredCount.set(statsPrefs.getInt("files_today", 0))
+                sentClipboardCount.set(statsPrefs.getInt("clip_today", 0))
+            } else {
+                statsPrefs.edit().putString("stats_day", today).putLong("bytes_today", 0L).putInt("files_today", 0).putInt("clip_today", 0).apply()
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun saveStats() {
+        try {
+            val today = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())
+            statsPrefs.edit()
+                .putString("stats_day", today)
+                .putLong("bytes_today", bytesTransferredToday.get())
+                .putInt("files_today", filesTransferredCount.get())
+                .putInt("clip_today", sentClipboardCount.get())
+                .apply()
+        } catch (_: Exception) {}
+    }
 
     /** Пришедшее содержимое, новые сверху. */
     private val полученное =
@@ -1235,47 +1235,116 @@ class DeviceDiscovery(
             transfer.totalHash = totalHash
             transfer.statusText = null
 
+            // Создаём отправитель FileSender в ядре Rust
+            val sHandle = BraidworkCore.createFileSender(
+                transferId = transferId,
+                fileName = fileName,
+                totalSize = fileSize,
+                totalHash = totalHash,
+                chunkSize = BraidworkCore.DEFAULT_CHUNK_SIZE,
+            )
+            transfer.senderHandle = sHandle
+
             // Отправляем FileOffer
             val offerFrame = BraidworkCore.fileOfferFrame(transferId, fileName, fileSize, totalHash)
             BraidworkCore.transportSend(h, conn, offerFrame)
             записать("предложение файла «$fileName» отправлено")
 
-            // Читаем и отправляем блоками по 32 КиБ (укладывается в предел Noise MAX_MESSAGE с запасом)
-            val buffer = ByteArray(32 * 1024)
-            var offset = 0L
-            context.contentResolver.openInputStream(uri)?.use { stream ->
-                var read: Int
-                while (stream.read(buffer).also { read = it } != -1) {
-                    if (transfer.cancelled) {
-                        throw IllegalStateException("отменено")
+            // Читаем и передаём чанки под управлением Rust FileSender
+            val chunkInfo = BraidworkCore.FileSenderChunk()
+            val pfd = try {
+                context.contentResolver.openFileDescriptor(uri, "r")
+            } catch (_: Exception) {
+                null
+            }
+
+            if (pfd != null) {
+                pfd.use { descriptor ->
+                    FileInputStream(descriptor.fileDescriptor).channel.use { channel ->
+                        while (BraidworkCore.fileSenderNextChunk(sHandle, chunkInfo)) {
+                            if (transfer.cancelled) {
+                                throw IllegalStateException("отменено")
+                            }
+
+                            // Противодавление (backpressure): ждём, если сокет не успевает сбрасывать данные в сеть
+                            var waitCount = 0
+                            while (BraidworkCore.transportOutboxLen(h, conn) > 256 * 1024 && waitCount < 300) {
+                                if (transfer.cancelled) break
+                                Thread.sleep(5)
+                                waitCount++
+                            }
+
+                            val buf = java.nio.ByteBuffer.allocate(chunkInfo.length)
+                            channel.position(chunkInfo.offset)
+                            var readTotal = 0
+                            while (readTotal < chunkInfo.length) {
+                                val r = channel.read(buf)
+                                if (r <= 0) break
+                                readTotal += r
+                            }
+
+                            val chunkData = if (readTotal == chunkInfo.length) buf.array() else buf.array().copyOf(readTotal)
+                            val blockFrame = BraidworkCore.fileSenderBuildBlock(sHandle, chunkInfo.offset, chunkData)
+                            BraidworkCore.transportSend(h, conn, blockFrame)
+
+                            transfer.transferredBytes = (chunkInfo.offset + readTotal).coerceAtMost(fileSize)
+
+                            val now = System.currentTimeMillis()
+                            val elapsed = now - transfer.lastCalcTime
+                            if (elapsed >= 500) {
+                                val bytesDelta = transfer.transferredBytes - transfer.lastCalcBytes
+                                transfer.speedMbps = (bytesDelta * 8.0) / (elapsed * 1000.0)
+                                transfer.lastCalcBytes = transfer.transferredBytes
+                                transfer.lastCalcTime = now
+                            }
+
+                            Thread.sleep(1)
+                        }
                     }
-                    if (read <= 0) continue
+                }
+            } else {
+                // Потоковый fallback для URI без прямого файлового дескриптора
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    var currentStreamOffset = 0L
+                    val buf = ByteArray(BraidworkCore.DEFAULT_CHUNK_SIZE)
+                    while (BraidworkCore.fileSenderNextChunk(sHandle, chunkInfo)) {
+                        if (transfer.cancelled) {
+                            throw IllegalStateException("отменено")
+                        }
 
-                    // Противодавление (backpressure): ждём, если сокет не успевает сбрасывать данные в сеть
-                    var waitCount = 0
-                    while (BraidworkCore.transportOutboxLen(h, conn) > 256 * 1024 && waitCount < 300) {
-                        if (transfer.cancelled) break
-                        Thread.sleep(5)
-                        waitCount++
+                        var waitCount = 0
+                        while (BraidworkCore.transportOutboxLen(h, conn) > 256 * 1024 && waitCount < 300) {
+                            if (transfer.cancelled) break
+                            Thread.sleep(5)
+                            waitCount++
+                        }
+
+                        var toRead = chunkInfo.length
+                        var offsetInBuf = 0
+                        while (toRead > 0) {
+                            val r = stream.read(buf, offsetInBuf, toRead)
+                            if (r <= 0) break
+                            offsetInBuf += r
+                            toRead -= r
+                        }
+                        val chunkData = if (offsetInBuf == chunkInfo.length) buf else buf.copyOf(offsetInBuf)
+                        val blockFrame = BraidworkCore.fileSenderBuildBlock(sHandle, chunkInfo.offset, chunkData)
+                        BraidworkCore.transportSend(h, conn, blockFrame)
+
+                        currentStreamOffset += offsetInBuf
+                        transfer.transferredBytes = currentStreamOffset.coerceAtMost(fileSize)
+
+                        val now = System.currentTimeMillis()
+                        val elapsed = now - transfer.lastCalcTime
+                        if (elapsed >= 500) {
+                            val bytesDelta = transfer.transferredBytes - transfer.lastCalcBytes
+                            transfer.speedMbps = (bytesDelta * 8.0) / (elapsed * 1000.0)
+                            transfer.lastCalcBytes = transfer.transferredBytes
+                            transfer.lastCalcTime = now
+                        }
+
+                        Thread.sleep(1)
                     }
-
-                    val chunk = if (read == buffer.size) buffer else buffer.copyOf(read)
-                    val blockFrame = BraidworkCore.fileBlockFrame(transferId, offset, chunk)
-                    BraidworkCore.transportSend(h, conn, blockFrame)
-
-                    offset += read
-                    transfer.transferredBytes = offset
-
-                    val now = System.currentTimeMillis()
-                    val elapsed = now - transfer.lastCalcTime
-                    if (elapsed >= 500) {
-                        val bytesDelta = transfer.transferredBytes - transfer.lastCalcBytes
-                        transfer.speedMbps = (bytesDelta * 8.0) / (elapsed * 1000.0)
-                        transfer.lastCalcBytes = transfer.transferredBytes
-                        transfer.lastCalcTime = now
-                    }
-
-                    Thread.sleep(1)
                 }
             }
 
@@ -1283,6 +1352,7 @@ class DeviceDiscovery(
             transfer.done = true
             bytesTransferredToday.addAndGet(transfer.totalSize)
             filesTransferredCount.incrementAndGet()
+            saveStats()
             записать("файл «$fileName» ($sizeStr) отправлен на $peerName")
             mainHandler.post {
                 Toast.makeText(context, "Файл «$fileName» отправлен!", Toast.LENGTH_SHORT).show()
@@ -1295,6 +1365,12 @@ class DeviceDiscovery(
                 Toast.makeText(context, "Ошибка отправки: $transferError", Toast.LENGTH_SHORT).show()
             }
         } finally {
+            if (transfer.senderHandle != 0L) {
+                try {
+                    BraidworkCore.fileSenderFree(transfer.senderHandle)
+                } catch (_: Exception) {}
+                transfer.senderHandle = 0L
+            }
             activeTransfers.remove(tidHex)
             completedTransfers.add(0, CompletedTransfer(
                 fileName = fileName,
@@ -1395,6 +1471,18 @@ class DeviceDiscovery(
                 t.raf?.close()
             } catch (_: Exception) {}
             t.raf = null
+            if (t.receiverHandle != 0L) {
+                try {
+                    BraidworkCore.fileReceiverFree(t.receiverHandle)
+                } catch (_: Exception) {}
+                t.receiverHandle = 0L
+            }
+            if (t.senderHandle != 0L) {
+                try {
+                    BraidworkCore.fileSenderFree(t.senderHandle)
+                } catch (_: Exception) {}
+                t.senderHandle = 0L
+            }
             t.tempFile?.delete()
             activeTransfers.remove(t.transferIdHex)
             completedTransfers.add(0, CompletedTransfer(

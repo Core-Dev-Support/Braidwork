@@ -29,6 +29,7 @@ mod registry;
 mod session;
 pub mod transfer;
 pub mod transport;
+mod abi_transfer;
 
 // Мост к JVM нужен только под Android. На десктопе клиент обращается к ядру
 // через C ABI напрямую, и зависимость от `jni` была бы лишней.
@@ -40,6 +41,12 @@ pub mod pb {
     include!(concat!(env!("OUT_DIR"), "/braidwork.v1.rs"));
 }
 
+pub use abi_transfer::{
+    fl_file_receiver_build_request, fl_file_receiver_create, fl_file_receiver_finish,
+    fl_file_receiver_free, fl_file_receiver_write_block, fl_file_sender_build_block,
+    fl_file_sender_create, fl_file_sender_free, fl_file_sender_handle_request,
+    fl_file_sender_next_chunk,
+};
 pub use abi_session::{
     fl_blake3_hash, fl_blake3_hasher_create, fl_blake3_hasher_finalize, fl_blake3_hasher_free,
     fl_blake3_hasher_update, fl_clipboard_build, fl_clipboard_read, fl_file_block_build,

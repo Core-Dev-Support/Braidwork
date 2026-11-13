@@ -156,6 +156,53 @@ impl FileSender {
         }))
     }
 
+    /// Возвращает информацию о следующем требуемом чанке (номер, смещение, длина) без чтения из потока.
+    /// Возвращает `None`, если все блоки переданы и очередь повторных запросов пуста.
+    pub fn peek_next_chunk(&self) -> Option<crate::transfer::chunk::ChunkInfo> {
+        if self.cancelled {
+            return None;
+        }
+        let chunk_idx = if let Some(&retransmit_idx) = self.pending_retransmit.front() {
+            retransmit_idx
+        } else if self.next_chunk_idx < self.plan.total_chunks() {
+            self.next_chunk_idx
+        } else {
+            return None;
+        };
+        self.plan.chunk_at(chunk_idx)
+    }
+
+    /// Продвигает очередь чанков после отправки очередного блока.
+    pub fn advance_next_chunk(&mut self) -> Option<usize> {
+        if let Some(retransmit_idx) = self.pending_retransmit.pop_front() {
+            Some(retransmit_idx)
+        } else if self.next_chunk_idx < self.plan.total_chunks() {
+            let idx = self.next_chunk_idx;
+            self.next_chunk_idx += 1;
+            Some(idx)
+        } else {
+            None
+        }
+    }
+
+    /// Собирает `FileBlock` из переданных байтов для указанного смещения с подсчётом BLAKE3 блока.
+    pub fn build_block(&mut self, offset: u64, data: &[u8]) -> Result<FileBlock, TransferError> {
+        if self.cancelled {
+            return Err(TransferError::Cancelled);
+        }
+        self.plan.validate_bounds(offset, data.len())?;
+        let block_hash = compute_block_hash(data);
+        self.bytes_sent = self.bytes_sent.saturating_add(data.len() as u64);
+
+        Ok(FileBlock {
+            offset,
+            length: data.len() as u32,
+            data: Bytes::copy_from_slice(data),
+            block_hash: Bytes::copy_from_slice(&block_hash),
+            transfer_id: Bytes::copy_from_slice(&self.transfer_id),
+        })
+    }
+
     /// Обрабатывает запрос недостающих блоков `FileRequest` от получателя.
     /// Ставит в очередь на повторную отправку только указанные блоки.
     pub fn handle_request(&mut self, req: &FileRequest) -> Result<usize, TransferError> {
