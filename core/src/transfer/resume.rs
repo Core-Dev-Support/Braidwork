@@ -89,7 +89,11 @@ impl ResumeState {
         // chunk_hashes: сохраняем хэши для всех принятых блоков
         for i in 0..total_chunks {
             if self.bitmap.is_received(i) {
-                let h = self.chunk_hashes.get(i).and_then(|x| *x).unwrap_or([0u8; 32]);
+                let h = self
+                    .chunk_hashes
+                    .get(i)
+                    .and_then(|x| *x)
+                    .unwrap_or([0u8; 32]);
                 buf.extend_from_slice(&h);
             }
         }
@@ -112,10 +116,10 @@ impl ResumeState {
         let mut ver_bytes = [0u8; 4];
         cursor.read_exact(&mut ver_bytes)?;
         let version = u32::from_le_bytes(ver_bytes);
-        if version != 1 && version != RESUME_VERSION {
+        if version != RESUME_VERSION {
             return Err(TransferError::InvalidState(format!(
-                "неподдерживаемая версия файла состояния: {}",
-                version
+                "устаревшая или неподдерживаемая версия состояния передачи: {} (требуется версия {} с хэшами BLAKE3)",
+                version, RESUME_VERSION
             )));
         }
 
@@ -159,11 +163,11 @@ impl ResumeState {
         let mut chunk_hashes = vec![None; total_chunks];
 
         if version >= 2 {
-            for i in 0..total_chunks {
+            for (i, hash_slot) in chunk_hashes.iter_mut().enumerate().take(total_chunks) {
                 if bitmap.is_received(i) {
                     let mut h = [0u8; 32];
                     cursor.read_exact(&mut h)?;
-                    chunk_hashes[i] = Some(h);
+                    *hash_slot = Some(h);
                 }
             }
         }

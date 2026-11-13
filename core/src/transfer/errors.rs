@@ -32,18 +32,19 @@ pub enum TransferError {
         actual: [u8; 32],
     },
 
-    #[error("блок выходит за границы файла: offset={offset}, len={length}, total_size={total_size}")]
+    #[error(
+        "блок выходит за границы файла: offset={offset}, len={length}, total_size={total_size}"
+    )]
     OutOfBounds {
         offset: u64,
         length: usize,
         total_size: u64,
     },
 
-    #[error("несовпадение идентификатора передачи: ожидался {expected:02x?}, получен {actual:02x?}")]
-    TransferMismatch {
-        expected: Vec<u8>,
-        actual: Vec<u8>,
-    },
+    #[error(
+        "несовпадение идентификатора передачи: ожидался {expected:02x?}, получен {actual:02x?}"
+    )]
+    TransferMismatch { expected: Vec<u8>, actual: Vec<u8> },
 
     #[error("недопустимое состояние передачи: {0}")]
     InvalidState(String),

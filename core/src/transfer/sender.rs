@@ -186,11 +186,24 @@ impl FileSender {
     }
 
     /// Собирает `FileBlock` из переданных байтов для указанного смещения с подсчётом BLAKE3 блока.
+    /// Строго проверяет точное совпадение смещения и длины с планом чанков (защита от неполного чтения).
     pub fn build_block(&mut self, offset: u64, data: &[u8]) -> Result<FileBlock, TransferError> {
         if self.cancelled {
             return Err(TransferError::Cancelled);
         }
         self.plan.validate_bounds(offset, data.len())?;
+
+        let chunk = self.plan.chunk_for_offset(offset).ok_or_else(|| {
+            TransferError::MalformedBlock(format!("не найден чанк для смещения {}", offset))
+        })?;
+
+        if offset != chunk.offset || data.len() != chunk.length as usize {
+            return Err(TransferError::MalformedBlock(format!(
+                "неполный или несоответствующий блок: ожидалось смещение {} и длина {}, получено смещение {} и длина {}",
+                chunk.offset, chunk.length, offset, data.len()
+            )));
+        }
+
         let block_hash = compute_block_hash(data);
         self.bytes_sent = self.bytes_sent.saturating_add(data.len() as u64);
 

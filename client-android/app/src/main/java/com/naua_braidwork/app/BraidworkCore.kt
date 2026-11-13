@@ -963,16 +963,17 @@ object BraidworkCore {
         nativeFileSenderFree(handle)
     }
 
-    /** Создаёт получатель файла FileReceiver в ядре Rust на основе FileOffer. */
+    /** Создаёт получатель файла FileReceiver в ядре Rust на основе FileOffer (с поддержкой Resume через statePath). */
     fun createFileReceiver(
         offerBody: ByteArray,
         tempPath: String,
         destPath: String,
+        statePath: String? = null,
         chunkSize: Int = DEFAULT_CHUNK_SIZE,
     ): Long {
         ensureLoaded()
         val handle = LongArray(1)
-        val status = nativeFileReceiverCreate(offerBody, tempPath, destPath, chunkSize, handle)
+        val status = nativeFileReceiverCreate(offerBody, tempPath, destPath, statePath ?: "", chunkSize, handle)
         if (status != STATUS_OK) {
             throw BraidworkException(status, "ошибка создания FileReceiver")
         }
@@ -1392,6 +1393,7 @@ object BraidworkCore {
         offerBody: ByteArray,
         tempPath: String,
         destPath: String,
+        statePath: String,
         chunkSize: Int,
         outHandle: LongArray,
     ): Int

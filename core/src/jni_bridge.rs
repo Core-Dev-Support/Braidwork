@@ -1405,7 +1405,10 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRequ
     };
     let mut offsets = vec![0i64; offsets_len];
     if offsets_len > 0 {
-        if env.get_long_array_region(&missing_offsets, 0, &mut offsets).is_err() {
+        if env
+            .get_long_array_region(&missing_offsets, 0, &mut offsets)
+            .is_err()
+        {
             return crate::FL_ERR_INTERNAL;
         }
     }
@@ -1433,7 +1436,11 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRequ
     }
 
     if env
-        .set_byte_array_region(&out_frame, 0, &to_signed(&frame_buf[..produced.min(out_cap)]))
+        .set_byte_array_region(
+            &out_frame,
+            0,
+            &to_signed(&frame_buf[..produced.min(out_cap)]),
+        )
         .is_err()
         || env
             .set_int_array_region(&out_len, 0, &[produced as jint])
@@ -1681,7 +1688,10 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileSend
     if status != FL_OK {
         return status;
     }
-    if env.set_long_array_region(&out_handle, 0, &[handle as jlong]).is_err() {
+    if env
+        .set_long_array_region(&out_handle, 0, &[handle as jlong])
+        .is_err()
+    {
         unsafe { crate::fl_file_sender_free(handle) };
         return crate::FL_ERR_INTERNAL;
     }
@@ -1690,7 +1700,9 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileSend
 
 /// Возвращает следующий чанк для отправки из `FileSender`.
 #[no_mangle]
-pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileSenderNextChunk<'local>(
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileSenderNextChunk<
+    'local,
+>(
     env: JNIEnv<'local>,
     _class: JClass<'local>,
     handle: jlong,
@@ -1699,7 +1711,11 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileSend
     out_chunk_idx: JLongArray<'local>,
     out_is_done: JIntArray<'local>,
 ) -> jint {
-    if out_offset.is_null() || out_length.is_null() || out_chunk_idx.is_null() || out_is_done.is_null() {
+    if out_offset.is_null()
+        || out_length.is_null()
+        || out_chunk_idx.is_null()
+        || out_is_done.is_null()
+    {
         return crate::FL_ERR_INVALID_ARG;
     }
     let mut offset = 0u64;
@@ -1718,10 +1734,18 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileSend
     if status != FL_OK {
         return status;
     }
-    if env.set_long_array_region(&out_offset, 0, &[offset as jlong]).is_err()
-        || env.set_int_array_region(&out_length, 0, &[length as jint]).is_err()
-        || env.set_long_array_region(&out_chunk_idx, 0, &[chunk_idx as jlong]).is_err()
-        || env.set_int_array_region(&out_is_done, 0, &[is_done as jint]).is_err()
+    if env
+        .set_long_array_region(&out_offset, 0, &[offset as jlong])
+        .is_err()
+        || env
+            .set_int_array_region(&out_length, 0, &[length as jint])
+            .is_err()
+        || env
+            .set_long_array_region(&out_chunk_idx, 0, &[chunk_idx as jlong])
+            .is_err()
+        || env
+            .set_int_array_region(&out_is_done, 0, &[is_done as jint])
+            .is_err()
     {
         return crate::FL_ERR_INTERNAL;
     }
@@ -1730,7 +1754,9 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileSend
 
 /// Собирает `FileBlock` кадр для указанного смещения и чанка.
 #[no_mangle]
-pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileSenderBuildBlock<'local>(
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileSenderBuildBlock<
+    'local,
+>(
     env: JNIEnv<'local>,
     _class: JClass<'local>,
     handle: jlong,
@@ -1768,7 +1794,9 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileSend
     if env
         .set_byte_array_region(&out_frame, 0, &to_signed(&frame_buf[..produced.min(cap)]))
         .is_err()
-        || env.set_int_array_region(&out_len, 0, &[produced as jint]).is_err()
+        || env
+            .set_int_array_region(&out_len, 0, &[produced as jint])
+            .is_err()
     {
         return crate::FL_ERR_INTERNAL;
     }
@@ -1777,7 +1805,9 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileSend
 
 /// Передаёт полученный `FileRequest` в `FileSender` для повторной отправки утерянных блоков.
 #[no_mangle]
-pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileSenderHandleRequest<'local>(
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileSenderHandleRequest<
+    'local,
+>(
     env: JNIEnv<'local>,
     _class: JClass<'local>,
     handle: jlong,
@@ -1824,12 +1854,15 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileSend
 
 /// Создаёт получатель `FileReceiver` на основе тела `FileOffer`.
 #[no_mangle]
-pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileReceiverCreate<'local>(
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileReceiverCreate<
+    'local,
+>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     offer_body: JByteArray<'local>,
     temp_path: JString<'local>,
     dest_path: JString<'local>,
+    state_path: JString<'local>,
     chunk_size: jint,
     out_handle: JLongArray<'local>,
 ) -> jint {
@@ -1848,7 +1881,18 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRece
         Ok(s) => s.into(),
         Err(_) => return crate::FL_ERR_INVALID_ARG,
     };
+    let state_str: Option<String> = if !state_path.is_null() {
+        env.get_string(&state_path).ok().map(Into::into)
+    } else {
+        None
+    };
+
     let mut handle = 0u64;
+    let (sp_ptr, sp_len) = match &state_str {
+        Some(s) => (s.as_ptr(), s.len()),
+        None => (std::ptr::null(), 0),
+    };
+
     let status = unsafe {
         crate::fl_file_receiver_create(
             body.as_ptr(),
@@ -1857,6 +1901,8 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRece
             temp_str.len(),
             dest_str.as_ptr(),
             dest_str.len(),
+            sp_ptr,
+            sp_len,
             chunk_size as u32,
             &mut handle,
         )
@@ -1864,7 +1910,10 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRece
     if status != FL_OK {
         return status;
     }
-    if env.set_long_array_region(&out_handle, 0, &[handle as jlong]).is_err() {
+    if env
+        .set_long_array_region(&out_handle, 0, &[handle as jlong])
+        .is_err()
+    {
         unsafe { crate::fl_file_receiver_free(handle) };
         return crate::FL_ERR_INTERNAL;
     }
@@ -1873,7 +1922,9 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRece
 
 /// Принимает, валидирует по BLAKE3 и записывает блок файла `FileBlock`.
 #[no_mangle]
-pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileReceiverWriteBlock<'local>(
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileReceiverWriteBlock<
+    'local,
+>(
     env: JNIEnv<'local>,
     _class: JClass<'local>,
     handle: jlong,
@@ -1902,8 +1953,12 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRece
     if status != FL_OK {
         return status;
     }
-    if env.set_long_array_region(&out_chunk_idx, 0, &[chunk_idx as jlong]).is_err()
-        || env.set_int_array_region(&out_result, 0, &[result as jint]).is_err()
+    if env
+        .set_long_array_region(&out_chunk_idx, 0, &[chunk_idx as jlong])
+        .is_err()
+        || env
+            .set_int_array_region(&out_result, 0, &[result as jint])
+            .is_err()
     {
         return crate::FL_ERR_INTERNAL;
     }
@@ -1912,7 +1967,9 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRece
 
 /// Собирает кадр `FileRequest` со списком недостающих смещений блоков для докачки.
 #[no_mangle]
-pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileReceiverBuildRequest<'local>(
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileReceiverBuildRequest<
+    'local,
+>(
     env: JNIEnv<'local>,
     _class: JClass<'local>,
     handle: jlong,
@@ -1929,11 +1986,7 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRece
     let mut frame_buf = vec![0u8; cap.max(1)];
     let mut produced = 0usize;
     let status = unsafe {
-        crate::fl_file_receiver_build_request(
-            handle as u64,
-            frame_buf.as_mut_ptr(),
-            &mut produced,
-        )
+        crate::fl_file_receiver_build_request(handle as u64, frame_buf.as_mut_ptr(), &mut produced)
     };
     if status != FL_OK {
         return status;
@@ -1941,7 +1994,9 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRece
     if env
         .set_byte_array_region(&out_frame, 0, &to_signed(&frame_buf[..produced.min(cap)]))
         .is_err()
-        || env.set_int_array_region(&out_len, 0, &[produced as jint]).is_err()
+        || env
+            .set_int_array_region(&out_len, 0, &[produced as jint])
+            .is_err()
     {
         return crate::FL_ERR_INTERNAL;
     }
@@ -1950,7 +2005,9 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRece
 
 /// Финализирует приём: проверяет полный BLAKE3 хэш файла и перемещает его на постоянное место.
 #[no_mangle]
-pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileReceiverFinish<'local>(
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileReceiverFinish<
+    'local,
+>(
     _env: JNIEnv<'local>,
     _class: JClass<'local>,
     handle: jlong,

@@ -12,6 +12,12 @@ pub const MAX_CHUNK_SIZE: u32 = 64 * 1024;
 /// Минимальный допустимый размер блока — 1 КиБ.
 pub const MIN_CHUNK_SIZE: u32 = 1024;
 
+/// Максимальный поддерживаемый размер входящего файла для предотвращения исчерпания памяти (1 ТиБ).
+pub const MAX_FILE_SIZE: u64 = 1024 * 1024 * 1024 * 1024;
+
+/// Максимальное число чанков для защиты от чрезмерного выделения битовой карты и массивов хэшей (32 миллиона).
+pub const MAX_CHUNKS: usize = 32_000_000;
+
 /// Описание отдельного чанка.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChunkInfo {
@@ -30,18 +36,39 @@ pub struct ChunkPlan {
 
 impl ChunkPlan {
     pub fn new(total_size: u64, chunk_size: u32) -> Result<Self, TransferError> {
-        if chunk_size < MIN_CHUNK_SIZE || chunk_size > MAX_CHUNK_SIZE {
+        if !(MIN_CHUNK_SIZE..=MAX_CHUNK_SIZE).contains(&chunk_size) {
             return Err(TransferError::InvalidChunkSize(chunk_size));
+        }
+
+        if total_size > MAX_FILE_SIZE {
+            return Err(TransferError::MalformedOffer(format!(
+                "file size exceeds maximum allowed 1 TiB: {}",
+                total_size
+            )));
         }
 
         let total_chunks = if total_size == 0 {
             0
         } else {
-            let chunks = (total_size + chunk_size as u64 - 1) / (chunk_size as u64);
-            if chunks > usize::MAX as u64 {
-                return Err(TransferError::MalformedOffer(
-                    "число чанков превышает поддерживаемый максимум".to_string(),
-                ));
+            // Безопасное деление с округлением вверх без риска переполнения u64
+            let cs = chunk_size as u64;
+            let div = total_size / cs;
+            let rem = total_size % cs;
+            let chunks = if rem > 0 {
+                div.checked_add(1).ok_or_else(|| {
+                    TransferError::MalformedOffer(
+                        "переполнение при вычислении числа чанков".to_string(),
+                    )
+                })?
+            } else {
+                div
+            };
+
+            if chunks > MAX_CHUNKS as u64 {
+                return Err(TransferError::MalformedOffer(format!(
+                    "число чанков ({}) превышает лимит безопасности ({})",
+                    chunks, MAX_CHUNKS
+                )));
             }
             chunks as usize
         };
@@ -103,9 +130,7 @@ impl ChunkPlan {
             )));
         }
 
-        if offset.checked_add(length as u64).is_none()
-            || offset + length as u64 > self.total_size
-        {
+        if offset.checked_add(length as u64).is_none() || offset + length as u64 > self.total_size {
             return Err(TransferError::OutOfBounds {
                 offset,
                 length,

@@ -346,10 +346,11 @@ fl_status fl_file_sender_handle_request(uint64_t handle, const uint8_t *request_
 /* Освобождает объект FileSender. */
 fl_status fl_file_sender_free(uint64_t handle);
 
-/* Создаёт объект FileReceiver на основе предложения FileOffer. */
+/* Создаёт объект FileReceiver на основе предложения FileOffer (с поддержкой Resume через state_path). */
 fl_status fl_file_receiver_create(const uint8_t *offer_body, size_t offer_body_len,
                                  const uint8_t *temp_path, size_t temp_path_len,
                                  const uint8_t *dest_path, size_t dest_path_len,
+                                 const uint8_t *state_path, size_t state_path_len,
                                  uint32_t chunk_size, uint64_t *out_handle);
 
 /* Записывает и проверяет принятый FileBlock. */

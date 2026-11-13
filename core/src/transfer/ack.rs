@@ -16,7 +16,7 @@ pub struct ChunkBitmap {
 impl ChunkBitmap {
     /// Создаёт новую битовую карту для заданного количества блоков.
     pub fn new(total_chunks: usize) -> Self {
-        let byte_count = (total_chunks + 7) / 8;
+        let byte_count = total_chunks.div_ceil(8);
         Self {
             total_chunks,
             received_count: 0,
@@ -26,7 +26,7 @@ impl ChunkBitmap {
 
     /// Восстанавливает битовую карту из сохранённого среза байтов.
     pub fn from_bytes(total_chunks: usize, bytes: &[u8]) -> Result<Self, TransferError> {
-        let expected_bytes = (total_chunks + 7) / 8;
+        let expected_bytes = total_chunks.div_ceil(8);
         if bytes.len() != expected_bytes {
             return Err(TransferError::MalformedBlock(format!(
                 "некорректный размер карты чанков: ожидалось {} байт, получено {}",

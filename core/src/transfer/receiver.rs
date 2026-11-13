@@ -63,7 +63,9 @@ impl FileReceiver {
             ));
         }
         if offer.file_name.is_empty() {
-            return Err(TransferError::MalformedOffer("пустое имя файла".to_string()));
+            return Err(TransferError::MalformedOffer(
+                "пустое имя файла".to_string(),
+            ));
         }
         if offer.total_hash.len() != 32 {
             return Err(TransferError::MalformedOffer(format!(
@@ -75,6 +77,21 @@ impl FileReceiver {
         let mut total_hash = [0u8; 32];
         total_hash.copy_from_slice(&offer.total_hash);
 
+        // Если файл состояния и .part файл уже существуют — автоматически возобновляем приём
+        // со сверкой хэшей и границ
+        if let Some(ref sp) = state_path {
+            if sp.exists() && temp_path.exists() {
+                if let Ok(state) = ResumeState::load_from_file(sp) {
+                    if state.transfer_id == offer.transfer_id
+                        && state.total_size == offer.total_size
+                        && state.total_hash == total_hash
+                    {
+                        return Self::resume_from_state(state, temp_path, dest_path, state_path);
+                    }
+                }
+            }
+        }
+
         let plan = ChunkPlan::new(offer.total_size, chunk_size)?;
         let bitmap = ChunkBitmap::new(plan.total_chunks());
         let chunk_hashes = vec![None; plan.total_chunks()];
@@ -85,6 +102,7 @@ impl FileReceiver {
         }
         let file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&temp_path)?;
@@ -118,10 +136,7 @@ impl FileReceiver {
     ) -> Result<Self, TransferError> {
         state.validate_part_file(&temp_path)?;
 
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&temp_path)?;
+        let mut file = OpenOptions::new().read(true).write(true).open(&temp_path)?;
 
         let mut state = state;
         // Криптографическая проверка каждого ранее сохранённого блока на диске
@@ -197,15 +212,9 @@ impl FileReceiver {
         // Проверяем границы
         self.plan.validate_bounds(block.offset, block.data.len())?;
 
-        let chunk = self
-            .plan
-            .chunk_for_offset(block.offset)
-            .ok_or_else(|| {
-                TransferError::MalformedBlock(format!(
-                    "не найден чанк для смещения {}",
-                    block.offset
-                ))
-            })?;
+        let chunk = self.plan.chunk_for_offset(block.offset).ok_or_else(|| {
+            TransferError::MalformedBlock(format!("не найден чанк для смещения {}", block.offset))
+        })?;
 
         // Строгая проверка: смещение и длина блока обязаны точно совпадать с ожидаемым чанком
         if block.offset != chunk.offset || block.data.len() != chunk.length as usize {
@@ -511,7 +520,11 @@ mod tests {
             offset: 500,
             length: DEFAULT_CHUNK_SIZE,
             data: Bytes::copy_from_slice(&vec![0x42u8; DEFAULT_CHUNK_SIZE as usize]),
-            block_hash: Bytes::copy_from_slice(&compute_block_hash(&vec![0x42u8; DEFAULT_CHUNK_SIZE as usize])),
+            block_hash: Bytes::copy_from_slice(&compute_block_hash(&vec![
+                0x42u8;
+                DEFAULT_CHUNK_SIZE
+                    as usize
+            ])),
             transfer_id: Bytes::from_static(b"tid_partial"),
         };
 

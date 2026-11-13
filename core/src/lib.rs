@@ -19,17 +19,17 @@ mod abi_session;
 pub mod android_log;
 // Транспорт в C ABI появляется только вместе с каналом: клиент без сети не
 // должен платить за мёртвый код.
+mod abi_transfer;
 #[cfg(feature = "transport-lan")]
 mod abi_transport;
+mod crypto;
 #[cfg(feature = "transport-lan")]
 pub mod discovery;
-mod crypto;
 mod frame;
 mod registry;
 mod session;
 pub mod transfer;
 pub mod transport;
-mod abi_transfer;
 
 // Мост к JVM нужен только под Android. На десктопе клиент обращается к ядру
 // через C ABI напрямую, и зависимость от `jni` была бы лишней.
@@ -41,12 +41,6 @@ pub mod pb {
     include!(concat!(env!("OUT_DIR"), "/braidwork.v1.rs"));
 }
 
-pub use abi_transfer::{
-    fl_file_receiver_build_request, fl_file_receiver_create, fl_file_receiver_finish,
-    fl_file_receiver_free, fl_file_receiver_write_block, fl_file_sender_build_block,
-    fl_file_sender_create, fl_file_sender_free, fl_file_sender_handle_request,
-    fl_file_sender_next_chunk,
-};
 pub use abi_session::{
     fl_blake3_hash, fl_blake3_hasher_create, fl_blake3_hasher_finalize, fl_blake3_hasher_free,
     fl_blake3_hasher_update, fl_clipboard_build, fl_clipboard_read, fl_file_block_build,
@@ -56,6 +50,12 @@ pub use abi_session::{
     fl_session_seal, fl_session_step, CLIPBOARD_MAX, FILE_BLOCK_FRAME_MAX, FILE_BLOCK_MAX,
     FILE_OFFER_FRAME_MAX, FILE_REQUEST_FRAME_MAX, FL_ROLE_INITIATOR, FL_ROLE_RESPONDER,
     FL_STEP_COMPLETE, FL_STEP_SEND, FL_STEP_WAIT, HASH_LEN, HEARTBEAT_FRAME_MAX,
+};
+pub use abi_transfer::{
+    fl_file_receiver_build_request, fl_file_receiver_create, fl_file_receiver_finish,
+    fl_file_receiver_free, fl_file_receiver_write_block, fl_file_sender_build_block,
+    fl_file_sender_create, fl_file_sender_free, fl_file_sender_handle_request,
+    fl_file_sender_next_chunk,
 };
 #[cfg(feature = "transport-lan")]
 pub use abi_transport::{

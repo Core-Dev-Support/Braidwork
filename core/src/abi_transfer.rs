@@ -190,14 +190,11 @@ pub unsafe extern "C" fn fl_file_sender_build_block(
             None => return FL_ERR_INVALID_ARG,
         };
 
-        let frame = match crate::frame::encode(
-            crate::pb::MessageKind::KindFileBlock as i32,
-            0,
-            &block,
-        ) {
-            Ok(f) => f,
-            Err(_) => return crate::FL_ERR_INTERNAL,
-        };
+        let frame =
+            match crate::frame::encode(crate::pb::MessageKind::KindFileBlock as i32, 0, &block) {
+                Ok(f) => f,
+                Err(_) => return crate::FL_ERR_INTERNAL,
+            };
 
         copy_out(&frame, out_data, out_len)
     })
@@ -240,6 +237,9 @@ pub unsafe extern "C" fn fl_file_sender_handle_request(
 }
 
 /// Освобождает объект `FileSender`.
+///
+/// # Safety
+/// `handle` должен указывать на ранее созданный отправитель.
 #[no_mangle]
 pub unsafe extern "C" fn fl_file_sender_free(handle: u64) -> FlStatus {
     guard(|| {
@@ -253,6 +253,7 @@ pub unsafe extern "C" fn fl_file_sender_free(handle: u64) -> FlStatus {
 }
 
 /// Создаёт получатель файла `FileReceiver` на основе тела `FileOffer`.
+/// Поддерживает автоматический Resume, если передан `state_path` и на диске есть сохранённое состояние.
 ///
 /// # Safety
 /// Все указатели на пути и тела должны быть валидными строками UTF-8.
@@ -264,6 +265,8 @@ pub unsafe extern "C" fn fl_file_receiver_create(
     temp_path_len: usize,
     dest_path: *const u8,
     dest_path_len: usize,
+    state_path: *const u8,
+    state_path_len: usize,
     chunk_size: u32,
     out_handle: *mut u64,
 ) -> FlStatus {
@@ -284,20 +287,31 @@ pub unsafe extern "C" fn fl_file_receiver_create(
             Err(_) => return FL_ERR_INVALID_ARG,
         };
 
-        let temp_str = match std::str::from_utf8(std::slice::from_raw_parts(temp_path, temp_path_len)) {
-            Ok(s) => s,
-            Err(_) => return FL_ERR_INVALID_ARG,
-        };
-        let dest_str = match std::str::from_utf8(std::slice::from_raw_parts(dest_path, dest_path_len)) {
-            Ok(s) => s,
-            Err(_) => return FL_ERR_INVALID_ARG,
+        let temp_str =
+            match std::str::from_utf8(std::slice::from_raw_parts(temp_path, temp_path_len)) {
+                Ok(s) => s,
+                Err(_) => return FL_ERR_INVALID_ARG,
+            };
+        let dest_str =
+            match std::str::from_utf8(std::slice::from_raw_parts(dest_path, dest_path_len)) {
+                Ok(s) => s,
+                Err(_) => return FL_ERR_INVALID_ARG,
+            };
+
+        let state_opt = if !state_path.is_null() && state_path_len > 0 {
+            match std::str::from_utf8(std::slice::from_raw_parts(state_path, state_path_len)) {
+                Ok(s) => Some(PathBuf::from(s)),
+                Err(_) => return FL_ERR_INVALID_ARG,
+            }
+        } else {
+            None
         };
 
         let receiver = match FileReceiver::from_offer(
             &offer,
             PathBuf::from(temp_str),
             PathBuf::from(dest_str),
-            None,
+            state_opt,
             chunk_size,
         ) {
             Ok(r) => r,
@@ -383,14 +397,11 @@ pub unsafe extern "C" fn fl_file_receiver_build_request(
             Err(code) => return code,
         };
 
-        let frame = match crate::frame::encode(
-            crate::pb::MessageKind::KindFileRequest as i32,
-            0,
-            &req,
-        ) {
-            Ok(f) => f,
-            Err(_) => return crate::FL_ERR_INTERNAL,
-        };
+        let frame =
+            match crate::frame::encode(crate::pb::MessageKind::KindFileRequest as i32, 0, &req) {
+                Ok(f) => f,
+                Err(_) => return crate::FL_ERR_INTERNAL,
+            };
 
         copy_out(&frame, out_data, out_len)
     })
@@ -415,6 +426,9 @@ pub unsafe extern "C" fn fl_file_receiver_finish(handle: u64) -> FlStatus {
 }
 
 /// Освобождает объект `FileReceiver` (при отмене удаляет временные файлы).
+///
+/// # Safety
+/// `handle` должен указывать на ранее созданный получатель.
 #[no_mangle]
 pub unsafe extern "C" fn fl_file_receiver_free(handle: u64) -> FlStatus {
     guard(|| {
@@ -497,6 +511,8 @@ mod tests {
                 temp_str.len(),
                 dest_str.as_ptr(),
                 dest_str.len(),
+                std::ptr::null(),
+                0,
                 DEFAULT_CHUNK_SIZE,
                 &mut receiver_h as *mut u64,
             )

@@ -40,9 +40,9 @@ use std::time::Duration;
 
 use crate::crypto::DeviceKeys;
 use crate::frame::{self, FrameReader};
-use crate::pb::MessageKind;
 #[cfg(test)]
 use crate::pb::Hello;
+use crate::pb::MessageKind;
 use crate::session::{Handshake, HandshakeStep, Role, Session};
 use crate::transport::{
     Channel, CloseReason, Connection, Transport, TransportError, TransportEvent, TransportState,
@@ -526,7 +526,9 @@ impl LanTransport {
 
     /// Читает объявления соседей через модуль обнаружения.
     fn read_discovery(&mut self) {
-        let (найдено, сбой) = self.discovery.poll_discovered(self.keys.device_id().as_bytes());
+        let (найдено, сбой) = self
+            .discovery
+            .poll_discovered(self.keys.device_id().as_bytes());
 
         if let Some(e) = сбой {
             self.events.push(TransportEvent::Notice(e));

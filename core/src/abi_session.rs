@@ -1243,14 +1243,12 @@ pub unsafe extern "C" fn fl_file_request_build(
             partial_hash: prost::bytes::Bytes::new(),
         };
 
-        let кадр = match crate::frame::encode(
-            crate::pb::MessageKind::KindFileRequest as i32,
-            0,
-            &тело,
-        ) {
-            Ok(f) => f,
-            Err(_) => return crate::FL_ERR_INTERNAL,
-        };
+        let кадр =
+            match crate::frame::encode(crate::pb::MessageKind::KindFileRequest as i32, 0, &тело)
+            {
+                Ok(f) => f,
+                Err(_) => return crate::FL_ERR_INTERNAL,
+            };
 
         copy_out(&кадр, out_data, out_len)
     })
@@ -1272,10 +1270,7 @@ pub unsafe extern "C" fn fl_file_request_read(
     out_missing_offsets_len: *mut usize,
 ) -> FlStatus {
     guard(|| {
-        if body.is_null()
-            || out_transfer_id_len.is_null()
-            || out_missing_offsets_len.is_null()
-        {
+        if body.is_null() || out_transfer_id_len.is_null() || out_missing_offsets_len.is_null() {
             return FL_ERR_INVALID_ARG;
         }
         let bytes = if body_len == 0 {
@@ -2187,7 +2182,7 @@ mod tests {
     #[test]
     fn file_request_собирается_и_разбирается() {
         let tid = b"req_tid_999";
-        let missing = vec![0u64, 32768, 65536];
+        let missing = [0u64, 32768, 65536];
         let mut frame = vec![0u8; FILE_REQUEST_FRAME_MAX];
         let mut frame_len = 0usize;
 

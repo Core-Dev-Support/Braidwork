@@ -449,6 +449,11 @@ class DeviceDiscovery(
                 val safeName = sanitizeFileName(offer.fileName)
                 val sizeStr = formatBytes(offer.totalSize)
 
+                if (offer.totalSize <= 0 || offer.totalSize > 1024L * 1024 * 1024 * 1024) {
+                    записать("ОТКЛОНЕНО: недопустимый размер файла «$safeName» (${offer.totalSize} байт)")
+                    return
+                }
+
                 val trust = TrustStore.get(context)
                 val dev = прежние[кто]
                 val fp = dev?.fingerprint.orEmpty()
@@ -477,6 +482,7 @@ class DeviceDiscovery(
                 val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Braidwork")
                 if (!dir.exists()) dir.mkdirs()
                 val tempFile = File(dir, ".bw_${tidHex}.part")
+                val stateFile = File(dir, ".bw_${tidHex}.state")
                 val finalFile = findUniqueFile(dir, safeName)
 
                 var rHandle = 0L
@@ -485,6 +491,7 @@ class DeviceDiscovery(
                         offerBody = кадр.body,
                         tempPath = tempFile.absolutePath,
                         destPath = finalFile.absolutePath,
+                        statePath = stateFile.absolutePath,
                     )
                 } catch (e: Exception) {
                     записать("ошибка создания FileReceiver для «$safeName»: ${e.message}")
@@ -501,6 +508,8 @@ class DeviceDiscovery(
                     isIncoming = true,
                     tempFile = tempFile,
                     finalFile = finalFile,
+                    stateFile = stateFile,
+                    conn = кадр.conn,
                     receiverHandle = rHandle,
                 )
                 activeTransfers[tidHex] = transfer
@@ -523,6 +532,8 @@ class DeviceDiscovery(
                     return
                 }
 
+                transfer.lastBlockTime = System.currentTimeMillis()
+
                 try {
                     val outcome = BraidworkCore.fileReceiverWriteBlock(rHandle, кадр.body)
                     if (outcome.result != BraidworkCore.BlockWriteResult.DUPLICATE) {
@@ -543,6 +554,14 @@ class DeviceDiscovery(
                         BraidworkCore.fileReceiverFinish(rHandle)
                         BraidworkCore.fileReceiverFree(rHandle)
                         transfer.receiverHandle = 0L
+
+                        // Отправляем Positive Completion ACK (пустой список missingOffsets подтверждает 100% приём)
+                        val ackFrame = BraidworkCore.fileRequestFrame(block.transferId, LongArray(0))
+                        val h = coreHandle
+                        val conn = if (transfer.conn != 0L) transfer.conn else кадр.conn
+                        if (h != 0L && conn != 0L) {
+                            BraidworkCore.transportSend(h, conn, ackFrame)
+                        }
 
                         val targetFile = transfer.finalFile ?: File(
                             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
@@ -578,6 +597,7 @@ class DeviceDiscovery(
                         transfer.receiverHandle = 0L
                     }
                     transfer.tempFile?.delete()
+                    transfer.stateFile?.delete()
                     transfer.error = e.message ?: "ошибка приёма"
                     activeTransfers.remove(tidHex)
                     completedTransfers.add(0, CompletedTransfer(
@@ -599,15 +619,23 @@ class DeviceDiscovery(
                     return
                 }
                 val tidHex = req.transferId.joinToString("") { "%02x".format(it) }
-                записать("от $кто: запрос докачки для transfer_id=$tidHex (пропущено блоков: ${req.missingOffsets.size})")
 
                 val transfer = activeTransfers[tidHex]
-                if (transfer != null && transfer.senderHandle != 0L) {
-                    try {
-                        val retransmitted = BraidworkCore.fileSenderHandleRequest(transfer.senderHandle, кадр.body)
-                        записать("FileSender: добавлено $retransmitted блоков в очередь повторной отправки")
-                    } catch (e: Exception) {
-                        записать("ошибка обработки FileRequest в FileSender: ${e.message}")
+                if (req.missingOffsets.isEmpty()) {
+                    // Positive Completion ACK от получателя
+                    записать("от $кто: получено подтверждение завершения доставки (ACK) для файла «${transfer?.fileName ?: tidHex}»")
+                    if (transfer != null) {
+                        transfer.done = true
+                    }
+                } else {
+                    записать("от $кто: запрос докачки для transfer_id=$tidHex (пропущено блоков: ${req.missingOffsets.size})")
+                    if (transfer != null && transfer.senderHandle != 0L) {
+                        try {
+                            val retransmitted = BraidworkCore.fileSenderHandleRequest(transfer.senderHandle, кадр.body)
+                            записать("FileSender: добавлено $retransmitted блоков в очередь повторной отправки")
+                        } catch (e: Exception) {
+                            записать("ошибка обработки FileRequest в FileSender: ${e.message}")
+                        }
                     }
                 }
             }
@@ -689,9 +717,12 @@ class DeviceDiscovery(
         @Volatile var speedMbps: Double = 0.0,
         var tempFile: File? = null,
         var finalFile: File? = null,
+        var stateFile: File? = null,
+        var conn: Long = 0L,
         var raf: RandomAccessFile? = null,
         var senderHandle: Long = 0L,
         var receiverHandle: Long = 0L,
+        @Volatile var lastBlockTime: Long = System.currentTimeMillis(),
         @Volatile var cancelled: Boolean = false,
         @Volatile var done: Boolean = false,
         @Volatile var error: String? = null,
@@ -1247,6 +1278,7 @@ class DeviceDiscovery(
                 chunkSize = BraidworkCore.DEFAULT_CHUNK_SIZE,
             )
             transfer.senderHandle = sHandle
+            transfer.conn = conn
 
             // Отправляем FileOffer
             val offerFrame = BraidworkCore.fileOfferFrame(transferId, fileName, fileSize, totalHash)
@@ -1264,44 +1296,60 @@ class DeviceDiscovery(
             if (pfd != null) {
                 pfd.use { descriptor ->
                     FileInputStream(descriptor.fileDescriptor).channel.use { channel ->
-                        while (BraidworkCore.fileSenderNextChunk(sHandle, chunkInfo)) {
-                            if (transfer.cancelled) {
-                                throw IllegalStateException("отменено")
+                        fun sendPendingChunks() {
+                            while (BraidworkCore.fileSenderNextChunk(sHandle, chunkInfo)) {
+                                if (transfer.cancelled) {
+                                    throw IllegalStateException("отменено")
+                                }
+
+                                // Противодавление (backpressure): ждём, если сокет не успевает сбрасывать данные в сеть
+                                var waitCount = 0
+                                while (BraidworkCore.transportOutboxLen(h, conn) > 256 * 1024 && waitCount < 300) {
+                                    if (transfer.cancelled) break
+                                    Thread.sleep(5)
+                                    waitCount++
+                                }
+
+                                val buf = java.nio.ByteBuffer.allocate(chunkInfo.length)
+                                channel.position(chunkInfo.offset)
+                                var readTotal = 0
+                                while (readTotal < chunkInfo.length) {
+                                    val r = channel.read(buf)
+                                    if (r <= 0) break
+                                    readTotal += r
+                                }
+
+                                if (readTotal != chunkInfo.length) {
+                                    throw IllegalStateException("неполное чтение блока: прочитано $readTotal из ${chunkInfo.length}")
+                                }
+
+                                val blockFrame = BraidworkCore.fileSenderBuildBlock(sHandle, chunkInfo.offset, buf.array())
+                                BraidworkCore.transportSend(h, conn, blockFrame)
+
+                                transfer.transferredBytes = (chunkInfo.offset + readTotal).coerceAtMost(fileSize)
+
+                                val now = System.currentTimeMillis()
+                                val elapsed = now - transfer.lastCalcTime
+                                if (elapsed >= 500) {
+                                    val bytesDelta = transfer.transferredBytes - transfer.lastCalcBytes
+                                    transfer.speedMbps = (bytesDelta * 8.0) / (elapsed * 1000.0)
+                                    transfer.lastCalcBytes = transfer.transferredBytes
+                                    transfer.lastCalcTime = now
+                                }
+
+                                Thread.sleep(1)
                             }
+                        }
 
-                            // Противодавление (backpressure): ждём, если сокет не успевает сбрасывать данные в сеть
-                            var waitCount = 0
-                            while (BraidworkCore.transportOutboxLen(h, conn) > 256 * 1024 && waitCount < 300) {
-                                if (transfer.cancelled) break
-                                Thread.sleep(5)
-                                waitCount++
-                            }
+                        // Первый проход: отправка всех блоков
+                        sendPendingChunks()
 
-                            val buf = java.nio.ByteBuffer.allocate(chunkInfo.length)
-                            channel.position(chunkInfo.offset)
-                            var readTotal = 0
-                            while (readTotal < chunkInfo.length) {
-                                val r = channel.read(buf)
-                                if (r <= 0) break
-                                readTotal += r
-                            }
-
-                            val chunkData = if (readTotal == chunkInfo.length) buf.array() else buf.array().copyOf(readTotal)
-                            val blockFrame = BraidworkCore.fileSenderBuildBlock(sHandle, chunkInfo.offset, chunkData)
-                            BraidworkCore.transportSend(h, conn, blockFrame)
-
-                            transfer.transferredBytes = (chunkInfo.offset + readTotal).coerceAtMost(fileSize)
-
-                            val now = System.currentTimeMillis()
-                            val elapsed = now - transfer.lastCalcTime
-                            if (elapsed >= 500) {
-                                val bytesDelta = transfer.transferredBytes - transfer.lastCalcBytes
-                                transfer.speedMbps = (bytesDelta * 8.0) / (elapsed * 1000.0)
-                                transfer.lastCalcBytes = transfer.transferredBytes
-                                transfer.lastCalcTime = now
-                            }
-
-                            Thread.sleep(1)
+                        // Ожидание подтверждения завершения (Positive ACK) или запросов на досылку (Retransmit)
+                        var waitLoop = 0
+                        while (!transfer.done && !transfer.cancelled && waitLoop < 100) {
+                            Thread.sleep(50)
+                            waitLoop++
+                            sendPendingChunks()
                         }
                     }
                 }
@@ -1330,8 +1378,10 @@ class DeviceDiscovery(
                             offsetInBuf += r
                             toRead -= r
                         }
-                        val chunkData = if (offsetInBuf == chunkInfo.length) buf else buf.copyOf(offsetInBuf)
-                        val blockFrame = BraidworkCore.fileSenderBuildBlock(sHandle, chunkInfo.offset, chunkData)
+                        if (offsetInBuf != chunkInfo.length) {
+                            throw IllegalStateException("неполное чтение блока: прочитано $offsetInBuf из ${chunkInfo.length}")
+                        }
+                        val blockFrame = BraidworkCore.fileSenderBuildBlock(sHandle, chunkInfo.offset, if (offsetInBuf == buf.size) buf else buf.copyOf(offsetInBuf))
                         BraidworkCore.transportSend(h, conn, blockFrame)
 
                         currentStreamOffset += offsetInBuf
@@ -1348,7 +1398,17 @@ class DeviceDiscovery(
 
                         Thread.sleep(1)
                     }
+
+                    var waitLoop = 0
+                    while (!transfer.done && !transfer.cancelled && waitLoop < 100) {
+                        Thread.sleep(50)
+                        waitLoop++
+                    }
                 }
+            }
+
+            if (transfer.cancelled) {
+                throw IllegalStateException("отменено")
             }
 
             success = true
@@ -1487,6 +1547,7 @@ class DeviceDiscovery(
                 t.senderHandle = 0L
             }
             t.tempFile?.delete()
+            t.stateFile?.delete()
             activeTransfers.remove(t.transferIdHex)
             completedTransfers.add(0, CompletedTransfer(
                 fileName = t.fileName,
