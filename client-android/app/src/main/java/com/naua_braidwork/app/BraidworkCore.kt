@@ -998,6 +998,12 @@ object BraidworkCore {
         return BlockWriteOutcome(chunkIdx[0], outcome)
     }
 
+    data class FileRequestBatch(
+        val frame: ByteArray,
+        val nextIdx: Long,
+        val isLast: Boolean,
+    )
+
     /** Формирует кадр FileRequest со списком недостающих блоков для докачки. */
     fun fileReceiverBuildRequest(handle: Long): ByteArray {
         ensureLoaded()
@@ -1014,6 +1020,32 @@ object BraidworkCore {
                 throw BraidworkException(status, "ошибка формирования FileRequest в FileReceiver")
             }
         }
+    }
+
+    /** Формирует порцию кадра FileRequest со списком недостающих блоков (батчами до maxCount смещений). */
+    fun fileReceiverBuildRequestBatch(handle: Long, startIdx: Long, maxCount: Int = 1024): FileRequestBatch {
+        ensureLoaded()
+        val out = ByteArray(FILE_REQUEST_FRAME_MAX)
+        val outLen = IntArray(1) { out.size }
+        val outNextIdx = LongArray(1)
+        val outIsLast = IntArray(1)
+        val status = nativeFileReceiverBuildRequestBatch(
+            handle,
+            startIdx,
+            maxCount,
+            out,
+            outLen,
+            outNextIdx,
+            outIsLast,
+        )
+        if (status != STATUS_OK) {
+            throw BraidworkException(status, "ошибка формирования FileRequest batch в FileReceiver")
+        }
+        return FileRequestBatch(
+            frame = out.copyOf(outLen[0]),
+            nextIdx = outNextIdx[0],
+            isLast = outIsLast[0] == 1,
+        )
     }
 
     /** Возвращает количество уже принятых блоков для получателя (для обнаружения Resume). */
@@ -1425,6 +1457,16 @@ object BraidworkCore {
         handle: Long,
         out: ByteArray,
         outLen: IntArray,
+    ): Int
+
+    private external fun nativeFileReceiverBuildRequestBatch(
+        handle: Long,
+        startIdx: Long,
+        maxCount: Int,
+        out: ByteArray,
+        outLen: IntArray,
+        outNextIdx: LongArray,
+        outIsLast: IntArray,
     ): Int
 
     private external fun nativeFileReceiverReceivedChunks(handle: Long): Long

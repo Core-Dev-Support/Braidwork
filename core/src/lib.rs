@@ -52,10 +52,10 @@ pub use abi_session::{
     FL_STEP_COMPLETE, FL_STEP_SEND, FL_STEP_WAIT, HASH_LEN, HEARTBEAT_FRAME_MAX,
 };
 pub use abi_transfer::{
-    fl_file_receiver_build_request, fl_file_receiver_create, fl_file_receiver_finish,
-    fl_file_receiver_free, fl_file_receiver_received_chunks, fl_file_receiver_write_block,
-    fl_file_sender_build_block, fl_file_sender_create, fl_file_sender_free,
-    fl_file_sender_handle_request, fl_file_sender_next_chunk,
+    fl_file_receiver_build_request, fl_file_receiver_build_request_batch, fl_file_receiver_create,
+    fl_file_receiver_finish, fl_file_receiver_free, fl_file_receiver_received_chunks,
+    fl_file_receiver_write_block, fl_file_sender_build_block, fl_file_sender_create,
+    fl_file_sender_free, fl_file_sender_handle_request, fl_file_sender_next_chunk,
 };
 #[cfg(feature = "transport-lan")]
 pub use abi_transport::{

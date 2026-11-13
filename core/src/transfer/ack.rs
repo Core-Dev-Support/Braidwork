@@ -133,30 +133,63 @@ impl ChunkBitmap {
     }
 }
 
-/// Формирует запрос недостающих блоков `FileRequest` для докачки.
-pub fn build_file_request(
+/// Максимальное число смещений недостающих блоков в одном кадре FileRequest (защита от лимита Noise 64 КиБ).
+pub const MAX_REQUEST_OFFSETS_PER_FRAME: usize = 1024;
+
+/// Формирует порцию запроса недостающих блоков `FileRequest` для докачки, начиная с `start_missing_idx`.
+/// Возвращает `(FileRequest, next_missing_idx, is_last)`.
+pub fn build_file_request_batch(
     transfer_id: &[u8],
     plan: &ChunkPlan,
     bitmap: &ChunkBitmap,
+    start_missing_idx: usize,
+    max_count: usize,
     partial_hash: Option<[u8; 32]>,
-) -> FileRequest {
+) -> (FileRequest, usize, bool) {
     let missing_indices = bitmap.missing_indices();
-    let mut missing_offsets = Vec::with_capacity(missing_indices.len());
+    let total_missing = missing_indices.len();
+    if total_missing == 0 || start_missing_idx >= total_missing {
+        return (build_completion_ack(transfer_id), total_missing, true);
+    }
 
-    for idx in missing_indices {
+    let end = (start_missing_idx + max_count).min(total_missing);
+    let slice = &missing_indices[start_missing_idx..end];
+    let mut missing_offsets = Vec::with_capacity(slice.len());
+    for &idx in slice {
         if let Some(info) = plan.chunk_at(idx) {
             missing_offsets.push(info.offset);
         }
     }
 
-    FileRequest {
+    let is_last = end >= total_missing;
+    let req = FileRequest {
         transfer_id: Bytes::copy_from_slice(transfer_id),
         missing_offsets,
         partial_hash: match partial_hash {
             Some(h) => Bytes::copy_from_slice(&h),
             None => Bytes::new(),
         },
-    }
+    };
+
+    (req, end, is_last)
+}
+
+/// Формирует запрос недостающих блоков `FileRequest` для докачки (ограничен лимитом одного кадра).
+pub fn build_file_request(
+    transfer_id: &[u8],
+    plan: &ChunkPlan,
+    bitmap: &ChunkBitmap,
+    partial_hash: Option<[u8; 32]>,
+) -> FileRequest {
+    build_file_request_batch(
+        transfer_id,
+        plan,
+        bitmap,
+        0,
+        MAX_REQUEST_OFFSETS_PER_FRAME,
+        partial_hash,
+    )
+    .0
 }
 
 /// Проверяет, является ли FileRequest положительным подтверждением (ACK) полного завершения приёма файла.

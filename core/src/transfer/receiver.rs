@@ -8,7 +8,7 @@
 //! - После приёма всех блоков проводит финальную верификацию BLAKE3 всего файла и атомарно перемещает его в целевую папку.
 
 use crate::pb::{FileBlock, FileOffer, FileRequest};
-use crate::transfer::ack::{build_file_request, ChunkBitmap};
+use crate::transfer::ack::{build_file_request, build_file_request_batch, ChunkBitmap};
 use crate::transfer::checksum::{verify_block_hash, verify_file_hash};
 use crate::transfer::chunk::ChunkPlan;
 use crate::transfer::errors::TransferError;
@@ -17,6 +17,11 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
+
+/// Интервал сохранения состояния передачи на диск (защита диска от износа и квадратичной записи).
+const STATE_SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+/// Количество блоков между периодическими сбросами состояния на диск.
+const STATE_SAVE_CHUNK_BATCH: usize = 64;
 
 /// Результат записи одного блока.
 #[derive(Debug, PartialEq, Eq)]
@@ -47,6 +52,8 @@ pub struct FileReceiver {
     state_path: Option<PathBuf>,
     file: Option<File>,
     cancelled: bool,
+    last_save_time: std::time::Instant,
+    unsaved_chunks: usize,
 }
 
 impl FileReceiver {
@@ -108,7 +115,7 @@ impl FileReceiver {
             .write(true)
             .open(&temp_path)?;
 
-        let receiver = Self {
+        let mut receiver = Self {
             transfer_id: offer.transfer_id.to_vec(),
             file_name: offer.file_name.clone(),
             total_size: offer.total_size,
@@ -122,9 +129,11 @@ impl FileReceiver {
             state_path,
             file: Some(file),
             cancelled: false,
+            last_save_time: std::time::Instant::now(),
+            unsaved_chunks: 0,
         };
 
-        receiver.save_state_if_needed()?;
+        receiver.force_save_state()?;
         Ok(receiver)
     }
 
@@ -159,6 +168,8 @@ impl FileReceiver {
             state_path,
             file: Some(file),
             cancelled: false,
+            last_save_time: std::time::Instant::now(),
+            unsaved_chunks: 0,
         })
     }
 
@@ -255,10 +266,18 @@ impl FileReceiver {
         let mut block_hash_arr = [0u8; 32];
         block_hash_arr.copy_from_slice(&block.block_hash);
         self.chunk_hashes.insert(chunk.index, block_hash_arr);
+        self.unsaved_chunks += 1;
 
-        self.save_state_if_needed()?;
+        // Периодическое сохранение состояния (контрольная точка каждые 64 чанка или 500 мс)
+        if self.unsaved_chunks >= STATE_SAVE_CHUNK_BATCH
+            || self.last_save_time.elapsed() >= STATE_SAVE_INTERVAL
+        {
+            self.force_save_state()?;
+        }
 
         if self.bitmap.is_complete() {
+            // При завершении приёма всех блоков обязательно сохраняем итоговое состояние
+            self.force_save_state()?;
             Ok(BlockWriteResult::Complete)
         } else {
             let remaining = self
@@ -272,9 +291,25 @@ impl FileReceiver {
         }
     }
 
-    /// Формирует запрос недостающих блоков `FileRequest` для отправителя.
+    /// Формирует запрос недостающих блоков `FileRequest` для отправителя (порция до 1024 смещений).
     pub fn build_request(&self) -> FileRequest {
         build_file_request(&self.transfer_id, &self.plan, &self.bitmap, None)
+    }
+
+    /// Формирует порцию запроса недостающих блоков `FileRequest` (порциями до `max_count` смещений).
+    pub fn build_request_batch(
+        &self,
+        start_missing_idx: usize,
+        max_count: usize,
+    ) -> (FileRequest, usize, bool) {
+        build_file_request_batch(
+            &self.transfer_id,
+            &self.plan,
+            &self.bitmap,
+            start_missing_idx,
+            max_count,
+            None,
+        )
     }
 
     /// Финализирует передачу: закрывает временный файл, проверяет полный BLAKE3 хэш
@@ -341,7 +376,8 @@ impl FileReceiver {
         (bytes, total, fraction)
     }
 
-    fn save_state_if_needed(&self) -> Result<(), TransferError> {
+    /// Принудительно сохраняет текущее состояние передачи на диск.
+    pub fn force_save_state(&mut self) -> Result<(), TransferError> {
         if let Some(state_path) = &self.state_path {
             let state = ResumeState {
                 transfer_id: self.transfer_id.clone(),
@@ -353,6 +389,8 @@ impl FileReceiver {
                 chunk_hashes: self.chunk_hashes.clone(),
             };
             state.save_to_file(state_path)?;
+            self.last_save_time = std::time::Instant::now();
+            self.unsaved_chunks = 0;
         }
         Ok(())
     }
@@ -362,6 +400,8 @@ impl Drop for FileReceiver {
     fn drop(&mut self) {
         if self.cancelled {
             cleanup_files(&self.temp_path, self.state_path.as_deref());
+        } else if self.unsaved_chunks > 0 {
+            let _ = self.force_save_state();
         }
     }
 }

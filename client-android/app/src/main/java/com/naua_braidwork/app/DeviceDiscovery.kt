@@ -446,6 +446,19 @@ class DeviceDiscovery(
                     return
                 }
                 val tidHex = offer.transferId.joinToString("") { "%02x".format(it) }
+                cleanExpiredCompletedTransfers()
+                val completedAt = recentlyCompletedTransfers[tidHex]
+                if (completedAt != null && (System.currentTimeMillis() - completedAt) < 60_000L) {
+                    val ackFrame = BraidworkCore.fileRequestFrame(offer.transferId, LongArray(0))
+                    val h = хэндл.get()
+                    if (h != 0L && кадр.conn != 0L) {
+                        try {
+                            BraidworkCore.transportSend(h, кадр.conn, ackFrame)
+                        } catch (_: Exception) {}
+                    }
+                    return
+                }
+
                 val safeName = sanitizeFileName(offer.fileName)
                 val sizeStr = formatBytes(offer.totalSize)
 
@@ -521,15 +534,76 @@ class DeviceDiscovery(
                 )
                 activeTransfers[tidHex] = transfer
 
-                if (receivedChunks > 0L) {
+                if (initialBytes >= offer.totalSize) {
+                    записать("возобновление приёма «$safeName»: все блоки уже на диске, проверяем BLAKE3 и финализируем...")
+                    try {
+                        BraidworkCore.fileReceiverFinish(rHandle)
+                        BraidworkCore.fileReceiverFree(rHandle)
+                        transfer.receiverHandle = 0L
+
+                        cleanExpiredCompletedTransfers()
+                        recentlyCompletedTransfers[tidHex] = System.currentTimeMillis()
+
+                        val ackFrame = BraidworkCore.fileRequestFrame(offer.transferId, LongArray(0))
+                        val h = хэндл.get()
+                        val conn = кадр.conn
+                        if (h != 0L && conn != 0L) {
+                            for (attempt in 1..3) {
+                                try {
+                                    BraidworkCore.transportSend(h, conn, ackFrame)
+                                } catch (e: Exception) {
+                                    записать("ошибка отправки Positive ACK: ${e.message}")
+                                }
+                                if (attempt < 3) Thread.sleep(20)
+                            }
+                        }
+
+                        val targetFile = transfer.finalFile ?: File(
+                            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                            "Braidwork/${transfer.fileName}"
+                        )
+                        android.media.MediaScannerConnection.scanFile(context, arrayOf(targetFile.absolutePath), null, null)
+
+                        transfer.done = true
+                        activeTransfers.remove(tidHex)
+                        bytesTransferredToday.addAndGet(transfer.totalSize)
+                        filesTransferredCount.incrementAndGet()
+                        saveStats()
+                        completedTransfers.add(0, CompletedTransfer(
+                            fileName = transfer.fileName,
+                            peerName = peerDisplayName,
+                            totalSize = transfer.totalSize,
+                            isIncoming = true,
+                            success = true,
+                        ))
+                        if (completedTransfers.size > 20) completedTransfers.removeAt(completedTransfers.size - 1)
+
+                        записать("файл «${transfer.fileName}» полностью восстановлен и сохранён (BLAKE3 проверен)")
+                        mainHandler.post {
+                            Toast.makeText(context, "Файл получен: ${transfer.fileName}", Toast.LENGTH_LONG).show()
+                        }
+                        return
+                    } catch (e: Exception) {
+                        записать("ошибка финализации восстановленного файла «$safeName»: ${e.message}")
+                    }
+                } else if (receivedChunks > 0L) {
                     записать("возобновление приёма «$safeName»: уже получено и проверено $receivedChunks блоков (${formatBytes(initialBytes)} из $sizeStr)")
-                    // Отправляем FileRequest со списком недостающих блоков (Resume)
+                    // Отправляем FileRequest со списком недостающих блоков батчами (Noise-safe)
                     val h = хэндл.get()
                     val conn = кадр.conn
                     if (h != 0L && conn != 0L) {
                         try {
-                            val reqFrame = BraidworkCore.fileReceiverBuildRequest(rHandle)
-                            BraidworkCore.transportSend(h, conn, reqFrame)
+                            var startIdx = 0L
+                            var isLast = false
+                            while (!isLast) {
+                                val batch = BraidworkCore.fileReceiverBuildRequestBatch(rHandle, startIdx, 1024)
+                                if (batch.frame.isNotEmpty()) {
+                                    BraidworkCore.transportSend(h, conn, batch.frame)
+                                }
+                                if (batch.nextIdx <= startIdx || batch.isLast) break
+                                startIdx = batch.nextIdx
+                                isLast = batch.isLast
+                            }
                             записать("от $кто: отправлен FileRequest на докачку оставшихся блоков «$safeName»")
                         } catch (e: Exception) {
                             записать("ошибка отправки FileRequest для докачки: ${e.message}")
@@ -546,6 +620,7 @@ class DeviceDiscovery(
                 }
                 val tidHex = block.transferId.joinToString("") { "%02x".format(it) }
 
+                cleanExpiredCompletedTransfers()
                 val completedAt = recentlyCompletedTransfers[tidHex]
                 if (completedAt != null && (System.currentTimeMillis() - completedAt) < 60_000L) {
                     // Передача уже завершена, но отправитель мог не получить первый ACK из-за потерь в сети.
@@ -779,7 +854,13 @@ class DeviceDiscovery(
 
     private val activeTransfers = ConcurrentHashMap<String, ActiveTransfer>()
     private val recentlyCompletedTransfers = ConcurrentHashMap<String, Long>()
+    private val incompleteTransfers = ConcurrentHashMap<String, ByteArray>()
     private val completedTransfers = java.util.concurrent.CopyOnWriteArrayList<CompletedTransfer>()
+
+    private fun cleanExpiredCompletedTransfers() {
+        val now = System.currentTimeMillis()
+        recentlyCompletedTransfers.entries.removeIf { (now - it.value) > 60_000L }
+    }
     private val bytesTransferredToday = AtomicLong(0L)
     private val filesTransferredCount = AtomicInteger(0)
     private val sentClipboardCount = AtomicInteger(0)
@@ -1302,6 +1383,7 @@ class DeviceDiscovery(
 
         var success = false
         var transferError: String? = null
+        var currentTransferKey: String? = null
 
         try {
             // Считаем общий BLAKE3 хэш файла
@@ -1315,13 +1397,18 @@ class DeviceDiscovery(
                 throw IllegalStateException("отменено")
             }
 
-            // Формируем детерминированный transfer_id на основе BLAKE3(totalHash + fileName).
-            // Это гарантирует совпадение ID при повторном подключении или перезапуске (Resume).
-            val nameBytes = fileName.toByteArray(Charsets.UTF_8)
-            val combined = ByteArray(totalHash.size + nameBytes.size)
-            System.arraycopy(totalHash, 0, combined, 0, totalHash.size)
-            System.arraycopy(nameBytes, 0, combined, totalHash.size, nameBytes.size)
-            val transferId = BraidworkCore.blake3(combined).copyOf(16)
+            val hashHex = totalHash.take(8).joinToString("") { "%02x".format(it) }
+            val transferKey = "${peerId}_${fileName}_${fileSize}_${hashHex}"
+            currentTransferKey = transferKey
+
+            // Если есть незавершённая передача этого файла этому получателю — продолжаем её (Resume)
+            // с тем же ID. Для новой самостоятельной отправки генерируем новый случайный ID,
+            // чтобы исключить склеивание разных передач и ложные подтверждения от кэша завершённых.
+            val transferId = incompleteTransfers[transferKey] ?: ByteArray(16).apply {
+                SecureRandom().nextBytes(this)
+            }.also {
+                incompleteTransfers[transferKey] = it
+            }
             val newTidHex = transferId.joinToString("") { "%02x".format(it) }
 
             activeTransfers.remove(tidHex)
@@ -1418,72 +1505,119 @@ class DeviceDiscovery(
                     }
                 }
             } else {
-                // Потоковый fallback для URI без прямого файлового дескриптора с поддержкой Retransmit
-                fun readChunkFromStream(offset: Long, length: Int): ByteArray {
-                    context.contentResolver.openInputStream(uri)?.use { stream ->
-                        var skipped = 0L
-                        while (skipped < offset) {
-                            val s = stream.skip(offset - skipped)
-                            if (s <= 0) break
-                            skipped += s
-                        }
-                        val buf = ByteArray(length)
-                        var readTotal = 0
-                        while (readTotal < length) {
-                            val r = stream.read(buf, readTotal, length - readTotal)
-                            if (r <= 0) break
-                            readTotal += r
-                        }
-                        if (readTotal == length) return buf
-                    }
-                    throw IllegalStateException("не удалось прочитать блок по смещению $offset")
+                // Потоковый fallback для URI без прямого файлового дескриптора с поддержкой Retransmit.
+                // Читаем поток последовательно через единый курсор O(N) вместо O(N^2) повторных открытий со смещением 0.
+                var currentStream: java.io.InputStream? = null
+                var currentStreamPos = 0L
+
+                fun closeStream() {
+                    try {
+                        currentStream?.close()
+                    } catch (_: Exception) {}
+                    currentStream = null
+                    currentStreamPos = 0L
                 }
 
-                fun sendPendingFallbackChunks() {
-                    while (BraidworkCore.fileSenderNextChunk(sHandle, chunkInfo)) {
-                        if (transfer.cancelled) {
-                            throw IllegalStateException("отменено")
-                        }
-
-                        var waitCount = 0
-                        while (BraidworkCore.transportOutboxLen(h, conn) > 256 * 1024 && waitCount < 300) {
-                            if (transfer.cancelled) break
-                            Thread.sleep(5)
-                            waitCount++
-                        }
-
-                        val blockData = readChunkFromStream(chunkInfo.offset, chunkInfo.length)
-                        val blockFrame = BraidworkCore.fileSenderBuildBlock(sHandle, chunkInfo.offset, blockData)
-                        BraidworkCore.transportSend(h, conn, blockFrame)
-
-                        transfer.transferredBytes = (chunkInfo.offset + chunkInfo.length).coerceAtMost(fileSize)
-
-                        val now = System.currentTimeMillis()
-                        val elapsed = now - transfer.lastCalcTime
-                        if (elapsed >= 500) {
-                            val bytesDelta = transfer.transferredBytes - transfer.lastCalcBytes
-                            transfer.speedMbps = (bytesDelta * 8.0) / (elapsed * 1000.0)
-                            transfer.lastCalcBytes = transfer.transferredBytes
-                            transfer.lastCalcTime = now
-                        }
-
-                        Thread.sleep(1)
+                fun readChunkFromStream(targetOffset: Long, length: Int): ByteArray {
+                    // Если поток закрыт или целевое смещение позади текущей позиции (retransmit) —
+                    // переоткрываем поток заново
+                    if (currentStream == null || targetOffset < currentStreamPos) {
+                        closeStream()
+                        val newStream = context.contentResolver.openInputStream(uri)
+                            ?: throw IllegalStateException("не удалось открыть поток для чтения $uri")
+                        currentStream = newStream
+                        currentStreamPos = 0L
                     }
+
+                    val stream = currentStream!!
+                    // Пропускаем байты вперед, если целевое смещение впереди текущей позиции
+                    if (targetOffset > currentStreamPos) {
+                        var needSkip = targetOffset - currentStreamPos
+                        while (needSkip > 0L) {
+                            val skipped = stream.skip(needSkip)
+                            if (skipped <= 0L) {
+                                val discardBuf = ByteArray(needSkip.coerceAtMost(32 * 1024L).toInt())
+                                val readDiscard = stream.read(discardBuf)
+                                if (readDiscard <= 0) break
+                                needSkip -= readDiscard
+                                currentStreamPos += readDiscard
+                            } else {
+                                needSkip -= skipped
+                                currentStreamPos += skipped
+                            }
+                        }
+                        if (currentStreamPos != targetOffset) {
+                            closeStream()
+                            throw IllegalStateException("не удалось сместиться к позиции $targetOffset в потоке")
+                        }
+                    }
+
+                    // Читаем блок нужной длины
+                    val buf = ByteArray(length)
+                    var readTotal = 0
+                    while (readTotal < length) {
+                        val r = stream.read(buf, readTotal, length - readTotal)
+                        if (r <= 0) break
+                        readTotal += r
+                    }
+                    if (readTotal != length) {
+                        closeStream()
+                        throw IllegalStateException("неполное чтение блока по смещению $targetOffset: прочитано $readTotal из $length")
+                    }
+                    currentStreamPos += readTotal
+                    return buf
                 }
 
-                // Первый проход: отправка блоков
-                sendPendingFallbackChunks()
+                try {
+                    fun sendPendingFallbackChunks() {
+                        while (BraidworkCore.fileSenderNextChunk(sHandle, chunkInfo)) {
+                            if (transfer.cancelled) {
+                                throw IllegalStateException("отменено")
+                            }
 
-                // Ожидание подтверждения завершения (Positive ACK) или запросов на досылку (Retransmit)
-                var waitLoop = 0
-                while (!transfer.done && !transfer.cancelled && waitLoop < maxWaitLoops) {
-                    Thread.sleep(50)
-                    waitLoop++
+                            var waitCount = 0
+                            while (BraidworkCore.transportOutboxLen(h, conn) > 256 * 1024 && waitCount < 300) {
+                                if (transfer.cancelled) break
+                                Thread.sleep(5)
+                                waitCount++
+                            }
+
+                            val blockData = readChunkFromStream(chunkInfo.offset, chunkInfo.length)
+                            val blockFrame = BraidworkCore.fileSenderBuildBlock(sHandle, chunkInfo.offset, blockData)
+                            BraidworkCore.transportSend(h, conn, blockFrame)
+
+                            transfer.transferredBytes = (chunkInfo.offset + chunkInfo.length).coerceAtMost(fileSize)
+
+                            val now = System.currentTimeMillis()
+                            val elapsed = now - transfer.lastCalcTime
+                            if (elapsed >= 500) {
+                                val bytesDelta = transfer.transferredBytes - transfer.lastCalcBytes
+                                transfer.speedMbps = (bytesDelta * 8.0) / (elapsed * 1000.0)
+                                transfer.lastCalcBytes = transfer.transferredBytes
+                                transfer.lastCalcTime = now
+                            }
+
+                            Thread.sleep(1)
+                        }
+                    }
+
+                    // Первый проход: отправка блоков
                     sendPendingFallbackChunks()
+
+                    // Ожидание подтверждения завершения (Positive ACK) или запросов на досылку (Retransmit)
+                    var waitLoop = 0
+                    while (!transfer.done && !transfer.cancelled && waitLoop < maxWaitLoops) {
+                        Thread.sleep(50)
+                        waitLoop++
+                        sendPendingFallbackChunks()
+                    }
+                } finally {
+                    closeStream()
                 }
             }
 
             if (transfer.cancelled) {
+                currentTransferKey?.let { incompleteTransfers.remove(it) }
                 throw IllegalStateException("отменено")
             }
 
@@ -1492,6 +1626,7 @@ class DeviceDiscovery(
             }
 
             success = true
+            currentTransferKey?.let { incompleteTransfers.remove(it) }
             bytesTransferredToday.addAndGet(transfer.totalSize)
             filesTransferredCount.incrementAndGet()
             saveStats()
@@ -1500,6 +1635,9 @@ class DeviceDiscovery(
                 Toast.makeText(context, "Файл «$fileName» отправлен!", Toast.LENGTH_SHORT).show()
             }
         } catch (e: Exception) {
+            if (transfer.cancelled) {
+                currentTransferKey?.let { incompleteTransfers.remove(it) }
+            }
             transferError = e.message ?: "сбой передачи"
             transfer.error = transferError
             записать("ошибка отправки файла «$fileName»: $transferError")

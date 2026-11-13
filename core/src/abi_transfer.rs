@@ -413,6 +413,64 @@ pub unsafe extern "C" fn fl_file_receiver_build_request(
     })
 }
 
+/// Формирует порцию запроса недостающих блоков FileRequest (батчами до `max_count` смещений, по умолчанию 1024).
+///
+/// `start_idx` — начальный индекс в списке недостающих блоков.
+/// `out_next_idx` — возвращает следующий индекс для последующего вызова.
+/// `out_is_last` — возвращает 1, если все недостающие блоки уже запрошены (или если недостающих блоков нет).
+///
+/// # Safety
+/// Все указатели на буферы и переменные должны быть валидными.
+#[no_mangle]
+pub unsafe extern "C" fn fl_file_receiver_build_request_batch(
+    handle: u64,
+    start_idx: usize,
+    max_count: usize,
+    out_data: *mut u8,
+    out_len: *mut usize,
+    out_next_idx: *mut usize,
+    out_is_last: *mut u32,
+) -> FlStatus {
+    guard(|| {
+        if out_data.is_null()
+            || out_len.is_null()
+            || out_next_idx.is_null()
+            || out_is_last.is_null()
+        {
+            return FL_ERR_INVALID_ARG;
+        }
+
+        let h = FlHandle(handle);
+        let batch_size = if max_count == 0 {
+            crate::transfer::ack::MAX_REQUEST_OFFSETS_PER_FRAME
+        } else {
+            max_count
+        };
+
+        let res = receivers().with(h, |receiver| {
+            receiver.build_request_batch(start_idx, batch_size)
+        });
+
+        let (req, next_idx, is_last) = match res {
+            Some(v) => v,
+            None => return FL_ERR_INVALID_ARG,
+        };
+
+        let frame =
+            match crate::frame::encode(crate::pb::MessageKind::KindFileRequest as i32, 0, &req) {
+                Ok(f) => f,
+                Err(_) => return crate::FL_ERR_INTERNAL,
+            };
+
+        let copy_status = copy_out(&frame, out_data, out_len);
+        if copy_status == FL_OK {
+            *out_next_idx = next_idx;
+            *out_is_last = if is_last { 1 } else { 0 };
+        }
+        copy_status
+    })
+}
+
 /// Возвращает количество уже принятых блоков для получателя (полезно для обнаружения и ведения Resume).
 ///
 /// # Safety

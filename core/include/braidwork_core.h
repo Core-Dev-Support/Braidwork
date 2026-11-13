@@ -9,7 +9,11 @@
  *   - все строки UTF-8 и всегда с явной длиной;
  *   - память из ядра освобождается только через fl_free, ровно один раз;
  *   - хэндл непрозрачен, его внутреннее значение трогать нельзя;
- *   - при FL_ERR_PANIC сессия считается потерянной и пересоздаётся.
+ *   - при FL_ERR_PANIC сессия считается потерянной и пересоздаётся;
+ *   - для функций с out_data и out_len: на входе *out_len передаёт ёмкость
+ *     выделенного буфера (если > 0). Если буфер мал, возвращается FL_ERR_INVALID_ARG
+ *     и в *out_len записывается требуемый размер. Если out_data == NULL,
+ *     функция возвращает FL_OK и записывает в *out_len требуемый размер буфера.
  */
 
 #ifndef BRAIDWORK_CORE_H
@@ -358,8 +362,14 @@ fl_status fl_file_receiver_write_block(uint64_t handle, const uint8_t *block_bod
                                       size_t block_body_len, size_t *out_chunk_idx,
                                       uint32_t *out_result);
 
-/* Формирует кадр FileRequest со списком недостающих блоков. */
+/* Формирует кадр FileRequest со списком недостающих блоков (порция до 1024 смещений). */
 fl_status fl_file_receiver_build_request(uint64_t handle, uint8_t *out_data, size_t *out_len);
+
+/* Формирует порцию кадра FileRequest со списком недостающих блоков для докачки (батчирование для лимита Noise 64 КиБ). */
+fl_status fl_file_receiver_build_request_batch(uint64_t handle, size_t start_idx,
+                                              size_t max_count, uint8_t *out_data,
+                                              size_t *out_len, size_t *out_next_idx,
+                                              uint32_t *out_is_last);
 
 /* Возвращает количество уже принятых блоков для получателя (полезно для обнаружения и ведения Resume). */
 fl_status fl_file_receiver_received_chunks(uint64_t handle, size_t *out_count);

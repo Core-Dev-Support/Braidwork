@@ -2001,6 +2001,58 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRece
     FL_OK
 }
 
+/// Формирует порцию кадра FileRequest со списком недостающих блоков (батчирование).
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileReceiverBuildRequestBatch<
+    'local,
+>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    start_idx: jlong,
+    max_count: jint,
+    out_frame: JByteArray<'local>,
+    out_len: JIntArray<'local>,
+    out_next_idx: JLongArray<'local>,
+    out_is_last: JIntArray<'local>,
+) -> jint {
+    if out_frame.is_null() || out_len.is_null() || out_next_idx.is_null() || out_is_last.is_null() {
+        return crate::FL_ERR_INVALID_ARG;
+    }
+    let cap = match env.get_array_length(&out_frame) {
+        Ok(v) => v as usize,
+        Err(_) => return crate::FL_ERR_INTERNAL,
+    };
+    let mut frame_buf = vec![0u8; cap.max(1)];
+    let mut produced = cap;
+    let mut next_idx = 0usize;
+    let mut is_last = 0u32;
+    let status = unsafe {
+        crate::fl_file_receiver_build_request_batch(
+            handle as u64,
+            start_idx as usize,
+            max_count as usize,
+            frame_buf.as_mut_ptr(),
+            &mut produced,
+            &mut next_idx,
+            &mut is_last,
+        )
+    };
+    let _ = env.set_int_array_region(&out_len, 0, &[produced as jint]);
+    let _ = env.set_long_array_region(&out_next_idx, 0, &[next_idx as jlong]);
+    let _ = env.set_int_array_region(&out_is_last, 0, &[is_last as jint]);
+    if status != FL_OK {
+        return status;
+    }
+    if env
+        .set_byte_array_region(&out_frame, 0, &to_signed(&frame_buf[..produced.min(cap)]))
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+    FL_OK
+}
+
 /// Возвращает количество уже принятых блоков для получателя.
 #[no_mangle]
 pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileReceiverReceivedChunks<

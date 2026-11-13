@@ -264,14 +264,6 @@ impl ResumeState {
                 .open(&tmp_path)?;
             file.write_all(&bytes)?;
             file.flush()?;
-            let _ = file.sync_all();
-        }
-
-        #[cfg(windows)]
-        {
-            if path.exists() {
-                let _ = std::fs::remove_file(path);
-            }
         }
 
         if let Err(e) = std::fs::rename(&tmp_path, path) {
