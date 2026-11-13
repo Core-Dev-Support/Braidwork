@@ -544,7 +544,10 @@ class DeviceDiscovery(
                         BraidworkCore.fileReceiverFree(rHandle)
                         transfer.receiverHandle = 0L
 
-                        val targetFile = transfer.finalFile ?: File(dir, transfer.fileName)
+                        val targetFile = transfer.finalFile ?: File(
+                            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                            "Braidwork/${transfer.fileName}"
+                        )
                         android.media.MediaScannerConnection.scanFile(context, arrayOf(targetFile.absolutePath), null, null)
 
                         transfer.done = true
