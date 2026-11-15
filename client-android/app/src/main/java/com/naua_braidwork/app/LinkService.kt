@@ -123,7 +123,14 @@ class LinkService : Service() {
 
     private fun startAsForeground(deviceCount: Int) {
         val notification = ForegroundNotification.build(this, deviceCount, null)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            ServiceCompat.startForeground(
+                this,
+                ForegroundNotification.NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+            )
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ServiceCompat.startForeground(
                 this,
                 ForegroundNotification.NOTIFICATION_ID,
@@ -133,6 +140,11 @@ class LinkService : Service() {
         } else {
             startForeground(ForegroundNotification.NOTIFICATION_ID, notification)
         }
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.w(TAG, "Foreground service timeout received (fgsType=$fgsType, startId=$startId)")
+        stopSelf(startId)
     }
 
     /**
