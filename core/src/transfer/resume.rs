@@ -536,10 +536,11 @@ mod tests {
                 .write(true)
                 .open(&tmp)
                 .unwrap();
-            let err = win_atomic::replace_file_atomic(&tmp, &target);
+            let err = win_atomic::replace_file_atomic(&tmp, &target).unwrap_err();
+            let code = err.raw_os_error().unwrap_or(0);
             assert!(
-                err.is_err(),
-                "Ожидалась ошибка ReplaceFileW из-за блокировки доступа"
+                code == 32 || code == 5,
+                "Ожидался код ошибки Windows 32 (SHARING_VIOLATION) или 5 (ACCESS_DENIED), получено: {code}"
             );
             assert_eq!(std::fs::read(&target).unwrap(), b"replaced_state_content");
         }

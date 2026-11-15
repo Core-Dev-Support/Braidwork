@@ -1005,6 +1005,10 @@ class DeviceDiscovery(
             }
         }
         if (!committed) {
+            // Резервный механизм: если совместный remove + putString не прошёл, пробуем затереть inc_ как DONE
+            try {
+                transferPrefs.edit().putString("inc_$transferKey", "DONE").commit()
+            } catch (_: Exception) {}
             записать("ПРЕДУПРЕЖДЕНИЕ: сбой фиксации завершения передачи «$transferKey» в SharedPreferences")
         }
         return committed
