@@ -917,16 +917,24 @@ class DeviceDiscovery(
     }
 
     private fun persistIncompleteTransfer(transferKey: String, transferId: ByteArray): Boolean {
-        incompleteTransfers[transferKey] = transferId
         return try {
             val hex = transferId.joinToString("") { "%02x".format(it) }
             val value = "${System.currentTimeMillis()}:$hex"
-            val committed = transferPrefs.edit().putString("inc_$transferKey", value).commit()
+            var committed = transferPrefs.edit().putString("inc_$transferKey", value).commit()
             if (!committed) {
-                записать("ПРЕДУПРЕЖДЕНИЕ: не удалось зафиксировать transfer_id на диске в SharedPreferences")
+                // Повторная попытка фиксации на диске при неудаче первого commit()
+                committed = transferPrefs.edit().putString("inc_$transferKey", value).commit()
             }
-            committed
+            if (committed) {
+                incompleteTransfers[transferKey] = transferId
+                true
+            } else {
+                incompleteTransfers.remove(transferKey)
+                записать("ОШИБКА: окончательный отказ фиксации transfer_id на диске в SharedPreferences (commit вернул false)")
+                false
+            }
         } catch (e: Exception) {
+            incompleteTransfers.remove(transferKey)
             записать("ошибка сохранения transfer_id в SharedPreferences: ${e.message}")
             false
         }
@@ -935,12 +943,15 @@ class DeviceDiscovery(
     private fun removeIncompleteTransfer(transferKey: String): Boolean {
         incompleteTransfers.remove(transferKey)
         return try {
-            val committed = transferPrefs.edit().remove("inc_$transferKey").commit()
+            var committed = transferPrefs.edit().remove("inc_$transferKey").commit()
             if (!committed) {
-                transferPrefs.edit().remove("inc_$transferKey").commit()
-            } else {
-                true
+                // Повторная попытка удаления с диска при неудаче первого commit()
+                committed = transferPrefs.edit().remove("inc_$transferKey").commit()
             }
+            if (!committed) {
+                записать("ПРЕДУПРЕЖДЕНИЕ: окончательный сбой удаления transfer_id «$transferKey» из SharedPreferences (commit вернул false)")
+            }
+            committed
         } catch (e: Exception) {
             записать("ошибка удаления transfer_id из SharedPreferences: ${e.message}")
             false
@@ -1476,11 +1487,15 @@ class DeviceDiscovery(
 
             // Если есть незавершённая передача этого файла этому получателю — продолжаем её (Resume)
             // с тем же ID (сохранённым на диске). Для новой самостоятельной отправки генерируем новый случайный ID.
-            val transferId = incompleteTransfers[transferKey] ?: run {
+            val existingId = incompleteTransfers[transferKey]
+            val transferId = if (existingId != null) {
+                existingId
+            } else {
                 val newId = ByteArray(16).apply { SecureRandom().nextBytes(this) }
                 val ok = persistIncompleteTransfer(transferKey, newId)
                 if (!ok) {
-                    записать("предупреждение: transfer_id не был сброшен на диск перед отправкой")
+                    записать("ошибка: невозможно надёжно сохранить transfer_id на диск, передача отменена")
+                    throw java.io.IOException("Сбой сохранения состояния передачи на диск (SharedPreferences commit failed)")
                 }
                 newId
             }
@@ -1700,7 +1715,11 @@ class DeviceDiscovery(
             }
 
             if (transfer.cancelled) {
-                currentTransferKey?.let { removeIncompleteTransfer(it) }
+                currentTransferKey?.let { key ->
+                    if (!removeIncompleteTransfer(key)) {
+                        записать("предупреждение: не удалось удалить ключ «$key» из хранилища после отмены")
+                    }
+                }
                 throw IllegalStateException("отменено")
             }
 
@@ -1709,7 +1728,11 @@ class DeviceDiscovery(
             }
 
             success = true
-            currentTransferKey?.let { removeIncompleteTransfer(it) }
+            currentTransferKey?.let { key ->
+                if (!removeIncompleteTransfer(key)) {
+                    записать("предупреждение: не удалось удалить ключ «$key» из хранилища после завершения")
+                }
+            }
             bytesTransferredToday.addAndGet(transfer.totalSize)
             filesTransferredCount.incrementAndGet()
             saveStats()
@@ -1719,7 +1742,11 @@ class DeviceDiscovery(
             }
         } catch (e: Exception) {
             if (transfer.cancelled) {
-                currentTransferKey?.let { removeIncompleteTransfer(it) }
+                currentTransferKey?.let { key ->
+                    if (!removeIncompleteTransfer(key)) {
+                        записать("предупреждение: не удалось удалить ключ «$key» из хранилища после отмены")
+                    }
+                }
             }
             transferError = e.message ?: "сбой передачи"
             transfer.error = transferError

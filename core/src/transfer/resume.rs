@@ -55,6 +55,7 @@ mod win_atomic {
             if res != 0 {
                 return Ok(());
             }
+            return Err(std::io::Error::last_os_error());
         }
 
         std::fs::rename(tmp_path, target_path)
@@ -506,12 +507,24 @@ mod tests {
         let target = dir.join("target.state");
         let tmp = dir.join("tmp.state");
 
-        std::fs::write(&target, b"original_state_content").unwrap();
-        std::fs::write(&tmp, b"replaced_state_content").unwrap();
+        // 1. Создание исходного файла: target ещё не существует -> ветка rename
+        std::fs::write(&tmp, b"initial_state_content").unwrap();
+        win_atomic::replace_file_atomic(&tmp, &target).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"initial_state_content");
+        assert!(!tmp.exists());
+        assert!(target.exists());
 
+        // 2. Атомарная замена существующего файла: target существует ->
+        // вызывается исключительно ReplaceFileW (при ошибке возвращается Err, без fallback на rename)
+        std::fs::write(&tmp, b"replaced_state_content").unwrap();
         win_atomic::replace_file_atomic(&tmp, &target).unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"replaced_state_content");
         assert!(!tmp.exists());
+
+        // 3. Проверка транзакционности при сбое: если временного файла нет, замена возвращает Err,
+        // а целевой файл гарантированно остаётся нетронутым со своим содержимым
+        assert!(win_atomic::replace_file_atomic(&tmp, &target).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"replaced_state_content");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
