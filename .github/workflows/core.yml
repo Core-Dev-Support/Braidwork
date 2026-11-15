@@ -159,3 +159,32 @@ jobs:
         with:
           workspaces: core
           key: android-cross
+
+  windows:
+    name: Сборка и тесты Windows
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установка Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: '29'
+
+      - name: Кэш cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: windows-core
+
+      - name: Тесты Windows
+        run: cargo test --all-features
+
+      - name: Сборка в release Windows
+        run: cargo build --release

@@ -499,6 +499,24 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
+    fn тест_windows_replace_file_w() {
+        let dir = std::env::temp_dir().join(format!("bw_win_replace_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let target = dir.join("target.state");
+        let tmp = dir.join("tmp.state");
+
+        std::fs::write(&target, b"original_state_content").unwrap();
+        std::fs::write(&tmp, b"replaced_state_content").unwrap();
+
+        win_atomic::replace_file_atomic(&tmp, &target).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"replaced_state_content");
+        assert!(!tmp.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn тест_сверки_повреждённого_файла_при_возобновлении() {
         let chunk_size = 32 * 1024;
         let mut state = ResumeState::new(

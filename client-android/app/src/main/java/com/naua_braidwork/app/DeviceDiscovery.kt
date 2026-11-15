@@ -916,20 +916,35 @@ class DeviceDiscovery(
         } catch (_: Exception) {}
     }
 
-    private fun persistIncompleteTransfer(transferKey: String, transferId: ByteArray) {
+    private fun persistIncompleteTransfer(transferKey: String, transferId: ByteArray): Boolean {
         incompleteTransfers[transferKey] = transferId
-        try {
+        return try {
             val hex = transferId.joinToString("") { "%02x".format(it) }
             val value = "${System.currentTimeMillis()}:$hex"
-            transferPrefs.edit().putString("inc_$transferKey", value).commit()
-        } catch (_: Exception) {}
+            val committed = transferPrefs.edit().putString("inc_$transferKey", value).commit()
+            if (!committed) {
+                записать("ПРЕДУПРЕЖДЕНИЕ: не удалось зафиксировать transfer_id на диске в SharedPreferences")
+            }
+            committed
+        } catch (e: Exception) {
+            записать("ошибка сохранения transfer_id в SharedPreferences: ${e.message}")
+            false
+        }
     }
 
-    private fun removeIncompleteTransfer(transferKey: String) {
+    private fun removeIncompleteTransfer(transferKey: String): Boolean {
         incompleteTransfers.remove(transferKey)
-        try {
-            transferPrefs.edit().remove("inc_$transferKey").commit()
-        } catch (_: Exception) {}
+        return try {
+            val committed = transferPrefs.edit().remove("inc_$transferKey").commit()
+            if (!committed) {
+                transferPrefs.edit().remove("inc_$transferKey").commit()
+            } else {
+                true
+            }
+        } catch (e: Exception) {
+            записать("ошибка удаления transfer_id из SharedPreferences: ${e.message}")
+            false
+        }
     }
 
     private fun loadStats() {
@@ -1461,10 +1476,13 @@ class DeviceDiscovery(
 
             // Если есть незавершённая передача этого файла этому получателю — продолжаем её (Resume)
             // с тем же ID (сохранённым на диске). Для новой самостоятельной отправки генерируем новый случайный ID.
-            val transferId = incompleteTransfers[transferKey] ?: ByteArray(16).apply {
-                SecureRandom().nextBytes(this)
-            }.also {
-                persistIncompleteTransfer(transferKey, it)
+            val transferId = incompleteTransfers[transferKey] ?: run {
+                val newId = ByteArray(16).apply { SecureRandom().nextBytes(this) }
+                val ok = persistIncompleteTransfer(transferKey, newId)
+                if (!ok) {
+                    записать("предупреждение: transfer_id не был сброшен на диск перед отправкой")
+                }
+                newId
             }
             val newTidHex = transferId.joinToString("") { "%02x".format(it) }
 
