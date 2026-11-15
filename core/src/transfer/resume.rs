@@ -527,20 +527,23 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"replaced_state_content");
 
         // 4. Проверка полноценного отката при ошибке ReplaceFileW с существующим временным файлом:
-        // Если tmp удерживается открытым на запись (конфликт монопольного доступа/удаления),
-        // ReplaceFileW завершается отказом, функция возвращает Err, а target остаётся неизменным.
+        // Если tmp удерживается открытым с share_mode(0) (полная блокировка совместного доступа),
+        // ReplaceFileW завершается отказом ERROR_SHARING_VIOLATION (код 32),
+        // функция возвращает Err, а target остаётся неизменным.
         std::fs::write(&tmp, b"failed_replacement_content").unwrap();
         {
+            use std::os::windows::fs::OpenOptionsExt;
             let _lock = std::fs::OpenOptions::new()
                 .read(true)
                 .write(true)
+                .share_mode(0)
                 .open(&tmp)
                 .unwrap();
             let err = win_atomic::replace_file_atomic(&tmp, &target).unwrap_err();
             let code = err.raw_os_error().unwrap_or(0);
-            assert!(
-                code == 32 || code == 5,
-                "Ожидался код ошибки Windows 32 (SHARING_VIOLATION) или 5 (ACCESS_DENIED), получено: {code}"
+            assert_eq!(
+                code, 32,
+                "Ожидался системный код ошибки Windows 32 (ERROR_SHARING_VIOLATION), получено: {code}"
             );
             assert_eq!(std::fs::read(&target).unwrap(), b"replaced_state_content");
         }

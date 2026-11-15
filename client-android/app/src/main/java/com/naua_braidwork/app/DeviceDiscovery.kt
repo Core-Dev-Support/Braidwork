@@ -918,7 +918,7 @@ class DeviceDiscovery(
                     if (parts.size == 2) {
                         val timestamp = parts[0].toLongOrNull() ?: 0L
                         val hexId = parts[1]
-                        if (now - timestamp > 7L * 24 * 3600 * 1000 || hexId == "DONE") {
+                        if (now - timestamp > 7L * 24 * 3600 * 1000) {
                             toRemove.add(key)
                         } else if (hexId.length == 32) {
                             val bytes = hexId.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
