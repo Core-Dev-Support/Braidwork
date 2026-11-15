@@ -2009,7 +2009,7 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRece
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     handle: jlong,
-    start_idx: jlong,
+    start_chunk_idx: jlong,
     max_count: jint,
     out_frame: JByteArray<'local>,
     out_len: JIntArray<'local>,
@@ -2030,8 +2030,8 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRece
     let status = unsafe {
         crate::fl_file_receiver_build_request_batch(
             handle as u64,
-            start_idx as usize,
-            max_count as usize,
+            start_chunk_idx.max(0) as usize,
+            max_count.max(0) as usize,
             frame_buf.as_mut_ptr(),
             &mut produced,
             &mut next_idx,

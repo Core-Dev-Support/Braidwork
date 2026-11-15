@@ -136,32 +136,60 @@ impl ChunkBitmap {
 /// Максимальное число смещений недостающих блоков в одном кадре FileRequest (защита от лимита Noise 64 КиБ).
 pub const MAX_REQUEST_OFFSETS_PER_FRAME: usize = 1024;
 
-/// Формирует порцию запроса недостающих блоков `FileRequest` для докачки, начиная с `start_missing_idx`.
-/// Возвращает `(FileRequest, next_missing_idx, is_last)`.
+/// Формирует порцию запроса недостающих блоков `FileRequest` для докачки, сканируя битовую карту
+/// начиная с абсолютного индекса чанка `start_chunk_idx`.
+///
+/// Работает за строго линейное время O(K) от числа просмотренных чанков без промежуточных аллокаций
+/// полного вектора индексов и без рассинхронизации при поступлении параллельных блоков.
+///
+/// Возвращает `(FileRequest, next_chunk_idx, is_last)`.
 pub fn build_file_request_batch(
     transfer_id: &[u8],
     plan: &ChunkPlan,
     bitmap: &ChunkBitmap,
-    start_missing_idx: usize,
+    start_chunk_idx: usize,
     max_count: usize,
     partial_hash: Option<[u8; 32]>,
 ) -> (FileRequest, usize, bool) {
-    let missing_indices = bitmap.missing_indices();
-    let total_missing = missing_indices.len();
-    if total_missing == 0 || start_missing_idx >= total_missing {
-        return (build_completion_ack(transfer_id), total_missing, true);
+    let total_chunks = plan.total_chunks();
+    if total_chunks == 0 || bitmap.is_complete() {
+        return (build_completion_ack(transfer_id), total_chunks, true);
     }
 
-    let end = (start_missing_idx + max_count).min(total_missing);
-    let slice = &missing_indices[start_missing_idx..end];
-    let mut missing_offsets = Vec::with_capacity(slice.len());
-    for &idx in slice {
-        if let Some(info) = plan.chunk_at(idx) {
-            missing_offsets.push(info.offset);
+    if start_chunk_idx >= total_chunks {
+        return (build_completion_ack(transfer_id), total_chunks, true);
+    }
+
+    let limit = if max_count == 0 || max_count > MAX_REQUEST_OFFSETS_PER_FRAME {
+        MAX_REQUEST_OFFSETS_PER_FRAME
+    } else {
+        max_count
+    };
+
+    let mut missing_offsets = Vec::with_capacity(limit);
+    let mut curr_chunk_idx = start_chunk_idx;
+
+    while curr_chunk_idx < total_chunks && missing_offsets.len() < limit {
+        if !bitmap.is_received(curr_chunk_idx) {
+            if let Some(info) = plan.chunk_at(curr_chunk_idx) {
+                missing_offsets.push(info.offset);
+            }
+        }
+        curr_chunk_idx += 1;
+    }
+
+    // Проверяем, есть ли ещё не полученные блоки в оставшейся части файла
+    let mut has_more_missing = false;
+    for idx in curr_chunk_idx..total_chunks {
+        if !bitmap.is_received(idx) {
+            has_more_missing = true;
+            break;
         }
     }
 
-    let is_last = end >= total_missing;
+    let is_last = !has_more_missing;
+    let next_chunk_idx = curr_chunk_idx;
+
     let req = FileRequest {
         transfer_id: Bytes::copy_from_slice(transfer_id),
         missing_offsets,
@@ -171,7 +199,7 @@ pub fn build_file_request_batch(
         },
     };
 
-    (req, end, is_last)
+    (req, next_chunk_idx, is_last)
 }
 
 /// Формирует запрос недостающих блоков `FileRequest` для докачки (ограничен лимитом одного кадра).
@@ -291,5 +319,42 @@ mod tests {
 
         let missing = parse_missing_chunks(&req, &plan).unwrap();
         assert_eq!(missing, vec![0, 2]);
+    }
+
+    #[test]
+    fn тест_батчирования_file_request_с_абсолютным_курсором() {
+        let plan = ChunkPlan::new(10 * 32 * 1024, DEFAULT_CHUNK_SIZE).unwrap(); // 10 чанков 0..9
+        let mut bmp = ChunkBitmap::new(10);
+        // Получены 2, 3, 4
+        bmp.mark_received(2);
+        bmp.mark_received(3);
+        bmp.mark_received(4);
+
+        let tid = b"batch_test";
+
+        // Порция 1: max_count = 2, начиная с 0
+        let (req1, next1, is_last1) = build_file_request_batch(tid, &plan, &bmp, 0, 2, None);
+        assert!(!is_last1);
+        assert_eq!(next1, 2); // проверены 0 (missing), 1 (missing), лимит 2 достигнут
+        assert_eq!(req1.missing_offsets, vec![0, 32 * 1024]);
+
+        // Порция 2: max_count = 2, начиная с 2
+        let (req2, next2, is_last2) = build_file_request_batch(tid, &plan, &bmp, next1, 2, None);
+        assert!(!is_last2);
+        assert_eq!(next2, 7); // 2, 3, 4 пропущены (received); 5, 6 добавлены (missing), лимит 2 достигнут
+        assert_eq!(req2.missing_offsets, vec![5 * 32 * 1024, 6 * 32 * 1024]);
+
+        // Симулируем параллельное поступление блоков 0 и 1:
+        bmp.mark_received(0);
+        bmp.mark_received(1);
+
+        // Порция 3: max_count = 10, начиная с 7 (абсолютный курсор защищает от пропусков!)
+        let (req3, next3, is_last3) = build_file_request_batch(tid, &plan, &bmp, next2, 10, None);
+        assert!(is_last3);
+        assert_eq!(next3, 10);
+        assert_eq!(
+            req3.missing_offsets,
+            vec![7 * 32 * 1024, 8 * 32 * 1024, 9 * 32 * 1024]
+        );
     }
 }

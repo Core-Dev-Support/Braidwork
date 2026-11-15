@@ -266,9 +266,28 @@ impl ResumeState {
             file.flush()?;
         }
 
-        if let Err(e) = std::fs::rename(&tmp_path, path) {
-            let _ = std::fs::remove_file(&tmp_path);
-            return Err(TransferError::Io(e));
+        #[cfg(not(windows))]
+        {
+            if let Err(e) = std::fs::rename(&tmp_path, path) {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err(TransferError::Io(e));
+            }
+        }
+        #[cfg(windows)]
+        {
+            if let Err(e) = std::fs::rename(&tmp_path, path) {
+                // Если rename на Windows вернул ошибку и целевой файл существует, пробуем удалить его и повторить rename
+                if path.exists() {
+                    let _ = std::fs::remove_file(path);
+                    if let Err(retry_e) = std::fs::rename(&tmp_path, path) {
+                        let _ = std::fs::remove_file(&tmp_path);
+                        return Err(TransferError::Io(retry_e));
+                    }
+                } else {
+                    let _ = std::fs::remove_file(&tmp_path);
+                    return Err(TransferError::Io(e));
+                }
+            }
         }
 
         Ok(())

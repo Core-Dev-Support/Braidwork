@@ -296,17 +296,17 @@ impl FileReceiver {
         build_file_request(&self.transfer_id, &self.plan, &self.bitmap, None)
     }
 
-    /// Формирует порцию запроса недостающих блоков `FileRequest` (порциями до `max_count` смещений).
+    /// Формирует порцию запроса недостающих блоков `FileRequest` (порциями до `max_count` смещений, начиная с `start_chunk_idx`).
     pub fn build_request_batch(
         &self,
-        start_missing_idx: usize,
+        start_chunk_idx: usize,
         max_count: usize,
     ) -> (FileRequest, usize, bool) {
         build_file_request_batch(
             &self.transfer_id,
             &self.plan,
             &self.bitmap,
-            start_missing_idx,
+            start_chunk_idx,
             max_count,
             None,
         )

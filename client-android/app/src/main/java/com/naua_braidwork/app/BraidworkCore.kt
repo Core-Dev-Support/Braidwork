@@ -1000,7 +1000,7 @@ object BraidworkCore {
 
     data class FileRequestBatch(
         val frame: ByteArray,
-        val nextIdx: Long,
+        val nextChunkIdx: Long,
         val isLast: Boolean,
     )
 
@@ -1022,20 +1022,20 @@ object BraidworkCore {
         }
     }
 
-    /** Формирует порцию кадра FileRequest со списком недостающих блоков (батчами до maxCount смещений). */
-    fun fileReceiverBuildRequestBatch(handle: Long, startIdx: Long, maxCount: Int = 1024): FileRequestBatch {
+    /** Формирует порцию кадра FileRequest со списком недостающих блоков (батчами до maxCount смещений, начиная с startChunkIdx). */
+    fun fileReceiverBuildRequestBatch(handle: Long, startChunkIdx: Long, maxCount: Int = 1024): FileRequestBatch {
         ensureLoaded()
         val out = ByteArray(FILE_REQUEST_FRAME_MAX)
         val outLen = IntArray(1) { out.size }
-        val outNextIdx = LongArray(1)
+        val outNextChunkIdx = LongArray(1)
         val outIsLast = IntArray(1)
         val status = nativeFileReceiverBuildRequestBatch(
             handle,
-            startIdx,
+            startChunkIdx,
             maxCount,
             out,
             outLen,
-            outNextIdx,
+            outNextChunkIdx,
             outIsLast,
         )
         if (status != STATUS_OK) {
@@ -1043,7 +1043,7 @@ object BraidworkCore {
         }
         return FileRequestBatch(
             frame = out.copyOf(outLen[0]),
-            nextIdx = outNextIdx[0],
+            nextChunkIdx = outNextChunkIdx[0],
             isLast = outIsLast[0] == 1,
         )
     }
@@ -1461,11 +1461,11 @@ object BraidworkCore {
 
     private external fun nativeFileReceiverBuildRequestBatch(
         handle: Long,
-        startIdx: Long,
+        startChunkIdx: Long,
         maxCount: Int,
         out: ByteArray,
         outLen: IntArray,
-        outNextIdx: LongArray,
+        outNextChunkIdx: LongArray,
         outIsLast: IntArray,
     ): Int
 

@@ -593,15 +593,18 @@ class DeviceDiscovery(
                     val conn = кадр.conn
                     if (h != 0L && conn != 0L) {
                         try {
-                            var startIdx = 0L
+                            var startChunkIdx = 0L
                             var isLast = false
                             while (!isLast) {
-                                val batch = BraidworkCore.fileReceiverBuildRequestBatch(rHandle, startIdx, 1024)
+                                val batch = BraidworkCore.fileReceiverBuildRequestBatch(rHandle, startChunkIdx, 1024)
                                 if (batch.frame.isNotEmpty()) {
-                                    BraidworkCore.transportSend(h, conn, batch.frame)
+                                    val parsed = BraidworkCore.readFileRequest(batch.frame)
+                                    if (parsed != null && parsed.missingOffsets.isNotEmpty()) {
+                                        BraidworkCore.transportSend(h, conn, batch.frame)
+                                    }
                                 }
-                                if (batch.nextIdx <= startIdx || batch.isLast) break
-                                startIdx = batch.nextIdx
+                                if (batch.nextChunkIdx <= startChunkIdx || batch.isLast) break
+                                startChunkIdx = batch.nextChunkIdx
                                 isLast = batch.isLast
                             }
                             записать("от $кто: отправлен FileRequest на докачку оставшихся блоков «$safeName»")
@@ -744,6 +747,9 @@ class DeviceDiscovery(
                 val tidHex = req.transferId.joinToString("") { "%02x".format(it) }
 
                 val transfer = activeTransfers[tidHex]
+                if (transfer != null) {
+                    transfer.hasReceivedRequest = true
+                }
                 if (req.missingOffsets.isEmpty()) {
                     // Positive Completion ACK от получателя
                     записать("от $кто: получено подтверждение завершения доставки (ACK) для файла «${transfer?.fileName ?: tidHex}»")
@@ -850,6 +856,7 @@ class DeviceDiscovery(
         @Volatile var done: Boolean = false,
         @Volatile var error: String? = null,
         @Volatile var statusText: String? = null,
+        @Volatile var hasReceivedRequest: Boolean = false,
     )
 
     private val activeTransfers = ConcurrentHashMap<String, ActiveTransfer>()
@@ -870,8 +877,60 @@ class DeviceDiscovery(
         context.applicationContext.getSharedPreferences("braidwork_stats", Context.MODE_PRIVATE)
     }
 
+    private val transferPrefs by lazy {
+        context.applicationContext.getSharedPreferences("braidwork_transfers", Context.MODE_PRIVATE)
+    }
+
     init {
         loadStats()
+        loadIncompleteTransfers()
+    }
+
+    private fun loadIncompleteTransfers() {
+        try {
+            val now = System.currentTimeMillis()
+            val all = transferPrefs.all
+            val toRemove = mutableListOf<String>()
+            for ((key, value) in all) {
+                if (key.startsWith("inc_") && value is String) {
+                    val rawKey = key.removePrefix("inc_")
+                    val parts = value.split(":")
+                    if (parts.size == 2) {
+                        val timestamp = parts[0].toLongOrNull() ?: 0L
+                        val hexId = parts[1]
+                        if (now - timestamp > 7L * 24 * 3600 * 1000) {
+                            toRemove.add(key)
+                        } else if (hexId.length == 32) {
+                            val bytes = hexId.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+                            incompleteTransfers[rawKey] = bytes
+                        }
+                    } else {
+                        toRemove.add(key)
+                    }
+                }
+            }
+            if (toRemove.isNotEmpty()) {
+                val editor = transferPrefs.edit()
+                for (k in toRemove) editor.remove(k)
+                editor.apply()
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun persistIncompleteTransfer(transferKey: String, transferId: ByteArray) {
+        incompleteTransfers[transferKey] = transferId
+        try {
+            val hex = transferId.joinToString("") { "%02x".format(it) }
+            val value = "${System.currentTimeMillis()}:$hex"
+            transferPrefs.edit().putString("inc_$transferKey", value).apply()
+        } catch (_: Exception) {}
+    }
+
+    private fun removeIncompleteTransfer(transferKey: String) {
+        incompleteTransfers.remove(transferKey)
+        try {
+            transferPrefs.edit().remove("inc_$transferKey").apply()
+        } catch (_: Exception) {}
     }
 
     private fun loadStats() {
@@ -1402,12 +1461,11 @@ class DeviceDiscovery(
             currentTransferKey = transferKey
 
             // Если есть незавершённая передача этого файла этому получателю — продолжаем её (Resume)
-            // с тем же ID. Для новой самостоятельной отправки генерируем новый случайный ID,
-            // чтобы исключить склеивание разных передач и ложные подтверждения от кэша завершённых.
+            // с тем же ID (сохранённым на диске). Для новой самостоятельной отправки генерируем новый случайный ID.
             val transferId = incompleteTransfers[transferKey] ?: ByteArray(16).apply {
                 SecureRandom().nextBytes(this)
             }.also {
-                incompleteTransfers[transferKey] = it
+                persistIncompleteTransfer(transferKey, it)
             }
             val newTidHex = transferId.joinToString("") { "%02x".format(it) }
 
@@ -1433,6 +1491,14 @@ class DeviceDiscovery(
             val offerFrame = BraidworkCore.fileOfferFrame(transferId, fileName, fileSize, totalHash)
             BraidworkCore.transportSend(h, conn, offerFrame)
             записать("предложение файла «$fileName» отправлено")
+
+            // Даём получателю краткую паузу (до 200 мс) на обработку Offer и ответный Resume FileRequest / Positive ACK,
+            // если файл уже частично или полностью на диске получателя (устранение гонки старта передачи).
+            var waitInit = 0
+            while (!transfer.done && !transfer.cancelled && !transfer.hasReceivedRequest && waitInit < 20) {
+                Thread.sleep(10)
+                waitInit++
+            }
 
             val maxWaitLoops = ((fileSize / (10 * 1024 * 1024)) * 20 + 200).toInt().coerceAtMost(1200)
 
@@ -1617,7 +1683,7 @@ class DeviceDiscovery(
             }
 
             if (transfer.cancelled) {
-                currentTransferKey?.let { incompleteTransfers.remove(it) }
+                currentTransferKey?.let { removeIncompleteTransfer(it) }
                 throw IllegalStateException("отменено")
             }
 
@@ -1626,7 +1692,7 @@ class DeviceDiscovery(
             }
 
             success = true
-            currentTransferKey?.let { incompleteTransfers.remove(it) }
+            currentTransferKey?.let { removeIncompleteTransfer(it) }
             bytesTransferredToday.addAndGet(transfer.totalSize)
             filesTransferredCount.incrementAndGet()
             saveStats()
@@ -1636,7 +1702,7 @@ class DeviceDiscovery(
             }
         } catch (e: Exception) {
             if (transfer.cancelled) {
-                currentTransferKey?.let { incompleteTransfers.remove(it) }
+                currentTransferKey?.let { removeIncompleteTransfer(it) }
             }
             transferError = e.message ?: "сбой передачи"
             transfer.error = transferError

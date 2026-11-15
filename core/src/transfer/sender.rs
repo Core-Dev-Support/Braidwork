@@ -12,7 +12,7 @@ use crate::transfer::checksum::{compute_block_hash, compute_file_hash};
 use crate::transfer::chunk::ChunkPlan;
 use crate::transfer::errors::TransferError;
 use prost::bytes::Bytes;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::io::{Read, Seek, SeekFrom};
 
 /// Отправитель файлов.
@@ -24,6 +24,8 @@ pub struct FileSender {
     plan: ChunkPlan,
     next_chunk_idx: usize,
     pending_retransmit: VecDeque<usize>,
+    pending_retransmit_set: HashSet<usize>,
+    is_resuming: bool,
     bytes_sent: u64,
     cancelled: bool,
 }
@@ -46,6 +48,8 @@ impl FileSender {
             plan,
             next_chunk_idx: 0,
             pending_retransmit: VecDeque::new(),
+            pending_retransmit_set: HashSet::new(),
+            is_resuming: false,
             bytes_sent: 0,
             cancelled: false,
         })
@@ -126,6 +130,7 @@ impl FileSender {
 
         // Определяем индекс следующего чанка
         let chunk_idx = if let Some(retransmit_idx) = self.pending_retransmit.pop_front() {
+            self.pending_retransmit_set.remove(&retransmit_idx);
             retransmit_idx
         } else if self.next_chunk_idx < self.plan.total_chunks() {
             let idx = self.next_chunk_idx;
@@ -175,6 +180,7 @@ impl FileSender {
     /// Продвигает очередь чанков после отправки очередного блока.
     pub fn advance_next_chunk(&mut self) -> Option<usize> {
         if let Some(retransmit_idx) = self.pending_retransmit.pop_front() {
+            self.pending_retransmit_set.remove(&retransmit_idx);
             Some(retransmit_idx)
         } else if self.next_chunk_idx < self.plan.total_chunks() {
             let idx = self.next_chunk_idx;
@@ -217,9 +223,8 @@ impl FileSender {
     }
 
     /// Обрабатывает запрос недостающих блоков `FileRequest` от получателя.
-    /// Обрабатывает запрос недостающих блоков `FileRequest` от получателя.
     /// Ставит в очередь на повторную отправку только указанные блоки.
-    /// При Resume в начале передачи пропускает уже имеющиеся у получателя блоки.
+    /// При Resume пропускает уже имеющиеся у получателя блоки.
     pub fn handle_request(&mut self, req: &FileRequest) -> Result<usize, TransferError> {
         if req.transfer_id != self.transfer_id.as_slice() {
             return Err(TransferError::TransferMismatch {
@@ -231,25 +236,25 @@ impl FileSender {
         let missing = parse_missing_chunks(req, &self.plan)?;
         let count = missing.len();
 
-        if self.next_chunk_idx == 0 {
-            // Если запрос поступил в начале передачи (Resume), мы не должны гнать
-            // весь файл с 0-го чанка. Пропускаем уже имеющиеся у получателя блоки:
-            // переводим next_chunk_idx в конец, а в очередь повторной отправки
-            // помещаем ТОЛЬКО недостающие чанки!
+        if count == 0 {
+            // Пустой missing_offsets означает Positive Completion ACK
+            return Ok(0);
+        }
+
+        // Если пришёл запрос с недостающими блоками до завершения первичного прогона
+        // (в начале передачи или при получении порций Resume), переключаемся в режим
+        // возобновления передачи (is_resuming = true).
+        // Отправитель не должен передавать файл с 0-го чанка последовательно,
+        // а должен отдавать ТОЛЬКО недостающие чанки!
+        if !self.is_resuming && !self.is_initial_pass_done() {
+            self.is_resuming = true;
             self.next_chunk_idx = self.plan.total_chunks();
-            self.pending_retransmit.clear();
-            for idx in &missing {
-                self.pending_retransmit.push_back(*idx);
-            }
-            let already_received_chunks = self.plan.total_chunks().saturating_sub(count);
-            self.bytes_sent = (already_received_chunks as u64)
-                .saturating_mul(self.plan.chunk_size() as u64)
-                .min(self.total_size);
-        } else {
-            for idx in missing {
-                if !self.pending_retransmit.contains(&idx) {
-                    self.pending_retransmit.push_back(idx);
-                }
+        }
+
+        // Быстрое O(1) добавление недостающих блоков в очередь повторной отправки
+        for idx in missing {
+            if self.pending_retransmit_set.insert(idx) {
+                self.pending_retransmit.push_back(idx);
             }
         }
 

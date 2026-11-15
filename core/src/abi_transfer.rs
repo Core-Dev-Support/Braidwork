@@ -415,8 +415,8 @@ pub unsafe extern "C" fn fl_file_receiver_build_request(
 
 /// Формирует порцию запроса недостающих блоков FileRequest (батчами до `max_count` смещений, по умолчанию 1024).
 ///
-/// `start_idx` — начальный индекс в списке недостающих блоков.
-/// `out_next_idx` — возвращает следующий индекс для последующего вызова.
+/// `start_chunk_idx` — абсолютный индекс чанка для начала сканирования.
+/// `out_next_idx` — возвращает следующий индекс чанка для последующего вызова.
 /// `out_is_last` — возвращает 1, если все недостающие блоки уже запрошены (или если недостающих блоков нет).
 ///
 /// # Safety
@@ -424,7 +424,7 @@ pub unsafe extern "C" fn fl_file_receiver_build_request(
 #[no_mangle]
 pub unsafe extern "C" fn fl_file_receiver_build_request_batch(
     handle: u64,
-    start_idx: usize,
+    start_chunk_idx: usize,
     max_count: usize,
     out_data: *mut u8,
     out_len: *mut usize,
@@ -441,14 +441,15 @@ pub unsafe extern "C" fn fl_file_receiver_build_request_batch(
         }
 
         let h = FlHandle(handle);
-        let batch_size = if max_count == 0 {
-            crate::transfer::ack::MAX_REQUEST_OFFSETS_PER_FRAME
-        } else {
-            max_count
-        };
+        let batch_size =
+            if max_count == 0 || max_count > crate::transfer::ack::MAX_REQUEST_OFFSETS_PER_FRAME {
+                crate::transfer::ack::MAX_REQUEST_OFFSETS_PER_FRAME
+            } else {
+                max_count
+            };
 
         let res = receivers().with(h, |receiver| {
-            receiver.build_request_batch(start_idx, batch_size)
+            receiver.build_request_batch(start_chunk_idx, batch_size)
         });
 
         let (req, next_idx, is_last) = match res {

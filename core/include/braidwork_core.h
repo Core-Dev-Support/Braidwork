@@ -365,10 +365,14 @@ fl_status fl_file_receiver_write_block(uint64_t handle, const uint8_t *block_bod
 /* Формирует кадр FileRequest со списком недостающих блоков (порция до 1024 смещений). */
 fl_status fl_file_receiver_build_request(uint64_t handle, uint8_t *out_data, size_t *out_len);
 
-/* Формирует порцию кадра FileRequest со списком недостающих блоков для докачки (батчирование для лимита Noise 64 КиБ). */
-fl_status fl_file_receiver_build_request_batch(uint64_t handle, size_t start_idx,
+/* Формирует порцию кадра FileRequest со списком недостающих блоков для докачки (батчирование для лимита Noise 64 КиБ).
+ * start_chunk_idx: абсолютный индекс первого проверяемого чанка (0..total_chunks).
+ * max_count: максимальное число смещений в порции (ограничено MAX_REQUEST_OFFSETS_PER_FRAME = 1024).
+ * out_next_chunk_idx: следующий абсолютный индекс чанка для очередного вызова.
+ * out_is_last: 1, если все недостающие блоки уже запрошены. */
+fl_status fl_file_receiver_build_request_batch(uint64_t handle, size_t start_chunk_idx,
                                               size_t max_count, uint8_t *out_data,
-                                              size_t *out_len, size_t *out_next_idx,
+                                              size_t *out_len, size_t *out_next_chunk_idx,
                                               uint32_t *out_is_last);
 
 /* Возвращает количество уже принятых блоков для получателя (полезно для обнаружения и ведения Resume). */
