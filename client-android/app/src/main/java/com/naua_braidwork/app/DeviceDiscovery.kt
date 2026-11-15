@@ -890,14 +890,35 @@ class DeviceDiscovery(
             val now = System.currentTimeMillis()
             val all = transferPrefs.all
             val toRemove = mutableListOf<String>()
+            val completedKeys = mutableSetOf<String>()
+
+            // 1. Сначала собираем все завершённые передачи
+            for ((key, value) in all) {
+                if (key.startsWith("done_") && value is String) {
+                    val rawKey = key.removePrefix("done_")
+                    val timestamp = value.toLongOrNull() ?: 0L
+                    if (now - timestamp > 7L * 24 * 3600 * 1000) {
+                        toRemove.add(key)
+                    } else {
+                        completedKeys.add(rawKey)
+                    }
+                }
+            }
+
+            // 2. Загружаем только незавершённые передачи, отсеивая те, что уже завершились
             for ((key, value) in all) {
                 if (key.startsWith("inc_") && value is String) {
                     val rawKey = key.removePrefix("inc_")
+                    // Если передача уже была отмечена как завершённая — удаляем остаточный inc_ ключ и не восстанавливаем ID
+                    if (completedKeys.contains(rawKey)) {
+                        toRemove.add(key)
+                        continue
+                    }
                     val parts = value.split(":")
                     if (parts.size == 2) {
                         val timestamp = parts[0].toLongOrNull() ?: 0L
                         val hexId = parts[1]
-                        if (now - timestamp > 7L * 24 * 3600 * 1000) {
+                        if (now - timestamp > 7L * 24 * 3600 * 1000 || hexId == "DONE") {
                             toRemove.add(key)
                         } else if (hexId.length == 32) {
                             val bytes = hexId.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
@@ -917,45 +938,76 @@ class DeviceDiscovery(
     }
 
     private fun persistIncompleteTransfer(transferKey: String, transferId: ByteArray): Boolean {
-        return try {
-            val hex = transferId.joinToString("") { "%02x".format(it) }
-            val value = "${System.currentTimeMillis()}:$hex"
-            var committed = transferPrefs.edit().putString("inc_$transferKey", value).commit()
-            if (!committed) {
-                // Повторная попытка фиксации на диске при неудаче первого commit()
-                committed = transferPrefs.edit().putString("inc_$transferKey", value).commit()
+        val hex = transferId.joinToString("") { "%02x".format(it) }
+        val value = "${System.currentTimeMillis()}:$hex"
+        var committed = false
+        for (attempt in 1..2) {
+            try {
+                committed = transferPrefs.edit()
+                    .remove("done_$transferKey")
+                    .putString("inc_$transferKey", value)
+                    .commit()
+                if (committed) break
+            } catch (e: Exception) {
+                if (attempt == 2) {
+                    записать("ошибка сохранения transfer_id в SharedPreferences: ${e.message}")
+                }
             }
-            if (committed) {
-                incompleteTransfers[transferKey] = transferId
-                true
-            } else {
-                incompleteTransfers.remove(transferKey)
-                записать("ОШИБКА: окончательный отказ фиксации transfer_id на диске в SharedPreferences (commit вернул false)")
-                false
-            }
-        } catch (e: Exception) {
+        }
+        return if (committed) {
+            incompleteTransfers[transferKey] = transferId
+            true
+        } else {
             incompleteTransfers.remove(transferKey)
-            записать("ошибка сохранения transfer_id в SharedPreferences: ${e.message}")
+            записать("ОШИБКА: окончательный отказ фиксации transfer_id на диске в SharedPreferences (commit вернул false)")
             false
         }
     }
 
     private fun removeIncompleteTransfer(transferKey: String): Boolean {
         incompleteTransfers.remove(transferKey)
-        return try {
-            var committed = transferPrefs.edit().remove("inc_$transferKey").commit()
-            if (!committed) {
-                // Повторная попытка удаления с диска при неудаче первого commit()
+        var committed = false
+        for (attempt in 1..2) {
+            try {
                 committed = transferPrefs.edit().remove("inc_$transferKey").commit()
+                if (committed) break
+            } catch (e: Exception) {
+                if (attempt == 2) {
+                    записать("ошибка удаления transfer_id из SharedPreferences: ${e.message}")
+                }
             }
-            if (!committed) {
-                записать("ПРЕДУПРЕЖДЕНИЕ: окончательный сбой удаления transfer_id «$transferKey» из SharedPreferences (commit вернул false)")
-            }
-            committed
-        } catch (e: Exception) {
-            записать("ошибка удаления transfer_id из SharedPreferences: ${e.message}")
-            false
         }
+        if (!committed) {
+            // Если remove не прошёл, пробуем затереть как DONE
+            try {
+                transferPrefs.edit().putString("inc_$transferKey", "DONE").commit()
+            } catch (_: Exception) {}
+            записать("ПРЕДУПРЕЖДЕНИЕ: окончательный сбой удаления transfer_id «$transferKey» из SharedPreferences (commit вернул false)")
+        }
+        return committed
+    }
+
+    private fun markTransferCompleted(transferKey: String): Boolean {
+        incompleteTransfers.remove(transferKey)
+        var committed = false
+        val now = System.currentTimeMillis()
+        for (attempt in 1..2) {
+            try {
+                committed = transferPrefs.edit()
+                    .remove("inc_$transferKey")
+                    .putString("done_$transferKey", "$now")
+                    .commit()
+                if (committed) break
+            } catch (e: Exception) {
+                if (attempt == 2) {
+                    записать("ошибка отметки transfer_id как завершённого: ${e.message}")
+                }
+            }
+        }
+        if (!committed) {
+            записать("ПРЕДУПРЕЖДЕНИЕ: сбой фиксации завершения передачи «$transferKey» в SharedPreferences")
+        }
+        return committed
     }
 
     private fun loadStats() {
@@ -1729,9 +1781,7 @@ class DeviceDiscovery(
 
             success = true
             currentTransferKey?.let { key ->
-                if (!removeIncompleteTransfer(key)) {
-                    записать("предупреждение: не удалось удалить ключ «$key» из хранилища после завершения")
-                }
+                markTransferCompleted(key)
             }
             bytesTransferredToday.addAndGet(transfer.totalSize)
             filesTransferredCount.incrementAndGet()
