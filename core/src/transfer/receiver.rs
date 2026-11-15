@@ -22,6 +22,8 @@ use std::path::PathBuf;
 const STATE_SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 /// Количество блоков между периодическими сбросами состояния на диск.
 const STATE_SAVE_CHUNK_BATCH: usize = 64;
+/// Минимальное количество накопленных блоков перед сбросом по тайм-ауту (защита на медленных сетях).
+const STATE_SAVE_MIN_CHUNKS_FOR_TIMEOUT: usize = 4;
 
 /// Результат записи одного блока.
 #[derive(Debug, PartialEq, Eq)]
@@ -268,9 +270,13 @@ impl FileReceiver {
         self.chunk_hashes.insert(chunk.index, block_hash_arr);
         self.unsaved_chunks += 1;
 
-        // Периодическое сохранение состояния (контрольная точка каждые 64 чанка или 500 мс)
+        // Периодическое сохранение состояния (контрольная точка):
+        // 1. Каждые 64 чанка (2 МБ) на высокой скорости.
+        // 2. Или по тайм-ауту 500 мс, но только при наличии хотя бы 4 накопленных блоков (128 КБ),
+        //    чтобы на медленных сетях исключить перезапись файла состояния на каждый отдельный чанк.
         if self.unsaved_chunks >= STATE_SAVE_CHUNK_BATCH
-            || self.last_save_time.elapsed() >= STATE_SAVE_INTERVAL
+            || (self.unsaved_chunks >= STATE_SAVE_MIN_CHUNKS_FOR_TIMEOUT
+                && self.last_save_time.elapsed() >= STATE_SAVE_INTERVAL)
         {
             self.force_save_state()?;
         }

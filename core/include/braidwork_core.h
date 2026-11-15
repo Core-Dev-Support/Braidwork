@@ -369,11 +369,12 @@ fl_status fl_file_receiver_build_request(uint64_t handle, uint8_t *out_data, siz
  * start_chunk_idx: абсолютный индекс первого проверяемого чанка (0..total_chunks).
  * max_count: максимальное число смещений в порции (ограничено MAX_REQUEST_OFFSETS_PER_FRAME = 1024).
  * out_next_chunk_idx: следующий абсолютный индекс чанка для очередного вызова.
- * out_is_last: 1, если все недостающие блоки уже запрошены. */
+ * out_is_last: 1, если все недостающие блоки уже запрошены.
+ * out_missing_count: количество смещений недостающих блоков, упакованных в кадр. */
 fl_status fl_file_receiver_build_request_batch(uint64_t handle, size_t start_chunk_idx,
                                               size_t max_count, uint8_t *out_data,
                                               size_t *out_len, size_t *out_next_chunk_idx,
-                                              uint32_t *out_is_last);
+                                              uint32_t *out_is_last, size_t *out_missing_count);
 
 /* Возвращает количество уже принятых блоков для получателя (полезно для обнаружения и ведения Resume). */
 fl_status fl_file_receiver_received_chunks(uint64_t handle, size_t *out_count);

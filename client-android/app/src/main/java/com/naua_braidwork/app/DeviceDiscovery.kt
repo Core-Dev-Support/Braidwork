@@ -595,19 +595,18 @@ class DeviceDiscovery(
                         try {
                             var startChunkIdx = 0L
                             var isLast = false
+                            var requestedBlocksTotal = 0
                             while (!isLast) {
                                 val batch = BraidworkCore.fileReceiverBuildRequestBatch(rHandle, startChunkIdx, 1024)
-                                if (batch.frame.isNotEmpty()) {
-                                    val parsed = BraidworkCore.readFileRequest(batch.frame)
-                                    if (parsed != null && parsed.missingOffsets.isNotEmpty()) {
-                                        BraidworkCore.transportSend(h, conn, batch.frame)
-                                    }
+                                if (batch.frame.isNotEmpty() && batch.missingCount > 0) {
+                                    BraidworkCore.transportSend(h, conn, batch.frame)
+                                    requestedBlocksTotal += batch.missingCount
                                 }
                                 if (batch.nextChunkIdx <= startChunkIdx || batch.isLast) break
                                 startChunkIdx = batch.nextChunkIdx
                                 isLast = batch.isLast
                             }
-                            записать("от $кто: отправлен FileRequest на докачку оставшихся блоков «$safeName»")
+                            записать("от $кто: отправлен FileRequest на докачку оставшихся блоков «$safeName» (запрошено блоков: $requestedBlocksTotal)")
                         } catch (e: Exception) {
                             записать("ошибка отправки FileRequest для докачки: ${e.message}")
                         }
@@ -922,14 +921,14 @@ class DeviceDiscovery(
         try {
             val hex = transferId.joinToString("") { "%02x".format(it) }
             val value = "${System.currentTimeMillis()}:$hex"
-            transferPrefs.edit().putString("inc_$transferKey", value).apply()
+            transferPrefs.edit().putString("inc_$transferKey", value).commit()
         } catch (_: Exception) {}
     }
 
     private fun removeIncompleteTransfer(transferKey: String) {
         incompleteTransfers.remove(transferKey)
         try {
-            transferPrefs.edit().remove("inc_$transferKey").apply()
+            transferPrefs.edit().remove("inc_$transferKey").commit()
         } catch (_: Exception) {}
     }
 

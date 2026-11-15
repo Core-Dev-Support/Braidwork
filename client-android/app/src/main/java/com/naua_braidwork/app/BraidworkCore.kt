@@ -1000,6 +1000,7 @@ object BraidworkCore {
 
     data class FileRequestBatch(
         val frame: ByteArray,
+        val missingCount: Int,
         val nextChunkIdx: Long,
         val isLast: Boolean,
     )
@@ -1029,6 +1030,7 @@ object BraidworkCore {
         val outLen = IntArray(1) { out.size }
         val outNextChunkIdx = LongArray(1)
         val outIsLast = IntArray(1)
+        val outMissingCount = IntArray(1)
         val status = nativeFileReceiverBuildRequestBatch(
             handle,
             startChunkIdx,
@@ -1037,12 +1039,14 @@ object BraidworkCore {
             outLen,
             outNextChunkIdx,
             outIsLast,
+            outMissingCount,
         )
         if (status != STATUS_OK) {
             throw BraidworkException(status, "ошибка формирования FileRequest batch в FileReceiver")
         }
         return FileRequestBatch(
             frame = out.copyOf(outLen[0]),
+            missingCount = outMissingCount[0],
             nextChunkIdx = outNextChunkIdx[0],
             isLast = outIsLast[0] == 1,
         )
@@ -1467,6 +1471,7 @@ object BraidworkCore {
         outLen: IntArray,
         outNextChunkIdx: LongArray,
         outIsLast: IntArray,
+        outMissingCount: IntArray,
     ): Int
 
     private external fun nativeFileReceiverReceivedChunks(handle: Long): Long

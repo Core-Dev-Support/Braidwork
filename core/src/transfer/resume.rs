@@ -19,6 +19,48 @@ use std::path::Path;
 const RESUME_MAGIC: &[u8; 8] = b"BWRESUME";
 const RESUME_VERSION: u32 = 2;
 
+#[cfg(windows)]
+mod win_atomic {
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::Path;
+
+    extern "system" {
+        fn ReplaceFileW(
+            lpReplacedFileName: *const u16,
+            lpReplacementFileName: *const u16,
+            lpBackupFileName: *const u16,
+            dwReplaceFlags: u32,
+            lpExclude: *mut std::ffi::c_void,
+            lpReserved: *mut std::ffi::c_void,
+        ) -> i32;
+    }
+
+    pub fn replace_file_atomic(tmp_path: &Path, target_path: &Path) -> std::io::Result<()> {
+        let mut target_w: Vec<u16> = target_path.as_os_str().encode_wide().collect();
+        target_w.push(0);
+        let mut tmp_w: Vec<u16> = tmp_path.as_os_str().encode_wide().collect();
+        tmp_w.push(0);
+
+        if target_path.exists() {
+            let res = unsafe {
+                ReplaceFileW(
+                    target_w.as_ptr(),
+                    tmp_w.as_ptr(),
+                    std::ptr::null(),
+                    0,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
+            if res != 0 {
+                return Ok(());
+            }
+        }
+
+        std::fs::rename(tmp_path, target_path)
+    }
+}
+
 /// Метаданные и сохранённое состояние незавершённой передачи.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResumeState {
@@ -275,18 +317,9 @@ impl ResumeState {
         }
         #[cfg(windows)]
         {
-            if let Err(e) = std::fs::rename(&tmp_path, path) {
-                // Если rename на Windows вернул ошибку и целевой файл существует, пробуем удалить его и повторить rename
-                if path.exists() {
-                    let _ = std::fs::remove_file(path);
-                    if let Err(retry_e) = std::fs::rename(&tmp_path, path) {
-                        let _ = std::fs::remove_file(&tmp_path);
-                        return Err(TransferError::Io(retry_e));
-                    }
-                } else {
-                    let _ = std::fs::remove_file(&tmp_path);
-                    return Err(TransferError::Io(e));
-                }
+            if let Err(e) = win_atomic::replace_file_atomic(&tmp_path, path) {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err(TransferError::Io(e));
             }
         }
 

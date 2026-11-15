@@ -418,6 +418,7 @@ pub unsafe extern "C" fn fl_file_receiver_build_request(
 /// `start_chunk_idx` — абсолютный индекс чанка для начала сканирования.
 /// `out_next_idx` — возвращает следующий индекс чанка для последующего вызова.
 /// `out_is_last` — возвращает 1, если все недостающие блоки уже запрошены (или если недостающих блоков нет).
+/// `out_missing_count` — возвращает число недостающих смещений в этой порции.
 ///
 /// # Safety
 /// Все указатели на буферы и переменные должны быть валидными.
@@ -430,12 +431,14 @@ pub unsafe extern "C" fn fl_file_receiver_build_request_batch(
     out_len: *mut usize,
     out_next_idx: *mut usize,
     out_is_last: *mut u32,
+    out_missing_count: *mut usize,
 ) -> FlStatus {
     guard(|| {
         if out_data.is_null()
             || out_len.is_null()
             || out_next_idx.is_null()
             || out_is_last.is_null()
+            || out_missing_count.is_null()
         {
             return FL_ERR_INVALID_ARG;
         }
@@ -467,6 +470,7 @@ pub unsafe extern "C" fn fl_file_receiver_build_request_batch(
         if copy_status == FL_OK {
             *out_next_idx = next_idx;
             *out_is_last = if is_last { 1 } else { 0 };
+            *out_missing_count = req.missing_offsets.len();
         }
         copy_status
     })
@@ -608,6 +612,32 @@ mod tests {
             )
         };
         assert_eq!(r_code, FL_OK);
+
+        // Проверяем формирование FileRequest batch через C ABI
+        let mut req_buf = vec![0u8; 4096];
+        let mut req_buf_len = req_buf.len();
+        let mut next_chunk_idx = 0usize;
+        let mut is_last = 0u32;
+        let mut missing_count = 0usize;
+
+        assert_eq!(
+            unsafe {
+                fl_file_receiver_build_request_batch(
+                    receiver_h,
+                    0,
+                    1024,
+                    req_buf.as_mut_ptr(),
+                    &mut req_buf_len,
+                    &mut next_chunk_idx,
+                    &mut is_last,
+                    &mut missing_count,
+                )
+            },
+            FL_OK
+        );
+        assert_eq!(missing_count, 2);
+        assert_eq!(is_last, 1);
+        assert_eq!(next_chunk_idx, 2);
 
         // Передаём блоки
         loop {

@@ -2015,8 +2015,14 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRece
     out_len: JIntArray<'local>,
     out_next_idx: JLongArray<'local>,
     out_is_last: JIntArray<'local>,
+    out_missing_count: JIntArray<'local>,
 ) -> jint {
-    if out_frame.is_null() || out_len.is_null() || out_next_idx.is_null() || out_is_last.is_null() {
+    if out_frame.is_null()
+        || out_len.is_null()
+        || out_next_idx.is_null()
+        || out_is_last.is_null()
+        || out_missing_count.is_null()
+    {
         return crate::FL_ERR_INVALID_ARG;
     }
     let cap = match env.get_array_length(&out_frame) {
@@ -2027,6 +2033,7 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRece
     let mut produced = cap;
     let mut next_idx = 0usize;
     let mut is_last = 0u32;
+    let mut missing_count = 0usize;
     let status = unsafe {
         crate::fl_file_receiver_build_request_batch(
             handle as u64,
@@ -2036,11 +2043,13 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeFileRece
             &mut produced,
             &mut next_idx,
             &mut is_last,
+            &mut missing_count,
         )
     };
     let _ = env.set_int_array_region(&out_len, 0, &[produced as jint]);
     let _ = env.set_long_array_region(&out_next_idx, 0, &[next_idx as jlong]);
     let _ = env.set_int_array_region(&out_is_last, 0, &[is_last as jint]);
+    let _ = env.set_int_array_region(&out_missing_count, 0, &[missing_count as jint]);
     if status != FL_OK {
         return status;
     }
