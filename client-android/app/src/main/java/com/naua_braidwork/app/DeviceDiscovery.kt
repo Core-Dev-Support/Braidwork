@@ -1139,7 +1139,7 @@ class DeviceDiscovery(
         val start = System.currentTimeMillis()
         while (System.currentTimeMillis() - start < timeoutMs) {
             val conn = findConnForDevice(deviceId)
-            if (conn != 0L && BraidworkCore.transportAlive(хэндл.get(), conn)) {
+            if (conn != 0L && BraidworkCore.transportAlive(conn)) {
                 return conn
             }
             Thread.sleep(500)
