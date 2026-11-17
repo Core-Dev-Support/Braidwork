@@ -846,7 +846,8 @@ class DeviceDiscovery(
         var tempFile: File? = null,
         var finalFile: File? = null,
         var stateFile: File? = null,
-        var conn: Long = 0L,
+        @Volatile var conn: Long = 0L,
+        private val connLock: Any = Any(),
         var raf: RandomAccessFile? = null,
         var senderHandle: Long = 0L,
         var receiverHandle: Long = 0L,
@@ -1651,7 +1652,9 @@ class DeviceDiscovery(
                                 var attempts = 0
                                 while (!sent && attempts < 5) {
                                     try {
-                                        BraidworkCore.transportSend(h, conn, blockFrame)
+                                        synchronized(transfer.connLock) {
+                                            BraidworkCore.transportSend(h, transfer.conn, blockFrame)
+                                        }
                                         sent = true
                                     } catch (e: BraidworkException) {
                                         if (e.status == BraidworkCore.STATUS_TRANSPORT && attempts < 4) {
@@ -1659,7 +1662,9 @@ class DeviceDiscovery(
                                             записать("соединение потеряно (код 6), ждём восстановления...")
                                             val newConn = waitForReconnection(transfer.peerId)
                                             if (newConn != 0L) {
-                                                transfer.conn = newConn
+                                                synchronized(transfer.connLock) {
+                                                    transfer.conn = newConn
+                                                }
                                                 записать("соединение восстановлено, продолжаем передачу")
                                             } else {
                                                 Thread.sleep(1000)
