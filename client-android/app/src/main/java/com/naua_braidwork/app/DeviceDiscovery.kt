@@ -1135,16 +1135,43 @@ class DeviceDiscovery(
         return соединения.entries.find { it.value == deviceId }?.key ?: 0L
     }
 
-    private fun waitForReconnection(deviceId: String, timeoutMs: Long = 10000): Long {
-        val start = System.currentTimeMillis()
-        while (System.currentTimeMillis() - start < timeoutMs) {
-            val conn = findConnForDevice(deviceId)
-            if (conn != 0L && BraidworkCore.transportAlive(conn)) {
-                return conn
+    /**
+     * Безопасная отправка кадра с автоматическим переподключением.
+     */
+    private fun sendFrameWithRetry(transfer: ActiveTransfer, frame: ByteArray): Boolean {
+        var attempts = 0
+        while (attempts < 5) {
+            val h = хэндл.get()
+            val conn = synchronized(transfer.connLock) { transfer.conn }
+            if (h == 0L || conn == 0L) {
+                 // Ожидаем появления соединения
+                 if (waitForReconnection(transfer.peerId) == 0L) {
+                     Thread.sleep(1000)
+                     attempts++
+                     continue
+                 }
+                 continue
             }
-            Thread.sleep(500)
+            try {
+                BraidworkCore.transportSend(h, conn, frame)
+                return true
+            } catch (e: BraidworkException) {
+                if (e.status == BraidworkCore.STATUS_TRANSPORT) {
+                    attempts++
+                    записать("ошибка транспорта (код 6), попытка переподключения $attempts...")
+                    val newConn = waitForReconnection(transfer.peerId)
+                    if (newConn != 0L) {
+                        synchronized(transfer.connLock) { transfer.conn = newConn }
+                    } else {
+                        Thread.sleep(1000)
+                    }
+                } else {
+                    // Фатальная ошибка — не переповторяем
+                    throw e
+                }
+            }
         }
-        return 0L
+        return false
     }
 
 
@@ -1652,26 +1679,15 @@ class DeviceDiscovery(
                                 var attempts = 0
                                 while (!sent && attempts < 5) {
                                     try {
-                                        synchronized(transfer.connLock) {
-                                            BraidworkCore.transportSend(h, transfer.conn, blockFrame)
-                                        }
-                                        sent = true
-                                    } catch (e: BraidworkException) {
-                                        if (e.status == BraidworkCore.STATUS_TRANSPORT && attempts < 4) {
-                                            attempts++
-                                            записать("соединение потеряно (код 6), ждём восстановления...")
-                                            val newConn = waitForReconnection(transfer.peerId)
-                                            if (newConn != 0L) {
-                                                synchronized(transfer.connLock) {
-                                                    transfer.conn = newConn
-                                                }
-                                                записать("соединение восстановлено, продолжаем передачу")
-                                            } else {
-                                                Thread.sleep(1000)
-                                            }
+                                        if (sendFrameWithRetry(transfer, blockFrame)) {
+                                            sent = true
                                         } else {
-                                            throw e
+                                            записать("не удалось отправить блок после 5 попыток")
+                                            throw IllegalStateException("сбой доставки блока")
                                         }
+                                    } catch (e: Exception) {
+                                        записать("ошибка отправки блока: ${e.message}")
+                                        throw e
                                     }
                                 }
 
