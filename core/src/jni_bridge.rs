@@ -1052,6 +1052,70 @@ pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTranspor
     }
 }
 
+/// Закрывает конкретное соединение `conn` внутри транспорта `handle`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTransportConnClose<
+    'local,
+>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    conn: jlong,
+) -> jint {
+    crate::fl_transport_conn_close(FlHandle(handle as u64), conn as u64)
+}
+
+/// Возвращает состояние конкретного соединения `conn` внутри транспорта `handle`:
+/// `FL_CONN_UNKNOWN` (0), `FL_CONN_HANDSHAKING` (1), `FL_CONN_READY` (2),
+/// `FL_CONN_CLOSED` (3) или `FL_CONN_NO_TRANSPORT` (4).
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTransportConnState<
+    'local,
+>(
+    _env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    conn: jlong,
+) -> jint {
+    crate::fl_transport_conn_state(FlHandle(handle as u64), conn as u64) as jint
+}
+
+/// Копирует 32-байтный статический ключ удалённой стороны (Noise XX) в `out_key`.
+#[no_mangle]
+pub extern "system" fn Java_com_naua_1braidwork_app_BraidworkCore_nativeTransportConnRemoteStatic<
+    'local,
+>(
+    env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    conn: jlong,
+    out_key: JByteArray<'local>,
+) -> jint {
+    let cap = match env.get_array_length(&out_key) {
+        Ok(len) if len >= 32 => len as usize,
+        _ => return crate::FL_ERR_INVALID_ARG,
+    };
+    let mut buf = [0u8; 32];
+    let status = unsafe {
+        crate::fl_transport_conn_remote_static(
+            FlHandle(handle as u64),
+            conn as u64,
+            buf.as_mut_ptr(),
+            cap.min(buf.len()),
+        )
+    };
+    if status != FL_OK {
+        return status;
+    }
+    if env
+        .set_byte_array_region(&out_key, 0, &to_signed(&buf))
+        .is_err()
+    {
+        return crate::FL_ERR_INTERNAL;
+    }
+    FL_OK
+}
+
 /// Размер структуры события — клиент сверяет его со своим, чтобы замететь
 /// расхождение версий заголовка.
 ///

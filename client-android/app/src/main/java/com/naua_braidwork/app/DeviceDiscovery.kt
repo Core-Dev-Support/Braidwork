@@ -29,6 +29,9 @@ import java.security.SecureRandom
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
 
 /**
  * Владелец канала локальной сети.
@@ -445,20 +448,7 @@ class DeviceDiscovery(
                     записать("от $кто: предложение файла не разобрано, ${кадр.body.size} байт")
                     return
                 }
-                val tidHex = offer.transferId.joinToString("") { "%02x".format(it) }
-                cleanExpiredCompletedTransfers()
-                val completedAt = recentlyCompletedTransfers[tidHex]
-                if (completedAt != null && (System.currentTimeMillis() - completedAt) < 60_000L) {
-                    val ackFrame = BraidworkCore.fileRequestFrame(offer.transferId, LongArray(0))
-                    val h = хэндл.get()
-                    if (h != 0L && кадр.conn != 0L) {
-                        try {
-                            BraidworkCore.transportSend(h, кадр.conn, ackFrame)
-                        } catch (_: Exception) {}
-                    }
-                    return
-                }
-
+                val tidHex = offer.transferId.toHex()
                 val safeName = sanitizeFileName(offer.fileName)
                 val sizeStr = formatBytes(offer.totalSize)
 
@@ -468,7 +458,7 @@ class DeviceDiscovery(
                 }
 
                 val trust = TrustStore.get(context)
-                val dev = прежние[кто]
+                val dev = прежние[кто] ?: findDeviceForPeer(кто)
                 val fp = dev?.fingerprint.orEmpty()
                 val trustState = trust.состояние(кто, fp)
                 if (trustState == TrustStore.Доверие.ОТПЕЧАТОК_ИЗМЕНИЛСЯ) {
@@ -479,17 +469,53 @@ class DeviceDiscovery(
                     return
                 }
 
+                // 1. Уже успешно принятая и проверенная BLAKE3 передача: идемпотентно отвечаем Positive ACK
+                if (isIncomingTransferCompleted(tidHex, offer.totalSize, offer.totalHash)) {
+                    dispatchPositiveAck(offer.transferId, tidHex, кто, кадр.conn)
+                    return
+                }
+
+                // 2. Повторный FileOffer (статус-запрос или resume после переподключения) для уже открытого приёма
+                val existing = activeTransfers[tidHex]
+                if (existing != null && existing.isIncoming && !existing.cancelled && !existing.done && existing.receiverHandle != 0L) {
+                    val h = хэндл.get()
+                    synchronized(existing.connLock) {
+                        if (кадр.conn != 0L) existing.conn = кадр.conn
+                    }
+                    if (existing.expectedStaticKey == null && h != 0L && кадр.conn != 0L) {
+                        existing.expectedStaticKey = BraidworkCore.transportConnRemoteStatic(h, кадр.conn)
+                    }
+                    val receivedChunks = try {
+                        BraidworkCore.fileReceiverReceivedChunks(existing.receiverHandle)
+                    } catch (_: Exception) {
+                        0L
+                    }
+                    if (receivedChunks >= expectedTotalChunks(offer.totalSize)) {
+                        try {
+                            finalizeAndAckIncomingTransfer(existing, offer.transferId, кадр.conn)
+                        } catch (e: Exception) {
+                            failIncomingTransfer(existing, tidHex, e)
+                        }
+                    } else {
+                        sendMissingChunksRequests(existing, existing.receiverHandle, кадр.conn)
+                    }
+                    return
+                }
+                if (existing != null && existing.receiverHandle != 0L) {
+                    try {
+                        BraidworkCore.fileReceiverFree(existing.receiverHandle)
+                    } catch (_: Exception) {}
+                    existing.receiverHandle = 0L
+                }
+
                 val peerDisplayName = dev?.name ?: кто
                 if (trustState == TrustStore.Доверие.НЕ_СВЕРЕНО) {
                     записать("от $peerDisplayName: входящий файл «$safeName» ($sizeStr) [не сопряжено]")
-                    mainHandler.post {
-                        Toast.makeText(context, "Входящий файл: $safeName ($sizeStr)", Toast.LENGTH_SHORT).show()
-                    }
                 } else {
                     записать("от $peerDisplayName: входящий файл «$safeName» ($sizeStr)")
-                    mainHandler.post {
-                        Toast.makeText(context, "Входящий файл: $safeName ($sizeStr)", Toast.LENGTH_SHORT).show()
-                    }
+                }
+                mainHandler.post {
+                    Toast.makeText(context, "Входящий файл: $safeName ($sizeStr)", Toast.LENGTH_SHORT).show()
                 }
 
                 val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Braidwork")
@@ -498,9 +524,8 @@ class DeviceDiscovery(
                 val stateFile = File(dir, ".bw_${tidHex}.state")
                 val finalFile = findUniqueFile(dir, safeName)
 
-                var rHandle = 0L
-                try {
-                    rHandle = BraidworkCore.createFileReceiver(
+                val rHandle = try {
+                    BraidworkCore.createFileReceiver(
                         offerBody = кадр.body,
                         tempPath = tempFile.absolutePath,
                         destPath = finalFile.absolutePath,
@@ -514,8 +539,9 @@ class DeviceDiscovery(
                 val receivedChunks = try {
                     BraidworkCore.fileReceiverReceivedChunks(rHandle)
                 } catch (_: Exception) { 0L }
-
+                val totalChunks = expectedTotalChunks(offer.totalSize)
                 val initialBytes = (receivedChunks * BraidworkCore.DEFAULT_CHUNK_SIZE.toLong()).coerceAtMost(offer.totalSize)
+                val h = хэндл.get()
 
                 val transfer = ActiveTransfer(
                     transferIdHex = tidHex,
@@ -530,87 +556,23 @@ class DeviceDiscovery(
                     finalFile = finalFile,
                     stateFile = stateFile,
                     conn = кадр.conn,
+                    expectedStaticKey = if (h != 0L && кадр.conn != 0L) BraidworkCore.transportConnRemoteStatic(h, кадр.conn) else null,
                     receiverHandle = rHandle,
                 )
                 activeTransfers[tidHex] = transfer
 
-                if (initialBytes >= offer.totalSize) {
+                if (receivedChunks >= totalChunks) {
                     записать("возобновление приёма «$safeName»: все блоки уже на диске, проверяем BLAKE3 и финализируем...")
                     try {
-                        BraidworkCore.fileReceiverFinish(rHandle)
-                        BraidworkCore.fileReceiverFree(rHandle)
-                        transfer.receiverHandle = 0L
-
-                        cleanExpiredCompletedTransfers()
-                        recentlyCompletedTransfers[tidHex] = System.currentTimeMillis()
-
-                        val ackFrame = BraidworkCore.fileRequestFrame(offer.transferId, LongArray(0))
-                        val h = хэндл.get()
-                        val conn = кадр.conn
-                        if (h != 0L && conn != 0L) {
-                            for (attempt in 1..3) {
-                                try {
-                                    BraidworkCore.transportSend(h, conn, ackFrame)
-                                } catch (e: Exception) {
-                                    записать("ошибка отправки Positive ACK: ${e.message}")
-                                }
-                                if (attempt < 3) Thread.sleep(20)
-                            }
-                        }
-
-                        val targetFile = transfer.finalFile ?: File(
-                            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                            "Braidwork/${transfer.fileName}"
-                        )
-                        android.media.MediaScannerConnection.scanFile(context, arrayOf(targetFile.absolutePath), null, null)
-
-                        transfer.done = true
-                        activeTransfers.remove(tidHex)
-                        bytesTransferredToday.addAndGet(transfer.totalSize)
-                        filesTransferredCount.incrementAndGet()
-                        saveStats()
-                        completedTransfers.add(0, CompletedTransfer(
-                            fileName = transfer.fileName,
-                            peerName = peerDisplayName,
-                            totalSize = transfer.totalSize,
-                            isIncoming = true,
-                            success = true,
-                        ))
-                        if (completedTransfers.size > 20) completedTransfers.removeAt(completedTransfers.size - 1)
-
-                        записать("файл «${transfer.fileName}» полностью восстановлен и сохранён (BLAKE3 проверен)")
-                        mainHandler.post {
-                            Toast.makeText(context, "Файл получен: ${transfer.fileName}", Toast.LENGTH_LONG).show()
-                        }
+                        finalizeAndAckIncomingTransfer(transfer, offer.transferId, кадр.conn)
                         return
                     } catch (e: Exception) {
-                        записать("ошибка финализации восстановленного файла «$safeName»: ${e.message}")
+                        failIncomingTransfer(transfer, tidHex, e)
+                        return
                     }
                 } else if (receivedChunks > 0L) {
                     записать("возобновление приёма «$safeName»: уже получено и проверено $receivedChunks блоков (${formatBytes(initialBytes)} из $sizeStr)")
-                    // Отправляем FileRequest со списком недостающих блоков батчами (Noise-safe)
-                    val h = хэндл.get()
-                    val conn = кадр.conn
-                    if (h != 0L && conn != 0L) {
-                        try {
-                            var startChunkIdx = 0L
-                            var isLast = false
-                            var requestedBlocksTotal = 0
-                            while (!isLast) {
-                                val batch = BraidworkCore.fileReceiverBuildRequestBatch(rHandle, startChunkIdx, 1024)
-                                if (batch.frame.isNotEmpty() && batch.missingCount > 0) {
-                                    BraidworkCore.transportSend(h, conn, batch.frame)
-                                    requestedBlocksTotal += batch.missingCount
-                                }
-                                if (batch.nextChunkIdx <= startChunkIdx || batch.isLast) break
-                                startChunkIdx = batch.nextChunkIdx
-                                isLast = batch.isLast
-                            }
-                            записать("от $кто: отправлен FileRequest на докачку оставшихся блоков «$safeName» (запрошено блоков: $requestedBlocksTotal)")
-                        } catch (e: Exception) {
-                            записать("ошибка отправки FileRequest для докачки: ${e.message}")
-                        }
-                    }
+                    sendMissingChunksRequests(transfer, rHandle, кадр.conn)
                 }
             }
 
@@ -620,25 +582,16 @@ class DeviceDiscovery(
                     записать("от $кто: повреждённый или неразобранный блок файла (${кадр.body.size} байт)")
                     return
                 }
-                val tidHex = block.transferId.joinToString("") { "%02x".format(it) }
+                val tidHex = block.transferId.toHex()
 
-                cleanExpiredCompletedTransfers()
-                val completedAt = recentlyCompletedTransfers[tidHex]
-                if (completedAt != null && (System.currentTimeMillis() - completedAt) < 60_000L) {
-                    // Передача уже завершена, но отправитель мог не получить первый ACK из-за потерь в сети.
-                    // Немедленно высылаем повторный Positive Completion ACK!
-                    val ackFrame = BraidworkCore.fileRequestFrame(block.transferId, LongArray(0))
-                    val h = хэндл.get()
-                    if (h != 0L && кадр.conn != 0L) {
-                        try {
-                            BraidworkCore.transportSend(h, кадр.conn, ackFrame)
-                        } catch (_: Exception) {}
-                    }
+                // 1. Завершённая ранее передача (например, повтор последнего блока): идемпотентный ACK
+                if (isIncomingTransferCompleted(tidHex)) {
+                    dispatchPositiveAck(block.transferId, tidHex, кто, кадр.conn)
                     return
                 }
 
                 val transfer = activeTransfers[tidHex]
-                if (transfer == null || transfer.cancelled) {
+                if (transfer == null || transfer.cancelled || !transfer.isIncoming) {
                     return
                 }
 
@@ -647,12 +600,16 @@ class DeviceDiscovery(
                     return
                 }
 
+                // Всегда привязываем входящую передачу к актуальному conn, по которому пришёл живой кадр!
+                synchronized(transfer.connLock) {
+                    if (кадр.conn != 0L) transfer.conn = кадр.conn
+                }
                 transfer.lastBlockTime = System.currentTimeMillis()
 
                 try {
                     val outcome = BraidworkCore.fileReceiverWriteBlock(rHandle, кадр.body)
                     if (outcome.result != BraidworkCore.BlockWriteResult.DUPLICATE) {
-                        transfer.transferredBytes += block.data.size
+                        transfer.transferredBytes = (transfer.transferredBytes + block.data.size).coerceAtMost(transfer.totalSize)
                     }
 
                     val now = System.currentTimeMillis()
@@ -664,76 +621,13 @@ class DeviceDiscovery(
                         transfer.lastCalcTime = now
                     }
 
-                    if (outcome.result == BraidworkCore.BlockWriteResult.COMPLETE || transfer.transferredBytes >= transfer.totalSize) {
-                        // Финализируем приём в ядре Rust: проверяется поточный BLAKE3 хэш всего файла и выполняется атомарный rename в целевую директорию
-                        BraidworkCore.fileReceiverFinish(rHandle)
-                        BraidworkCore.fileReceiverFree(rHandle)
-                        transfer.receiverHandle = 0L
-
-                        // Запоминаем факт успешного завершения для гарантированного ответа на повторные блоки (защита от потерь ACK)
-                        recentlyCompletedTransfers[tidHex] = System.currentTimeMillis()
-
-                        // Отправляем Positive Completion ACK (пустой список missingOffsets подтверждает 100% приём)
-                        val ackFrame = BraidworkCore.fileRequestFrame(block.transferId, LongArray(0))
-                        val h = хэндл.get()
-                        val conn = if (transfer.conn != 0L) transfer.conn else кадр.conn
-                        if (h != 0L && conn != 0L) {
-                            for (attempt in 1..3) {
-                                try {
-                                    BraidworkCore.transportSend(h, conn, ackFrame)
-                                } catch (e: Exception) {
-                                    записать("ошибка отправки Positive ACK (попытка $attempt): ${e.message}")
-                                }
-                                if (attempt < 3) Thread.sleep(20)
-                            }
-                        }
-
-                        val targetFile = transfer.finalFile ?: File(
-                            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                            "Braidwork/${transfer.fileName}"
-                        )
-                        android.media.MediaScannerConnection.scanFile(context, arrayOf(targetFile.absolutePath), null, null)
-
-                        transfer.done = true
-                        activeTransfers.remove(tidHex)
-                        bytesTransferredToday.addAndGet(transfer.totalSize)
-                        filesTransferredCount.incrementAndGet()
-                        saveStats()
-                        completedTransfers.add(0, CompletedTransfer(
-                            fileName = transfer.fileName,
-                            peerName = transfer.peerName,
-                            totalSize = transfer.totalSize,
-                            isIncoming = true,
-                            success = true,
-                        ))
-                        if (completedTransfers.size > 20) completedTransfers.removeAt(completedTransfers.size - 1)
-
-                        записать("файл «${transfer.fileName}» успешно принят и проверен ядром Rust (BLAKE3)")
-                        mainHandler.post {
-                            Toast.makeText(context, "Файл получен: ${transfer.fileName}", Toast.LENGTH_LONG).show()
-                        }
+                    val isComplete = outcome.result == BraidworkCore.BlockWriteResult.COMPLETE ||
+                        BraidworkCore.fileReceiverReceivedChunks(rHandle) >= expectedTotalChunks(transfer.totalSize)
+                    if (isComplete) {
+                        finalizeAndAckIncomingTransfer(transfer, block.transferId, кадр.conn)
                     }
                 } catch (e: Exception) {
-                    записать("ошибка приёма файла «${transfer.fileName}»: ${e.message}")
-                    if (transfer.receiverHandle != 0L) {
-                        try {
-                            BraidworkCore.fileReceiverFree(transfer.receiverHandle)
-                        } catch (_: Exception) {}
-                        transfer.receiverHandle = 0L
-                    }
-                    transfer.tempFile?.delete()
-                    transfer.stateFile?.delete()
-                    transfer.error = e.message ?: "ошибка приёма"
-                    activeTransfers.remove(tidHex)
-                    completedTransfers.add(0, CompletedTransfer(
-                        fileName = transfer.fileName,
-                        peerName = transfer.peerName,
-                        totalSize = transfer.totalSize,
-                        isIncoming = true,
-                        success = false,
-                        error = e.message ?: "ошибка приёма",
-                    ))
-                    if (completedTransfers.size > 20) completedTransfers.removeAt(completedTransfers.size - 1)
+                    failIncomingTransfer(transfer, tidHex, e)
                 }
             }
 
@@ -743,27 +637,28 @@ class DeviceDiscovery(
                     записать("от $кто: запрос докачки (FileRequest) не разобран")
                     return
                 }
-                val tidHex = req.transferId.joinToString("") { "%02x".format(it) }
-
+                val tidHex = req.transferId.toHex()
                 val transfer = activeTransfers[tidHex]
-                if (transfer != null) {
-                    transfer.hasReceivedRequest = true
-                }
+
                 if (req.missingOffsets.isEmpty()) {
-                    // Positive Completion ACK от получателя
-                    записать("от $кто: получено подтверждение завершения доставки (ACK) для файла «${transfer?.fileName ?: tidHex}»")
-                    if (transfer != null) {
+                    // Positive Completion ACK относится только к исходящей передаче (на стороне отправителя)
+                    if (transfer != null && !transfer.isIncoming) {
+                        transfer.hasReceivedRequest = true
                         transfer.done = true
+                        signalConnStateChanged()
+                        записать("от $кто: получено подтверждение завершения доставки (ACK) для файла «${transfer.fileName}»")
                     }
-                } else {
+                } else if (transfer != null && !transfer.isIncoming && transfer.senderHandle != 0L) {
+                    transfer.hasReceivedRequest = true
+                    synchronized(transfer.connLock) {
+                        if (кадр.conn != 0L) transfer.conn = кадр.conn
+                    }
                     записать("от $кто: запрос докачки для transfer_id=$tidHex (пропущено блоков: ${req.missingOffsets.size})")
-                    if (transfer != null && transfer.senderHandle != 0L) {
-                        try {
-                            val retransmitted = BraidworkCore.fileSenderHandleRequest(transfer.senderHandle, кадр.body)
-                            записать("FileSender: добавлено $retransmitted блоков в очередь повторной отправки")
-                        } catch (e: Exception) {
-                            записать("ошибка обработки FileRequest в FileSender: ${e.message}")
-                        }
+                    try {
+                        val retransmitted = BraidworkCore.fileSenderHandleRequest(transfer.senderHandle, кадр.body)
+                        записать("FileSender: добавлено $retransmitted блоков в очередь повторной отправки")
+                    } catch (e: Exception) {
+                        записать("ошибка обработки FileRequest в FileSender: ${e.message}")
                     }
                 }
             }
@@ -774,6 +669,243 @@ class DeviceDiscovery(
                 "от $кто: сообщение типа ${кадр.kind}, ${кадр.body.size} байт — не разобрано"
             )
         }
+    }
+
+    private fun expectedTotalChunks(totalSize: Long): Long {
+        val cs = BraidworkCore.DEFAULT_CHUNK_SIZE.toLong()
+        return ((totalSize + cs - 1L) / cs).coerceAtLeast(1L)
+    }
+
+    private fun sendMissingChunksRequests(
+        transfer: ActiveTransfer,
+        rHandle: Long,
+        preferredConn: Long,
+    ) {
+        val frames = mutableListOf<ByteArray>()
+        var requestedBlocksTotal = 0
+        try {
+            var startChunkIdx = 0L
+            var isLast = false
+            while (!isLast) {
+                val batch = BraidworkCore.fileReceiverBuildRequestBatch(rHandle, startChunkIdx, 1024)
+                if (batch.frame.isNotEmpty() && batch.missingCount > 0) {
+                    frames.add(batch.frame)
+                    requestedBlocksTotal += batch.missingCount
+                }
+                if (batch.nextChunkIdx <= startChunkIdx || batch.isLast) break
+                startChunkIdx = batch.nextChunkIdx
+                isLast = batch.isLast
+            }
+        } catch (e: Exception) {
+            записать("ошибка сборки FileRequest для докачки: ${e.message}")
+            return
+        }
+
+        if (frames.isEmpty()) return
+
+        val h = хэндл.get()
+        val immediateConn = when {
+            h != 0L && preferredConn != 0L &&
+                BraidworkCore.transportConnState(h, preferredConn) == BraidworkCore.ConnState.READY -> preferredConn
+            h != 0L -> resolveReadyConnForPeer(h, transfer.peerId)
+            else -> 0L
+        }
+
+        var idx = 0
+        if (immediateConn != 0L) {
+            while (idx < frames.size) {
+                try {
+                    BraidworkCore.transportSend(h, immediateConn, frames[idx])
+                    idx++
+                } catch (_: Exception) {
+                    break
+                }
+            }
+        }
+
+        if (idx >= frames.size) {
+            записать("от ${transfer.peerId}: отправлен FileRequest на докачку оставшихся блоков «${transfer.fileName}» (блоков: $requestedBlocksTotal)")
+            return
+        }
+
+        val remaining = frames.subList(idx, frames.size).toList()
+        ackRetryExecutor.execute {
+            for (frame in remaining) {
+                if (transfer.cancelled || transfer.done || !запущен.get()) break
+                try {
+                    sendFrameWithRetry(transfer, frame, maxAttempts = 4)
+                } catch (e: Exception) {
+                    записать("ошибка отложенной отправки FileRequest: ${e.message}")
+                    break
+                }
+            }
+        }
+    }
+
+    private fun dispatchPositiveAck(
+        transferId: ByteArray,
+        tidHex: String,
+        peerId: String,
+        preferConn: Long,
+    ) {
+        val ackFrame = try {
+            BraidworkCore.fileRequestFrame(transferId, LongArray(0))
+        } catch (e: Exception) {
+            записать("ошибка сборки Positive ACK для $tidHex: ${e.message}")
+            return
+        }
+
+        val h = хэндл.get()
+        val sendConn = when {
+            h != 0L && preferConn != 0L &&
+                BraidworkCore.transportConnState(h, preferConn) == BraidworkCore.ConnState.READY -> preferConn
+            h != 0L -> resolveReadyConnForPeer(h, peerId)
+            else -> 0L
+        }
+
+        var immediateOk = false
+        if (sendConn != 0L) {
+            try {
+                BraidworkCore.transportSend(h, sendConn, ackFrame)
+                immediateOk = true
+            } catch (e: Exception) {
+                записать("Positive ACK не ушёл напрямую ($sendConn): ${e.message}, запускаем восстановление...")
+            }
+        }
+
+        if (immediateOk) {
+            // Одно эхо-подтверждение через 40 мс вне потока опроса (защита от обрыва сокета сразу после последнего блока)
+            ackScheduledExecutor.schedule({
+                val curH = хэндл.get()
+                if (curH == 0L || !запущен.get()) return@schedule
+                val state = BraidworkCore.transportConnState(curH, sendConn)
+                if (state == BraidworkCore.ConnState.READY) {
+                    try {
+                        BraidworkCore.transportSend(curH, sendConn, ackFrame)
+                    } catch (_: Exception) {
+                        schedulePositiveAckRecovery(peerId, tidHex, ackFrame)
+                    }
+                } else {
+                    schedulePositiveAckRecovery(peerId, tidHex, ackFrame)
+                }
+            }, 40, TimeUnit.MILLISECONDS)
+        } else {
+            schedulePositiveAckRecovery(peerId, tidHex, ackFrame)
+        }
+    }
+
+    private fun schedulePositiveAckRecovery(
+        peerId: String,
+        tidHex: String,
+        ackFrame: ByteArray,
+    ) {
+        if (!pendingAckRetries.add(tidHex)) return
+        ackRetryExecutor.execute {
+            try {
+                var attempt = 0
+                while (attempt < 5 && запущен.get()) {
+                    attempt++
+                    val conn = waitForPeerReadyConn(
+                        peerId = peerId,
+                        expectedStaticKey = null,
+                        timeoutMs = 15_000L,
+                        isCancelled = { false },
+                    )
+                    if (conn == 0L) {
+                        Thread.sleep((300L * attempt).coerceAtMost(1_500L))
+                        continue
+                    }
+                    val h = хэндл.get()
+                    if (h != 0L) {
+                        try {
+                            BraidworkCore.transportSend(h, conn, ackFrame)
+                            записать("повторный Positive ACK для $tidHex доставлен по соединению $conn")
+                            return@execute
+                        } catch (e: TransportSendException) {
+                            записать("повторная отправка Positive ACK ($attempt/5) не удалась: ${e.message}")
+                            if (e.kind == BraidworkCore.TransportErrorKind.ENCRYPTION_OR_SEND) {
+                                return@execute
+                            }
+                        } catch (e: BraidworkException) {
+                            записать("повторная отправка Positive ACK ($attempt/5) не удалась: ${e.message}")
+                        }
+                    }
+                }
+            } catch (_: InterruptedException) {
+            } finally {
+                pendingAckRetries.remove(tidHex)
+            }
+        }
+    }
+
+    private fun finalizeAndAckIncomingTransfer(
+        transfer: ActiveTransfer,
+        transferId: ByteArray,
+        replyConn: Long,
+    ) {
+        val rHandle = transfer.receiverHandle
+        if (rHandle == 0L) return
+
+        // Критический инвариант: Positive ACK разрешён ТОЛЬКО после полной проверки BLAKE3 и атомарного rename
+        BraidworkCore.fileReceiverFinish(rHandle)
+        BraidworkCore.fileReceiverFree(rHandle)
+        transfer.receiverHandle = 0L
+
+        recordIncomingTransferCompleted(transfer.transferIdHex, transfer.totalSize, transfer.totalHash)
+
+        dispatchPositiveAck(transferId, transfer.transferIdHex, transfer.peerId, replyConn)
+
+        val targetFile = transfer.finalFile ?: File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            "Braidwork/${transfer.fileName}"
+        )
+        android.media.MediaScannerConnection.scanFile(context, arrayOf(targetFile.absolutePath), null, null)
+
+        transfer.done = true
+        activeTransfers.remove(transfer.transferIdHex)
+        bytesTransferredToday.addAndGet(transfer.totalSize)
+        filesTransferredCount.incrementAndGet()
+        saveStats()
+        completedTransfers.add(0, CompletedTransfer(
+            fileName = transfer.fileName,
+            peerName = transfer.peerName,
+            totalSize = transfer.totalSize,
+            isIncoming = true,
+            success = true,
+        ))
+        if (completedTransfers.size > 20) completedTransfers.removeAt(completedTransfers.size - 1)
+
+        записать("файл «${transfer.fileName}» успешно принят и проверен ядром Rust (BLAKE3)")
+        mainHandler.post {
+            Toast.makeText(context, "Файл получен: ${transfer.fileName}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun failIncomingTransfer(
+        transfer: ActiveTransfer,
+        tidHex: String,
+        e: Exception,
+    ) {
+        записать("ошибка приёма файла «${transfer.fileName}»: ${e.message}")
+        if (transfer.receiverHandle != 0L) {
+            try {
+                BraidworkCore.fileReceiverFree(transfer.receiverHandle)
+            } catch (_: Exception) {}
+            transfer.receiverHandle = 0L
+        }
+        transfer.tempFile?.delete()
+        transfer.stateFile?.delete()
+        transfer.error = e.message ?: "ошибка приёма"
+        activeTransfers.remove(tidHex)
+        completedTransfers.add(0, CompletedTransfer(
+            fileName = transfer.fileName,
+            peerName = transfer.peerName,
+            totalSize = transfer.totalSize,
+            isIncoming = true,
+            success = false,
+            error = e.message ?: "ошибка приёма",
+        ))
+        if (completedTransfers.size > 20) completedTransfers.removeAt(completedTransfers.size - 1)
     }
 
     /**
@@ -848,6 +980,9 @@ class DeviceDiscovery(
         var stateFile: File? = null,
         @Volatile var conn: Long = 0L,
         val connLock: Any = Any(),
+        var expectedStaticKey: ByteArray? = null,
+        @Volatile var reconnected: Boolean = false,
+        @Volatile var lastDisconnectMs: Long = 0L,
         var raf: RandomAccessFile? = null,
         var senderHandle: Long = 0L,
         var receiverHandle: Long = 0L,
@@ -859,19 +994,58 @@ class DeviceDiscovery(
         @Volatile var hasReceivedRequest: Boolean = false,
     )
 
+    private data class CompletedIncomingRecord(
+        val completedAtMs: Long,
+        val totalSize: Long,
+        val totalHashHex: String,
+    )
+
+    private data class SavedPeerEndpoint(
+        val peerId: String,
+        val device: Device,
+        val lastConnectedAtMs: Long = 0L,
+        val lastStaticKey: ByteArray? = null,
+    )
+
     private val activeTransfers = ConcurrentHashMap<String, ActiveTransfer>()
-    private val recentlyCompletedTransfers = ConcurrentHashMap<String, Long>()
+    private val completedIncomingTransfers = ConcurrentHashMap<String, CompletedIncomingRecord>()
+    private val pendingAckRetries = ConcurrentHashMap.newKeySet<String>()
     private val incompleteTransfers = ConcurrentHashMap<String, ByteArray>()
     private val completedTransfers = java.util.concurrent.CopyOnWriteArrayList<CompletedTransfer>()
+    private val peerConnectionParams = ConcurrentHashMap<String, SavedPeerEndpoint>()
+    private val подтвержденныеКоннекты = ConcurrentHashMap<Long, String>()
+    private val connWaitLock = ReentrantLock()
+    private val connWaitCondition = connWaitLock.newCondition()
+    private val reconnectLocks = ConcurrentHashMap<String, Any>()
+    private val lastReconnectTriggerMs = ConcurrentHashMap<String, Long>()
+
+    private fun signalConnStateChanged() {
+        connWaitLock.lock()
+        try {
+            connWaitCondition.signalAll()
+        } finally {
+            connWaitLock.unlock()
+        }
+    }
 
     private fun cleanExpiredCompletedTransfers() {
         val now = System.currentTimeMillis()
-        recentlyCompletedTransfers.entries.removeIf { (now - it.value) > 60_000L }
+        // Держим записи о завершённых приёмах 24 часа в RAM (и до 7 дней в SharedPreferences),
+        // чтобы повторный FileOffer/блок после длительного разрыва не привёл к дубликату или таймауту ACK.
+        val it = completedIncomingTransfers.entries.iterator()
+        while (it.hasNext()) {
+            val entry = it.next()
+            if ((now - entry.value.completedAtMs) > 24L * 3600L * 1000L) {
+                it.remove()
+            }
+        }
     }
     private val bytesTransferredToday = AtomicLong(0L)
     private val filesTransferredCount = AtomicInteger(0)
     private val sentClipboardCount = AtomicInteger(0)
     private val fileTransferExecutor = Executors.newSingleThreadExecutor()
+    private val ackRetryExecutor = Executors.newSingleThreadExecutor()
+    private val ackScheduledExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
 
     private val statsPrefs by lazy {
         context.applicationContext.getSharedPreferences("braidwork_stats", Context.MODE_PRIVATE)
@@ -893,7 +1067,7 @@ class DeviceDiscovery(
             val toRemove = mutableListOf<String>()
             val completedKeys = mutableSetOf<String>()
 
-            // 1. Сначала собираем все завершённые передачи
+            // 1. Сначала собираем все завершённые исходящие и входящие передачи
             for ((key, value) in all) {
                 if (key.startsWith("done_") && value is String) {
                     val rawKey = key.removePrefix("done_")
@@ -902,6 +1076,21 @@ class DeviceDiscovery(
                         toRemove.add(key)
                     } else {
                         completedKeys.add(rawKey)
+                    }
+                } else if (key.startsWith("recv_done_") && value is String) {
+                    val tidHex = key.removePrefix("recv_done_")
+                    val parts = value.split(":")
+                    val timestamp = parts.getOrNull(0)?.toLongOrNull() ?: 0L
+                    val size = parts.getOrNull(1)?.toLongOrNull() ?: -1L
+                    val hashHex = parts.getOrNull(2).orEmpty()
+                    if (now - timestamp > 7L * 24 * 3600 * 1000 || tidHex.length != 32) {
+                        toRemove.add(key)
+                    } else {
+                        completedIncomingTransfers[tidHex] = CompletedIncomingRecord(
+                            completedAtMs = timestamp,
+                            totalSize = size,
+                            totalHashHex = hashHex,
+                        )
                     }
                 }
             }
@@ -1013,6 +1202,60 @@ class DeviceDiscovery(
             записать("ПРЕДУПРЕЖДЕНИЕ: сбой фиксации завершения передачи «$transferKey» в SharedPreferences")
         }
         return committed
+    }
+
+    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
+
+    private fun recordIncomingTransferCompleted(
+        tidHex: String,
+        totalSize: Long,
+        totalHash: ByteArray,
+    ) {
+        cleanExpiredCompletedTransfers()
+        val now = System.currentTimeMillis()
+        val hashHex = totalHash.toHex()
+        completedIncomingTransfers[tidHex] = CompletedIncomingRecord(
+            completedAtMs = now,
+            totalSize = totalSize,
+            totalHashHex = hashHex,
+        )
+        try {
+            transferPrefs.edit()
+                .putString("recv_done_$tidHex", "$now:$totalSize:$hashHex")
+                .commit()
+        } catch (_: Exception) {}
+    }
+
+    private fun isIncomingTransferCompleted(
+        tidHex: String,
+        totalSize: Long? = null,
+        totalHash: ByteArray? = null,
+    ): Boolean {
+        cleanExpiredCompletedTransfers()
+        var rec = completedIncomingTransfers[tidHex]
+        if (rec == null) {
+            val saved = try {
+                transferPrefs.getString("recv_done_$tidHex", null)
+            } catch (_: Exception) {
+                null
+            }
+            if (saved != null) {
+                val parts = saved.split(":")
+                val ts = parts.getOrNull(0)?.toLongOrNull() ?: 0L
+                val size = parts.getOrNull(1)?.toLongOrNull() ?: -1L
+                val hashHex = parts.getOrNull(2).orEmpty()
+                if (System.currentTimeMillis() - ts <= 7L * 24 * 3600 * 1000) {
+                    rec = CompletedIncomingRecord(ts, size, hashHex)
+                    completedIncomingTransfers[tidHex] = rec
+                }
+            }
+        }
+        if (rec == null) return false
+        if (totalSize != null && rec.totalSize > 0L && rec.totalSize != totalSize) return false
+        if (totalHash != null && totalHash.isNotEmpty() && rec.totalHashHex.isNotEmpty()) {
+            return rec.totalHashHex == totalHash.toHex()
+        }
+        return true
     }
 
     private fun loadStats() {
@@ -1131,56 +1374,296 @@ class DeviceDiscovery(
      */
     private val соединения = java.util.concurrent.ConcurrentHashMap<Long, String>()
 
-    private fun findConnForDevice(deviceId: String): Long {
-        return соединения.entries.find { it.value == deviceId }?.key ?: 0L
+    private fun peerReconnectLock(peerId: String): Any {
+        reconnectLocks[peerId]?.let { return it }
+        val lock = Any()
+        return reconnectLocks.putIfAbsent(peerId, lock) ?: lock
     }
 
-    private fun waitForReconnection(deviceId: String, timeoutMs: Long = 10000): Long {
-        val start = System.currentTimeMillis()
-        while (System.currentTimeMillis() - start < timeoutMs) {
-            val conn = findConnForDevice(deviceId)
-            if (conn != 0L && BraidworkCore.transportAlive(conn)) {
+    private fun findDeviceForPeer(peerId: String): Device? =
+        снимки.get().devices.firstOrNull { it.deviceId.идентификатор() == peerId }
+            ?: peerConnectionParams[peerId]?.device
+
+    private fun cleanupStaleConnectionsForPeer(h: Long, peerId: String) {
+        if (h == 0L) return
+        val deadConns = mutableListOf<Long>()
+        for ((conn, id) in соединения) {
+            if (id != peerId) continue
+            val state = BraidworkCore.transportConnState(h, conn)
+            if (state == BraidworkCore.ConnState.CLOSED || state == BraidworkCore.ConnState.UNKNOWN) {
+                deadConns.add(conn)
+            }
+        }
+        for (dead in deadConns) {
+            соединения.remove(dead)
+            подтвержденныеКоннекты.remove(dead)
+            отправленоСердцебие.remove(dead)
+            connУстройства.remove(peerId, dead)
+            for (t in activeTransfers.values) {
+                synchronized(t.connLock) {
+                    if (t.conn == dead) {
+                        t.conn = 0L
+                        t.lastDisconnectMs = System.currentTimeMillis()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun resolveReadyConnForPeer(h: Long, peerId: String): Long {
+        if (h == 0L) return 0L
+        val current = connУстройства[peerId]
+        if (current != null &&
+            BraidworkCore.transportConnState(h, current) == BraidworkCore.ConnState.READY
+        ) {
+            return current
+        }
+
+        for ((conn, id) in подтвержденныеКоннекты) {
+            if (id != peerId) continue
+            if (BraidworkCore.transportConnState(h, conn) == BraidworkCore.ConnState.READY) {
+                connУстройства[peerId] = conn
                 return conn
             }
-            Thread.sleep(500)
+        }
+
+        if (current != null) {
+            connУстройства.remove(peerId, current)
         }
         return 0L
     }
 
-    /**
-     * Безопасная отправка кадра с автоматическим переподключением.
-     */
-    private fun sendFrameWithRetry(transfer: ActiveTransfer, frame: ByteArray): Boolean {
-        var attempts = 0
-        while (attempts < 5) {
-            val h = хэндл.get()
-            val conn = synchronized(transfer.connLock) { transfer.conn }
-            if (h == 0L || conn == 0L) {
-                 // Ожидаем появления соединения
-                 if (waitForReconnection(transfer.peerId) == 0L) {
-                     Thread.sleep(1000)
-                     attempts++
-                     continue
-                 }
-                 continue
+    private fun verifyPeerIdentityForConn(
+        h: Long,
+        conn: Long,
+        peerId: String,
+        expectedStaticKey: ByteArray?,
+    ): Boolean {
+        val dev = findDeviceForPeer(peerId)
+        val fp = dev?.fingerprint.orEmpty()
+        if (fp.isNotEmpty() &&
+            TrustStore.get(context).состояние(peerId, fp) == TrustStore.Доверие.ОТПЕЧАТОК_ИЗМЕНИЛСЯ
+        ) {
+            записать("ОТКЛОНЕНО: отпечаток устройства $peerId изменился после переподключения")
+            return false
+        }
+
+        val actualStatic = BraidworkCore.transportConnRemoteStatic(h, conn)
+        val baselineKey = expectedStaticKey ?: peerConnectionParams[peerId]?.lastStaticKey
+        if (baselineKey != null && actualStatic != null && !baselineKey.contentEquals(actualStatic)) {
+            записать("ОТКЛОНЕНО: статический ключ Noise XX для $peerId изменился после переподключения")
+            return false
+        }
+        return true
+    }
+
+    private fun verifyAndBindTransferConn(
+        h: Long,
+        transfer: ActiveTransfer,
+        candidateConn: Long,
+    ): Long {
+        if (h == 0L || candidateConn == 0L) return 0L
+        if (BraidworkCore.transportConnState(h, candidateConn) != BraidworkCore.ConnState.READY) {
+            return 0L
+        }
+        val mappedPeer = подтвержденныеКоннекты[candidateConn] ?: соединения[candidateConn]
+        if (mappedPeer != transfer.peerId) {
+            return 0L
+        }
+        if (!verifyPeerIdentityForConn(h, candidateConn, transfer.peerId, transfer.expectedStaticKey)) {
+            BraidworkCore.transportConnClose(h, candidateConn)
+            подтвержденныеКоннекты.remove(candidateConn)
+            соединения.remove(candidateConn)
+            connУстройства.remove(transfer.peerId, candidateConn)
+            transfer.error = "идентичность удалённого устройства изменилась"
+            transfer.cancelled = true
+            signalConnStateChanged()
+            return 0L
+        }
+
+        val actualStatic = BraidworkCore.transportConnRemoteStatic(h, candidateConn)
+        synchronized(transfer.connLock) {
+            if (transfer.expectedStaticKey == null && actualStatic != null) {
+                transfer.expectedStaticKey = actualStatic
             }
-            try {
-                BraidworkCore.transportSend(h, conn, frame)
-                return true
-            } catch (e: BraidworkException) {
-                if (e.status == BraidworkCore.STATUS_TRANSPORT) {
-                    attempts++
-                    записать("ошибка транспорта (код 6), попытка переподключения $attempts...")
-                    val newConn = waitForReconnection(transfer.peerId)
-                    if (newConn != 0L) {
-                        synchronized(transfer.connLock) { transfer.conn = newConn }
-                    } else {
-                        Thread.sleep(1000)
+            if (transfer.conn != candidateConn) {
+                transfer.conn = candidateConn
+                transfer.reconnected = true
+            }
+            return candidateConn
+        }
+    }
+
+    private fun triggerPeerReconnect(peerId: String) {
+        synchronized(peerReconnectLock(peerId)) {
+            val h = хэндл.get()
+            if (h == 0L || !запущен.get()) return
+            cleanupStaleConnectionsForPeer(h, peerId)
+            if (resolveReadyConnForPeer(h, peerId) != 0L) return
+
+            // Не создаём параллельных сокетов, если рукопожатие Noise XX к этому устройству уже идёт
+            val alreadyHandshaking = соединения.entries.any { (c, id) ->
+                id == peerId &&
+                    BraidworkCore.transportConnState(h, c) == BraidworkCore.ConnState.HANDSHAKING
+            }
+            if (alreadyHandshaking) return
+
+            val now = System.currentTimeMillis()
+            val lastTrigger = lastReconnectTriggerMs[peerId] ?: 0L
+            if (now - lastTrigger < 1_200L) return
+
+            val device = findDeviceForPeer(peerId)
+            if (device == null || device.port <= 0 || device.ipv4.all { it.toInt() == 0 }) return
+            if (просьбы.any { it.deviceId.идентификатор() == peerId }) return
+
+            lastReconnectTriggerMs[peerId] = now
+            записать("авто-переподключение к $peerId (${device.ipv4.адрес()}:${device.port})")
+            просьбы.add(device)
+        }
+    }
+
+    private fun waitForPeerReadyConn(
+        peerId: String,
+        expectedStaticKey: ByteArray?,
+        timeoutMs: Long = 20_000L,
+        isCancelled: () -> Boolean,
+    ): Long {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var stepMs = 150L
+        while (запущен.get() && !isCancelled()) {
+            val h = хэндл.get()
+            if (h != 0L) {
+                cleanupStaleConnectionsForPeer(h, peerId)
+                val ready = resolveReadyConnForPeer(h, peerId)
+                if (ready != 0L) {
+                    if (verifyPeerIdentityForConn(h, ready, peerId, expectedStaticKey)) {
+                        return ready
                     }
-                } else {
-                    // Фатальная ошибка — не переповторяем
-                    throw e
+                    BraidworkCore.transportConnClose(h, ready)
+                    подтвержденныеКоннекты.remove(ready)
+                    соединения.remove(ready)
+                    connУстройства.remove(peerId, ready)
+                    return 0L
                 }
+                triggerPeerReconnect(peerId)
+            }
+
+            val remaining = deadline - System.currentTimeMillis()
+            if (remaining <= 0L) break
+
+            connWaitLock.lock()
+            try {
+                val waitSlice = minOf(stepMs, remaining)
+                if (waitSlice > 0L) {
+                    connWaitCondition.await(waitSlice, TimeUnit.MILLISECONDS)
+                }
+            } finally {
+                connWaitLock.unlock()
+            }
+            stepMs = (stepMs * 2L).coerceAtMost(1_000L)
+        }
+        return 0L
+    }
+
+    private fun waitForReconnection(transfer: ActiveTransfer, timeoutMs: Long = 20_000L): Long {
+        val prevStatus = transfer.statusText
+        transfer.statusText = "Переподключение к ${transfer.peerName}..."
+        val ready = waitForPeerReadyConn(
+            peerId = transfer.peerId,
+            expectedStaticKey = transfer.expectedStaticKey,
+            timeoutMs = timeoutMs,
+            isCancelled = { transfer.cancelled || transfer.done },
+        )
+        if (ready == 0L) return 0L
+        val h = хэндл.get()
+        if (h == 0L) return 0L
+        val bound = verifyAndBindTransferConn(h, transfer, ready)
+        if (bound != 0L) {
+            transfer.statusText = if (prevStatus == "Переподключение к ${transfer.peerName}...") null else prevStatus
+        }
+        return bound
+    }
+
+    /**
+     * Безопасная отправка кадра с синхронизированным переподключением,
+     * классификацией ошибок ядра и защитой от бесконечного цикла.
+     */
+    private fun sendFrameWithRetry(
+        transfer: ActiveTransfer,
+        frame: ByteArray,
+        maxAttempts: Int = 5,
+    ): Boolean {
+        var attempts = 0
+        while (attempts < maxAttempts && !transfer.cancelled && !transfer.done && запущен.get()) {
+            val h = хэндл.get()
+            if (h == 0L) {
+                attempts++
+                transfer.statusText = "Ожидание запуска канала..."
+                Thread.sleep((250L * attempts).coerceAtMost(1_500L))
+                continue
+            }
+
+            var currentConn = synchronized(transfer.connLock) { transfer.conn }
+            val state = if (currentConn != 0L) {
+                BraidworkCore.transportConnState(h, currentConn)
+            } else {
+                BraidworkCore.ConnState.UNKNOWN
+            }
+
+            if (state != BraidworkCore.ConnState.READY) {
+                if (state == BraidworkCore.ConnState.CLOSED || state == BraidworkCore.ConnState.UNKNOWN) {
+                    synchronized(transfer.connLock) {
+                        if (transfer.conn == currentConn) transfer.conn = 0L
+                    }
+                }
+                currentConn = waitForReconnection(transfer, timeoutMs = 20_000L)
+                if (currentConn == 0L) {
+                    attempts++
+                    записать("не удалось дождаться готового соединения к ${transfer.peerName} ($attempts/$maxAttempts)")
+                    Thread.sleep((300L * attempts).coerceAtMost(1_500L))
+                    continue
+                }
+            }
+
+            try {
+                val activeConn = synchronized(transfer.connLock) { transfer.conn }
+                if (activeConn == 0L ||
+                    BraidworkCore.transportConnState(h, activeConn) != BraidworkCore.ConnState.READY
+                ) {
+                    attempts++
+                    continue
+                }
+                BraidworkCore.transportSend(h, activeConn, frame)
+                transfer.statusText = null
+                return true
+            } catch (e: TransportSendException) {
+                when (e.kind) {
+                    BraidworkCore.TransportErrorKind.HANDSHAKE_INCOMPLETE -> {
+                        attempts++
+                        записать("ожидание завершения рукопожатия Noise XX ($attempts/$maxAttempts)...")
+                        waitForReconnection(transfer, timeoutMs = 10_000L)
+                    }
+                    BraidworkCore.TransportErrorKind.CONNECTION_CLOSED -> {
+                        attempts++
+                        записать("соединение разорвано при отправке (${e.message}), переподключаемся ($attempts/$maxAttempts)...")
+                        synchronized(transfer.connLock) { transfer.conn = 0L }
+                        waitForReconnection(transfer, timeoutMs = 20_000L)
+                    }
+                    BraidworkCore.TransportErrorKind.TRANSPORT_UNAVAILABLE -> {
+                        attempts++
+                        записать("транспорт недоступен (${e.message}), пауза ($attempts/$maxAttempts)...")
+                        Thread.sleep((400L * attempts).coerceAtMost(2_000L))
+                    }
+                    BraidworkCore.TransportErrorKind.ENCRYPTION_OR_SEND -> {
+                        // Криптографическую или форматную ошибку никогда не маскируем реконнектом
+                        throw e
+                    }
+                }
+            } catch (e: BraidworkException) {
+                if (e.status == BraidworkCore.STATUS_CRYPTO) throw e
+                attempts++
+                synchronized(transfer.connLock) { transfer.conn = 0L }
+                waitForReconnection(transfer, timeoutMs = 15_000L)
             }
         }
         return false
@@ -1240,6 +1723,14 @@ class DeviceDiscovery(
         // нет, а держать карту после остановки незачем — хэндлы уже мертвы, и
         // первый же `Connected` после перезапуска вёл бы в пустоту.
         соединения.clear()
+        подтвержденныеКоннекты.clear()
+        connУстройства.clear()
+        подтверждено.clear()
+        отправленоСердцебие.clear()
+        for (t in activeTransfers.values) {
+            synchronized(t.connLock) { t.conn = 0L }
+        }
+        signalConnStateChanged()
 
         val h = хэндл.getAndSet(0)
         if (h != 0L) {
@@ -1271,12 +1762,19 @@ class DeviceDiscovery(
      */
     fun connect(устройство: Device) {
         val id = устройство.deviceId.идентификатор()
-
-        // Повторные нажатия в журнал не пишутся: это обычное дело пользователя,
-        // а не событие. Пять нажатий подряд давали пять одинаковых строк и
-        // забивали всё окно, из которого читают причину обрыва.
-        if (соединения.values.contains(id)) return
-        if (просьбы.contains(устройство)) return
+        val h = хэндл.get()
+        if (h != 0L) {
+            cleanupStaleConnectionsForPeer(h, id)
+            val alreadyLiveOrHandshaking = соединения.entries.any { (c, peer) ->
+                peer == id && BraidworkCore.transportConnState(h, c).let {
+                    it == BraidworkCore.ConnState.READY || it == BraidworkCore.ConnState.HANDSHAKING
+                }
+            }
+            if (alreadyLiveOrHandshaking) return
+        } else if (соединения.values.contains(id)) {
+            return
+        }
+        if (просьбы.any { it.deviceId.идентификатор() == id }) return
 
         записать("просьба: подключиться к $id на порт ${устройство.port}")
         просьбы.add(устройство)
@@ -1292,10 +1790,28 @@ class DeviceDiscovery(
             val устройство = просьбы.poll() ?: return
             val id = устройство.deviceId.идентификатор()
 
+            cleanupStaleConnectionsForPeer(h, id)
+            if (resolveReadyConnForPeer(h, id) != 0L) continue
+            val alreadyHandshaking = соединения.entries.any { (c, peer) ->
+                peer == id &&
+                    BraidworkCore.transportConnState(h, c) == BraidworkCore.ConnState.HANDSHAKING
+            }
+            if (alreadyHandshaking) continue
+
             try {
                 val conn = BraidworkCore.transportConnect(h, устройство.ipv4, устройство.port)
+                // Фиксируем только привязку ожидающего рукопожатия к peerId;
+                // активный connУстройства появится строго после завершения Noise XX (TransportEvent.Connected).
                 соединения[conn] = id
-                connУстройства[id] = conn
+                synchronized(peerConnectionParams) {
+                    val prev = peerConnectionParams[id]
+                    peerConnectionParams[id] = SavedPeerEndpoint(
+                        peerId = id,
+                        device = устройство,
+                        lastConnectedAtMs = prev?.lastConnectedAtMs ?: 0L,
+                        lastStaticKey = prev?.lastStaticKey,
+                    )
+                }
                 записать("соединение $conn открыто, ждём рукопожатие")
             } catch (e: Exception) {
                 // Причина показывается пользователю, а не только пишется в
@@ -1405,14 +1921,13 @@ class DeviceDiscovery(
     ): String? {
         соединения[conn]?.let { return it }
 
-        val id = известные.values
-            .firstOrNull { it.ipv4.contentEquals(адрес) }
+        val id = (известные.values.firstOrNull { it.ipv4.contentEquals(адрес) }
+            ?: peerConnectionParams.values.map { it.device }.firstOrNull { it.ipv4.contentEquals(адрес) })
             ?.deviceId
             ?.идентификатор()
             ?: return null
 
         соединения[conn] = id
-        connУстройства[id] = conn
         return id
     }
 
@@ -1465,7 +1980,8 @@ class DeviceDiscovery(
      * которой уже нет.
      */
     private fun пульснутьЖивые(h: Long, теперь: Long) {
-        for ((conn, id) in соединения) {
+        for ((conn, _) in подтвержденныеКоннекты) {
+            if (BraidworkCore.transportConnState(h, conn) != BraidworkCore.ConnState.READY) continue
             val прошло = отправленоСердцебие[conn] ?: 0L
             if (теперь - прошло < ПЕРИОД_СЕРДЦЕБИЕНИЯ_МС) continue
             отправленоСердцебие[conn] = теперь
@@ -1490,8 +2006,11 @@ class DeviceDiscovery(
             записать("буфер обмена пуст — отправлять нечего")
             return "буфер обмена пуст — отправлять нечего"
         }
-        val conn = connУстройства[deviceId] ?: run {
-            val причина = "нет соединения с устройством"
+        val h = хэндл.get()
+        if (h == 0L) return "канал не поднят"
+        val conn = resolveReadyConnForPeer(h, deviceId)
+        if (conn == 0L) {
+            val причина = "нет готового соединения с устройством"
             записать("буфер не отправлен: $причина")
             return причина
         }
@@ -1504,12 +2023,13 @@ class DeviceDiscovery(
     fun отправитьФайлУстройству(deviceId: String, uri: Uri): String? {
         val h = хэндл.get()
         if (h == 0L) return "канал не поднят"
-        val conn = connУстройства[deviceId] ?: return "нет соединения с устройством"
-        val peerName = снимки.get().devices.firstOrNull { it.deviceId.идентификатор() == deviceId }?.name ?: deviceId
+        val conn = resolveReadyConnForPeer(h, deviceId)
+        if (conn == 0L) return "нет готового соединения с устройством (рукопожатие не завершено)"
+        val peerName = findDeviceForPeer(deviceId)?.name ?: deviceId
 
         fileTransferExecutor.execute {
             try {
-                выполнитьОтправкуФайла(h, conn, deviceId, peerName, uri)
+                выполнитьОтправкуФайла(conn, deviceId, peerName, uri)
             } catch (e: Exception) {
                 записать("ошибка отправки файла: ${e.message}")
                 mainHandler.post {
@@ -1520,7 +2040,12 @@ class DeviceDiscovery(
         return null
     }
 
-    private fun выполнитьОтправкуФайла(h: Long, conn: Long, peerId: String, peerName: String, uri: Uri) {
+    private fun выполнитьОтправкуФайла(
+        initialConn: Long,
+        peerId: String,
+        peerName: String,
+        uri: Uri,
+    ) {
         var fileName = "file"
         var fileSize = 0L
 
@@ -1563,7 +2088,15 @@ class DeviceDiscovery(
         записать("подготовка к отправке «$fileName» ($sizeStr)...")
 
         val tempId = ByteArray(16).apply { SecureRandom().nextBytes(this) }
-        var tidHex = tempId.joinToString("") { "%02x".format(it) }
+        var tidHex = tempId.toHex()
+
+        val initialH = хэндл.get()
+        val initialStaticKey = if (initialH != 0L && initialConn != 0L) {
+            BraidworkCore.transportConnRemoteStatic(initialH, initialConn)
+                ?: peerConnectionParams[peerId]?.lastStaticKey
+        } else {
+            peerConnectionParams[peerId]?.lastStaticKey
+        }
 
         val transfer = ActiveTransfer(
             transferIdHex = tidHex,
@@ -1573,6 +2106,8 @@ class DeviceDiscovery(
             totalSize = fileSize,
             totalHash = ByteArray(0),
             isIncoming = false,
+            conn = initialConn,
+            expectedStaticKey = initialStaticKey,
             statusText = "Хэширование...",
         )
         activeTransfers[tidHex] = transfer
@@ -1585,20 +2120,17 @@ class DeviceDiscovery(
             // Считаем общий BLAKE3 хэш файла
             val totalHash = context.contentResolver.openInputStream(uri)?.use { fis ->
                 BraidworkCore.blake3Stream(fis)
-            } ?: run {
-                throw IllegalStateException("не удалось прочитать файл для хэширования")
-            }
+            } ?: throw IllegalStateException("не удалось прочитать файл для хэширования")
 
             if (transfer.cancelled) {
                 throw IllegalStateException("отменено")
             }
 
-            val hashHex = totalHash.take(8).joinToString("") { "%02x".format(it) }
+            val hashHex = totalHash.take(8).toByteArray().toHex()
             val transferKey = "${peerId}_${fileName}_${fileSize}_${hashHex}"
             currentTransferKey = transferKey
 
             // Если есть незавершённая передача этого файла этому получателю — продолжаем её (Resume)
-            // с тем же ID (сохранённым на диске). Для новой самостоятельной отправки генерируем новый случайный ID.
             val existingId = incompleteTransfers[transferKey]
             val transferId = if (existingId != null) {
                 existingId
@@ -1611,7 +2143,7 @@ class DeviceDiscovery(
                 }
                 newId
             }
-            val newTidHex = transferId.joinToString("") { "%02x".format(it) }
+            val newTidHex = transferId.toHex()
 
             activeTransfers.remove(tidHex)
             tidHex = newTidHex
@@ -1629,25 +2161,21 @@ class DeviceDiscovery(
                 chunkSize = BraidworkCore.DEFAULT_CHUNK_SIZE,
             )
             transfer.senderHandle = sHandle
-            transfer.conn = conn
 
-            // Отправляем FileOffer
+            // Отправляем FileOffer безопасно (с учётом состояния рукопожатия и авто-реконнекта)
             val offerFrame = BraidworkCore.fileOfferFrame(transferId, fileName, fileSize, totalHash)
-            BraidworkCore.transportSend(h, conn, offerFrame)
+            if (!sendFrameWithRetry(transfer, offerFrame)) {
+                throw IllegalStateException("не удалось отправить предложение файла: соединение недоступно")
+            }
             записать("предложение файла «$fileName» отправлено")
 
-            // Даём получателю краткую паузу (до 200 мс) на обработку Offer и ответный Resume FileRequest / Positive ACK,
-            // если файл уже частично или полностью на диске получателя (устранение гонки старта передачи).
+            // Краткая пауза на обработку FileOffer и возможный Resume/ACK, если файл уже на диске получателя
             var waitInit = 0
             while (!transfer.done && !transfer.cancelled && !transfer.hasReceivedRequest && waitInit < 20) {
                 Thread.sleep(10)
                 waitInit++
             }
 
-            val maxWaitLoops = ((fileSize / (10 * 1024 * 1024)) * 20 + 200).toInt().coerceAtMost(1200)
-
-            // Читаем и передаём чанки под управлением Rust FileSender
-            val chunkInfo = BraidworkCore.FileSenderChunk()
             val pfd = try {
                 context.contentResolver.openFileDescriptor(uri, "r")
             } catch (_: Exception) {
@@ -1657,82 +2185,23 @@ class DeviceDiscovery(
             if (pfd != null) {
                 pfd.use { descriptor ->
                     FileInputStream(descriptor.fileDescriptor).channel.use { channel ->
-                        fun sendPendingChunks() {
-                            while (BraidworkCore.fileSenderNextChunk(sHandle, chunkInfo)) {
-                                if (transfer.cancelled) {
-                                    throw IllegalStateException("отменено")
-                                }
-
-                                // Противодавление (backpressure): ждём, если сокет не успевает сбрасывать данные в сеть
-                                var waitCount = 0
-                                while (BraidworkCore.transportOutboxLen(h, conn) > 256 * 1024 && waitCount < 300) {
-                                    if (transfer.cancelled) break
-                                    Thread.sleep(5)
-                                    waitCount++
-                                }
-
-                                val buf = java.nio.ByteBuffer.allocate(chunkInfo.length)
-                                channel.position(chunkInfo.offset)
-                                var readTotal = 0
-                                while (readTotal < chunkInfo.length) {
-                                    val r = channel.read(buf)
-                                    if (r <= 0) break
-                                    readTotal += r
-                                }
-
-                                if (readTotal != chunkInfo.length) {
-                                    throw IllegalStateException("неполное чтение блока: прочитано $readTotal из ${chunkInfo.length}")
-                                }
-
-                                val blockFrame = BraidworkCore.fileSenderBuildBlock(sHandle, chunkInfo.offset, buf.array())
-                                
-                                // Retry mechanism
-                                var sent = false
-                                var attempts = 0
-                                while (!sent && attempts < 5) {
-                                    try {
-                                        if (sendFrameWithRetry(transfer, blockFrame)) {
-                                            sent = true
-                                        } else {
-                                            записать("не удалось отправить блок после 5 попыток")
-                                            throw IllegalStateException("сбой доставки блока")
-                                        }
-                                    } catch (e: Exception) {
-                                        записать("ошибка отправки блока: ${e.message}")
-                                        throw e
-                                    }
-                                }
-
-                                transfer.transferredBytes = (chunkInfo.offset + readTotal).coerceAtMost(fileSize)
-
-                                val now = System.currentTimeMillis()
-                                val elapsed = now - transfer.lastCalcTime
-                                if (elapsed >= 500) {
-                                    val bytesDelta = transfer.transferredBytes - transfer.lastCalcBytes
-                                    transfer.speedMbps = (bytesDelta * 8.0) / (elapsed * 1000.0)
-                                    transfer.lastCalcBytes = transfer.transferredBytes
-                                    transfer.lastCalcTime = now
-                                }
-
-                                Thread.sleep(1)
+                        runSenderTransferLoop(transfer, sHandle, fileSize, offerFrame) { offset, length ->
+                            val buf = java.nio.ByteBuffer.allocate(length)
+                            channel.position(offset)
+                            var readTotal = 0
+                            while (readTotal < length) {
+                                val r = channel.read(buf)
+                                if (r <= 0) break
+                                readTotal += r
                             }
-                        }
-
-                        // Первый проход: отправка всех блоков
-                        sendPendingChunks()
-
-                        // Ожидание подтверждения завершения (Positive ACK) или запросов на досылку (Retransmit)
-                        var waitLoop = 0
-                        while (!transfer.done && !transfer.cancelled && waitLoop < maxWaitLoops) {
-                            Thread.sleep(50)
-                            waitLoop++
-                            sendPendingChunks()
+                            if (readTotal != length) {
+                                throw IllegalStateException("неполное чтение блока: прочитано $readTotal из $length")
+                            }
+                            buf.array()
                         }
                     }
                 }
             } else {
-                // Потоковый fallback для URI без прямого файлового дескриптора с поддержкой Retransmit.
-                // Читаем поток последовательно через единый курсор O(N) вместо O(N^2) повторных открытий со смещением 0.
                 var currentStream: java.io.InputStream? = null
                 var currentStreamPos = 0L
 
@@ -1744,98 +2213,49 @@ class DeviceDiscovery(
                     currentStreamPos = 0L
                 }
 
-                fun readChunkFromStream(targetOffset: Long, length: Int): ByteArray {
-                    // Если поток закрыт или целевое смещение позади текущей позиции (retransmit) —
-                    // переоткрываем поток заново
-                    if (currentStream == null || targetOffset < currentStreamPos) {
-                        closeStream()
-                        val newStream = context.contentResolver.openInputStream(uri)
-                            ?: throw IllegalStateException("не удалось открыть поток для чтения $uri")
-                        currentStream = newStream
-                        currentStreamPos = 0L
-                    }
-
-                    val stream = currentStream!!
-                    // Пропускаем байты вперед, если целевое смещение впереди текущей позиции
-                    if (targetOffset > currentStreamPos) {
-                        var needSkip = targetOffset - currentStreamPos
-                        while (needSkip > 0L) {
-                            val skipped = stream.skip(needSkip)
-                            if (skipped <= 0L) {
-                                val discardBuf = ByteArray(needSkip.coerceAtMost(32 * 1024L).toInt())
-                                val readDiscard = stream.read(discardBuf)
-                                if (readDiscard <= 0) break
-                                needSkip -= readDiscard
-                                currentStreamPos += readDiscard
-                            } else {
-                                needSkip -= skipped
-                                currentStreamPos += skipped
-                            }
-                        }
-                        if (currentStreamPos != targetOffset) {
-                            closeStream()
-                            throw IllegalStateException("не удалось сместиться к позиции $targetOffset в потоке")
-                        }
-                    }
-
-                    // Читаем блок нужной длины
-                    val buf = ByteArray(length)
-                    var readTotal = 0
-                    while (readTotal < length) {
-                        val r = stream.read(buf, readTotal, length - readTotal)
-                        if (r <= 0) break
-                        readTotal += r
-                    }
-                    if (readTotal != length) {
-                        closeStream()
-                        throw IllegalStateException("неполное чтение блока по смещению $targetOffset: прочитано $readTotal из $length")
-                    }
-                    currentStreamPos += readTotal
-                    return buf
-                }
-
                 try {
-                    fun sendPendingFallbackChunks() {
-                        while (BraidworkCore.fileSenderNextChunk(sHandle, chunkInfo)) {
-                            if (transfer.cancelled) {
-                                throw IllegalStateException("отменено")
-                            }
-
-                            var waitCount = 0
-                            while (BraidworkCore.transportOutboxLen(h, conn) > 256 * 1024 && waitCount < 300) {
-                                if (transfer.cancelled) break
-                                Thread.sleep(5)
-                                waitCount++
-                            }
-
-                            val blockData = readChunkFromStream(chunkInfo.offset, chunkInfo.length)
-                            val blockFrame = BraidworkCore.fileSenderBuildBlock(sHandle, chunkInfo.offset, blockData)
-                            BraidworkCore.transportSend(h, conn, blockFrame)
-
-                            transfer.transferredBytes = (chunkInfo.offset + chunkInfo.length).coerceAtMost(fileSize)
-
-                            val now = System.currentTimeMillis()
-                            val elapsed = now - transfer.lastCalcTime
-                            if (elapsed >= 500) {
-                                val bytesDelta = transfer.transferredBytes - transfer.lastCalcBytes
-                                transfer.speedMbps = (bytesDelta * 8.0) / (elapsed * 1000.0)
-                                transfer.lastCalcBytes = transfer.transferredBytes
-                                transfer.lastCalcTime = now
-                            }
-
-                            Thread.sleep(1)
+                    runSenderTransferLoop(transfer, sHandle, fileSize, offerFrame) { targetOffset, length ->
+                        if (currentStream == null || targetOffset < currentStreamPos) {
+                            closeStream()
+                            currentStream = context.contentResolver.openInputStream(uri)
+                                ?: throw IllegalStateException("не удалось открыть поток для чтения $uri")
+                            currentStreamPos = 0L
                         }
-                    }
+                        val stream = currentStream!!
+                        if (targetOffset > currentStreamPos) {
+                            var needSkip = targetOffset - currentStreamPos
+                            while (needSkip > 0L) {
+                                val skipped = stream.skip(needSkip)
+                                if (skipped <= 0L) {
+                                    val discardBuf = ByteArray(needSkip.coerceAtMost(32 * 1024L).toInt())
+                                    val readDiscard = stream.read(discardBuf)
+                                    if (readDiscard <= 0) break
+                                    needSkip -= readDiscard
+                                    currentStreamPos += readDiscard
+                                } else {
+                                    needSkip -= skipped
+                                    currentStreamPos += skipped
+                                }
+                            }
+                            if (currentStreamPos != targetOffset) {
+                                closeStream()
+                                throw IllegalStateException("не удалось сместиться к позиции $targetOffset в потоке")
+                            }
+                        }
 
-                    // Первый проход: отправка блоков
-                    sendPendingFallbackChunks()
-
-                    // Ожидание подтверждения завершения (Positive ACK) или запросов на досылку (Retransmit)
-                    var waitLoop = 0
-                    while (!transfer.done && !transfer.cancelled && waitLoop < maxWaitLoops) {
-                        Thread.sleep(50)
-                        waitLoop++
-                        sendPendingFallbackChunks()
+                        val buf = ByteArray(length)
+                        var readTotal = 0
+                        while (readTotal < length) {
+                            val r = stream.read(buf, readTotal, length - readTotal)
+                            if (r <= 0) break
+                            readTotal += r
+                        }
+                        if (readTotal != length) {
+                            closeStream()
+                            throw IllegalStateException("неполное чтение блока по смещению $targetOffset: прочитано $readTotal из $length")
+                        }
+                        currentStreamPos += readTotal
+                        buf
                     }
                 } finally {
                     closeStream()
@@ -1848,7 +2268,7 @@ class DeviceDiscovery(
                         записать("предупреждение: не удалось удалить ключ «$key» из хранилища после отмены")
                     }
                 }
-                throw IllegalStateException("отменено")
+                throw IllegalStateException(transfer.error ?: "отменено")
             }
 
             if (!transfer.done) {
@@ -1897,6 +2317,131 @@ class DeviceDiscovery(
                 error = if (!success) (transferError ?: "сбой передачи") else null,
             ))
             if (completedTransfers.size > 20) completedTransfers.removeAt(completedTransfers.size - 1)
+        }
+    }
+
+    private fun waitForOutboxBackpressure(transfer: ActiveTransfer) {
+        var waitCount = 0
+        while (waitCount < 300 && !transfer.cancelled && !transfer.done && запущен.get()) {
+            val h = хэндл.get()
+            val curConn = synchronized(transfer.connLock) { transfer.conn }
+            if (h == 0L || curConn == 0L) break
+            if (BraidworkCore.transportConnState(h, curConn) != BraidworkCore.ConnState.READY) {
+                break
+            }
+            if (BraidworkCore.transportOutboxLen(h, curConn) <= 256L * 1024L) {
+                break
+            }
+            Thread.sleep(5)
+            waitCount++
+        }
+    }
+
+    private fun runSenderTransferLoop(
+        transfer: ActiveTransfer,
+        sHandle: Long,
+        fileSize: Long,
+        offerFrame: ByteArray,
+        readChunk: (offset: Long, length: Int) -> ByteArray,
+    ) {
+        val chunkInfo = BraidworkCore.FileSenderChunk()
+
+        fun sendPendingChunks(): Boolean {
+            var sentAny = false
+            while (BraidworkCore.fileSenderNextChunk(sHandle, chunkInfo)) {
+                if (transfer.cancelled) throw IllegalStateException("отменено")
+                if (transfer.done) break
+
+                waitForOutboxBackpressure(transfer)
+
+                val data = readChunk(chunkInfo.offset, chunkInfo.length)
+                val blockFrame = BraidworkCore.fileSenderBuildBlock(sHandle, chunkInfo.offset, data)
+
+                if (!sendFrameWithRetry(transfer, blockFrame)) {
+                    throw IllegalStateException("сбой доставки блока после переподключения")
+                }
+
+                sentAny = true
+                transfer.transferredBytes = maxOf(
+                    transfer.transferredBytes,
+                    (chunkInfo.offset + chunkInfo.length).coerceAtMost(fileSize),
+                )
+
+                val now = System.currentTimeMillis()
+                val elapsed = now - transfer.lastCalcTime
+                if (elapsed >= 500) {
+                    val bytesDelta = transfer.transferredBytes - transfer.lastCalcBytes
+                    transfer.speedMbps = (bytesDelta * 8.0) / (elapsed * 1000.0)
+                    transfer.lastCalcBytes = transfer.transferredBytes
+                    transfer.lastCalcTime = now
+                }
+                Thread.sleep(1)
+            }
+            return sentAny
+        }
+
+        // Первый проход: отправка всех блоков файла
+        sendPendingChunks()
+
+        // Ожидание Positive ACK с активным восстановлением связи и повторным зондированием статуса
+        val ackIdleBudgetMs = (35_000L + (fileSize / (1024L * 1024L)) * 500L).coerceIn(35_000L, 180_000L)
+        val totalWaitCapMs = 300_000L
+        val waitStartMs = System.currentTimeMillis()
+        var lastActivityMs = waitStartMs
+        var lastProbeSentMs = 0L
+        var probeCount = 0
+
+        while (!transfer.done && !transfer.cancelled && запущен.get()) {
+            val now = System.currentTimeMillis()
+            if (now - waitStartMs > totalWaitCapMs || now - lastActivityMs > ackIdleBudgetMs) {
+                break
+            }
+
+            val h = хэндл.get()
+            val curConn = synchronized(transfer.connLock) { transfer.conn }
+            val connState = if (h == 0L) {
+                BraidworkCore.ConnState.NO_TRANSPORT
+            } else if (curConn != 0L) {
+                BraidworkCore.transportConnState(h, curConn)
+            } else {
+                BraidworkCore.ConnState.UNKNOWN
+            }
+
+            var shouldProbe = false
+            if (connState != BraidworkCore.ConnState.READY) {
+                transfer.statusText = "Восстановление связи для ACK..."
+                val restoredConn = waitForReconnection(transfer, timeoutMs = 20_000L)
+                if (restoredConn != 0L) {
+                    lastActivityMs = System.currentTimeMillis()
+                    shouldProbe = true
+                }
+            } else if (transfer.reconnected) {
+                transfer.reconnected = false
+                lastActivityMs = System.currentTimeMillis()
+                shouldProbe = true
+            } else if (now - lastProbeSentMs >= 2_500L && probeCount < 15) {
+                shouldProbe = true
+            }
+
+            if (shouldProbe && !transfer.done && !transfer.cancelled) {
+                lastProbeSentMs = System.currentTimeMillis()
+                probeCount++
+                transfer.statusText = "Проверка подтверждения доставки..."
+                записать("запрос статуса/ACK для «${transfer.fileName}» (попытка $probeCount)")
+                if (sendFrameWithRetry(transfer, offerFrame, maxAttempts = 3)) {
+                    lastActivityMs = System.currentTimeMillis()
+                }
+            }
+
+            if (sendPendingChunks()) {
+                val ts = System.currentTimeMillis()
+                lastActivityMs = ts
+                lastProbeSentMs = ts
+            }
+
+            if (!transfer.done && !transfer.cancelled) {
+                Thread.sleep(50)
+            }
         }
     }
 
@@ -1983,34 +2528,32 @@ class DeviceDiscovery(
         val t = activeTransfers.values.firstOrNull { it.fileName == name }
         if (t != null) {
             t.cancelled = true
+            signalConnStateChanged()
             try {
                 t.raf?.close()
             } catch (_: Exception) {}
             t.raf = null
-            if (t.receiverHandle != 0L) {
+            if (t.isIncoming && t.receiverHandle != 0L) {
                 try {
                     BraidworkCore.fileReceiverFree(t.receiverHandle)
                 } catch (_: Exception) {}
                 t.receiverHandle = 0L
             }
-            if (t.senderHandle != 0L) {
-                try {
-                    BraidworkCore.fileSenderFree(t.senderHandle)
-                } catch (_: Exception) {}
-                t.senderHandle = 0L
+            // Исходящий senderHandle освобождается в блоке finally потока отправки без гонки
+            if (t.isIncoming) {
+                t.tempFile?.delete()
+                t.stateFile?.delete()
+                activeTransfers.remove(t.transferIdHex)
+                completedTransfers.add(0, CompletedTransfer(
+                    fileName = t.fileName,
+                    peerName = t.peerName,
+                    totalSize = t.totalSize,
+                    isIncoming = t.isIncoming,
+                    success = false,
+                    error = "отменено пользователем",
+                ))
+                if (completedTransfers.size > 20) completedTransfers.removeAt(completedTransfers.size - 1)
             }
-            t.tempFile?.delete()
-            t.stateFile?.delete()
-            activeTransfers.remove(t.transferIdHex)
-            completedTransfers.add(0, CompletedTransfer(
-                fileName = t.fileName,
-                peerName = t.peerName,
-                totalSize = t.totalSize,
-                isIncoming = t.isIncoming,
-                success = false,
-                error = "отменено пользователем",
-            ))
-            if (completedTransfers.size > 20) completedTransfers.removeAt(completedTransfers.size - 1)
             записать("передача ${t.fileName} отменена")
         }
     }
@@ -2064,36 +2607,41 @@ class DeviceDiscovery(
             when (событие) {
                 is BraidworkCore.TransportEvent.Discovered -> {
                     val id = событие.deviceId
+                    val idStr = id.идентификатор()
                     // Соединение не сбрасывается на каждом объявлении: оно
                     // переживает паузу в сети и обрывается только по событию
                     // FL_EV_CLOSED. Иначе плитка мигала бы «подключено» и
                     // «не подключено» каждые две секунды.
-                    val было = прежние[id.идентификатор()]
-                    прежние[id.идентификатор()] = Device(
+                    val было = прежние[idStr]
+                    val discDevice = Device(
                         deviceId = id,
                         port = событие.port,
                         name = событие.name,
                         ipv4 = событие.ipv4,
-                        // Отпечаток выведен из ключа, а не назван, поэтому он не
-                        // меняется от объявления к объявлению. Пустая строка —
-                        // ядро у напарника старше, и показывать нечего.
                         fingerprint = событие.fingerprint.ifEmpty {
                             было?.fingerprint.orEmpty()
                         },
-                        // Платформа и версия приходят из того же объявления и
-                        // меняться не могут, но на всякий случай берётся прежнее
-                        // значение, если новое пустое: краткие объявления обрезаются
-                        // целиком.
                         platform = событие.platform.ifEmpty { было?.platform.orEmpty() },
                         coreVersion = событие.coreVersion.ifEmpty { было?.coreVersion.orEmpty() },
-                        // Тип устройства — то же объявление, та же осторожность:
-                        // пустое новое значение не затирает прежнее, потому что
-                        // краткое объявление могло обрезаться целиком.
                         deviceKind = событие.deviceKind.ifEmpty { было?.deviceKind.orEmpty() },
-                        connected = подтверждено.contains(id.идентификатор()),
+                        connected = подтверждено.contains(idStr),
                         lastSeenMs = теперь,
                     )
-                    замолчавшие.remove(id.идентификатор())
+                    прежние[idStr] = discDevice
+                    synchronized(peerConnectionParams) {
+                        val prev = peerConnectionParams[idStr]
+                        val sameFp = prev == null || prev.device.fingerprint.isEmpty() ||
+                            discDevice.fingerprint.isEmpty() ||
+                            prev.device.fingerprint == discDevice.fingerprint
+                        val keepKey = if (sameFp) prev?.lastStaticKey else null
+                        peerConnectionParams[idStr] = SavedPeerEndpoint(
+                            peerId = idStr,
+                            device = discDevice,
+                            lastConnectedAtMs = prev?.lastConnectedAtMs ?: 0L,
+                            lastStaticKey = keepKey,
+                        )
+                    }
+                    замолчавшие.remove(idStr)
                     if (!живой) {
                         живой = true
                         проблема = ""
@@ -2106,31 +2654,71 @@ class DeviceDiscovery(
                 is BraidworkCore.TransportEvent.Connected -> {
                     val id = сопоставить(событие.conn, событие.ipv4, прежние)
                     if (id == null) {
-                        // Канал поднят, а с кем — непонятно. Раньше этот случай
-                        // просто пропускался, и в журнале не оставалось ничего:
-                        // ни «рукопожатие прошло», ни объяснения, почему молчок.
+                        // Канал поднят, а с кем — непонятно.
                         записать(
                             "рукопожатие прошло с ${событие.ipv4.адрес()}, " +
                                 "но устройство не опознано — напарник не объявлялся"
                         )
                         continue
                     }
-                    записать("рукопожатие прошло с $id на ${событие.ipv4.адрес()}")
-                    прежние[id]?.let { прежние[id] = it.copy(connected = true) }
+
+                    if (BraidworkCore.transportConnState(h, событие.conn) != BraidworkCore.ConnState.READY) {
+                        continue
+                    }
+
+                    // Проверяем идентичность удалённого устройства сразу после завершения Noise XX
+                    if (!verifyPeerIdentityForConn(h, событие.conn, id, expectedStaticKey = null)) {
+                        BraidworkCore.transportConnClose(h, событие.conn)
+                        соединения.remove(событие.conn)
+                        continue
+                    }
+
+                    val activeStatic = BraidworkCore.transportConnRemoteStatic(h, событие.conn)
+                    val activeTransferMismatch = activeTransfers.values.any { t ->
+                        t.peerId == id && !t.done && !t.cancelled &&
+                            t.expectedStaticKey != null && activeStatic != null &&
+                            !t.expectedStaticKey!!.contentEquals(activeStatic)
+                    }
+                    if (activeTransferMismatch) {
+                        записать("ОТКЛОНЕНО: чужой статический ключ Noise XX для $id во время активной передачи")
+                        BraidworkCore.transportConnClose(h, событие.conn)
+                        соединения.remove(событие.conn)
+                        for (t in activeTransfers.values) {
+                            if (t.peerId == id && !t.done && !t.cancelled) {
+                                t.error = "идентичность удалённого устройства изменилась"
+                                t.cancelled = true
+                            }
+                        }
+                        signalConnStateChanged()
+                        continue
+                    }
+
+                    записать("рукопожатие прошло с $id на ${событие.ipv4.адрес()} (conn=${событие.conn})")
+                    подтвержденныеКоннекты[событие.conn] = id
+                    connУстройства[id] = событие.conn
                     подтверждено.add(id)
-                    // Сердцебиение уходит сразу по рукопожатии: канал только что
-                    // стал готов, и ждать нажатия кнопки — значит оставить его
-                    // пустым. Это первое, что реально уходит по этому каналу, и
-                    // у напарника появится настоящая запись в журнале вместо
-                    // молчания, по которому непонятно, дошло ли что-нибудь.
+                    прежние[id]?.let { прежние[id] = it.copy(connected = true) }
+                    (прежние[id] ?: findDeviceForPeer(id))?.let { dev ->
+                        peerConnectionParams[id] = SavedPeerEndpoint(
+                            peerId = id,
+                            device = dev.copy(connected = true),
+                            lastConnectedAtMs = теперь,
+                            lastStaticKey = activeStatic ?: peerConnectionParams[id]?.lastStaticKey,
+                        )
+                    }
+
+                    // Атомарно переводим активные передачи на новый подтверждённый conn
+                    for (t in activeTransfers.values) {
+                        if (t.peerId == id && !t.done && !t.cancelled) {
+                            verifyAndBindTransferConn(h, t, событие.conn)
+                        }
+                    }
+                    signalConnStateChanged()
+
+                    // Сердцебиение уходит сразу по рукопожатии
                     послатьСердцебиение(событие.conn)
                 }
 
-                // Входящее соединение — вторая половина картины. Раньше оно
-                // молчало, и на втором телефоне журнал выглядел пустым, хотя
-                // именно там видно, кто инициировал. Хуже молчания было то, что
-                // хэндл так и не сопоставлялся с устройством: соединение
-                // доходило до рукопожатия и тихо пропадало.
                 is BraidworkCore.TransportEvent.Incoming -> {
                     val id = сопоставить(событие.conn, событие.ipv4, прежние)
                     записать(
@@ -2141,11 +2729,33 @@ class DeviceDiscovery(
 
                 is BraidworkCore.TransportEvent.Closed -> {
                     val id = соединения.remove(событие.conn)
+                    подтвержденныеКоннекты.remove(событие.conn)
                     отправленоСердцебие.remove(событие.conn)
+
+                    // Инвалидируем умерший conn в активных передачах — старый хэндл больше никогда не используется
+                    for (t in activeTransfers.values) {
+                        synchronized(t.connLock) {
+                            if (t.conn == событие.conn) {
+                                t.conn = 0L
+                                t.lastDisconnectMs = теперь
+                            }
+                        }
+                    }
+
                     if (id != null) {
-                        val другоеConn = соединения.entries.firstOrNull { it.value == id }?.key
+                        val другоеConn = подтвержденныеКоннекты.entries.firstOrNull {
+                            it.value == id &&
+                                BraidworkCore.transportConnState(h, it.key) == BraidworkCore.ConnState.READY
+                        }?.key
                         if (другоеConn != null) {
                             connУстройства[id] = другоеConn
+                            for (t in activeTransfers.values) {
+                                if (t.peerId == id && !t.done && !t.cancelled &&
+                                    synchronized(t.connLock) { t.conn == 0L }
+                                ) {
+                                    verifyAndBindTransferConn(h, t, другоеConn)
+                                }
+                            }
                         } else {
                             connУстройства.remove(id)
                             пульсы.remove(id)
@@ -2153,19 +2763,15 @@ class DeviceDiscovery(
                             замолчавшие.remove(id)
                         }
                     }
+                    signalConnStateChanged()
+
                     if (id == null) {
-                        // Соединение, которое так и не сопоставили. Причину всё
-                        // равно показываем: она объясняет, что произошло, даже
-                        // если устройство в списке не значилось.
                         записать(
                             "соединение с ${событие.ipv4.адрес()} закрыто: " +
                                 "${событие.reasonText()} — устройство не опознано"
                         )
                         continue
                     }
-                    // Причина обязательна: «соединение закрыто» ничего не
-                    // объясняло, а именно это и нужно было выяснить. Различие
-                    // между «напарник закрыл» и «обрыв сети» и есть ответ.
                     записать("соединение $id закрыто: ${событие.reasonText()}, ${событие.ipv4.адрес()}")
                     прежние[id]?.let { прежнее -> прежние[id] = прежнее.copy(connected = false) }
                 }

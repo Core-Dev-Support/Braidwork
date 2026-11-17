@@ -45,8 +45,8 @@ use crate::pb::Hello;
 use crate::pb::MessageKind;
 use crate::session::{Handshake, HandshakeStep, Role, Session};
 use crate::transport::{
-    Channel, CloseReason, Connection, Transport, TransportError, TransportEvent, TransportState,
-    ANNOUNCE_INTERVAL_MS, BROADCAST_ADDR, DISCOVERY_PORT,
+    Channel, CloseReason, ConnState, Connection, Transport, TransportError, TransportEvent,
+    TransportState, ANNOUNCE_INTERVAL_MS, BROADCAST_ADDR, DISCOVERY_PORT,
 };
 
 pub const МАКСИМУМ_ИМЕНИ: usize = crate::discovery::MAX_NAME_LEN;
@@ -429,6 +429,39 @@ impl LanTransport {
     /// Длина очереди неотправленных исходящих данных соединения (в байтах).
     pub fn outbox_len(&self, conn: u64) -> usize {
         self.peers.get(&conn).map(|p| p.outbox.len()).unwrap_or(0)
+    }
+
+    /// Возвращает точное состояние конкретного соединения (идёт ли рукопожатие,
+    /// готово ли к шифрованной передаче, закрыто или отсутствует).
+    pub fn conn_state(&self, conn: u64) -> ConnState {
+        if !matches!(
+            self.state,
+            TransportState::Ready | TransportState::Announcing
+        ) || self.listener.is_none()
+        {
+            return ConnState::NoTransport;
+        }
+        match self.peers.get(&conn) {
+            None => ConnState::NotFound,
+            Some(peer) if peer.dead => ConnState::Closed,
+            Some(peer) => match peer.phase {
+                Phase::Handshake(_) => ConnState::Handshaking,
+                Phase::Data(_) => ConnState::Ready,
+            },
+        }
+    }
+
+    /// Возвращает публичный статический ключ удалённой стороны после завершения
+    /// Noise XX для проверки идентичности устройства при переподключении.
+    pub fn conn_remote_static(&self, conn: u64) -> Option<[u8; 32]> {
+        let peer = self.peers.get(&conn)?;
+        if peer.dead {
+            return None;
+        }
+        match &peer.phase {
+            Phase::Data(session) => session.remote_static(),
+            Phase::Handshake(_) => None,
+        }
     }
 
     /// Повторяет объявление, если подошло время.

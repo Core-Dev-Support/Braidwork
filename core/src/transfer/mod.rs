@@ -275,3 +275,602 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+#[cfg(all(test, feature = "transport-lan"))]
+mod recovery_e2e_tests {
+    use super::*;
+    use crate::crypto::DeviceKeys;
+    use crate::frame;
+    use crate::pb::{FileBlock, FileOffer, FileRequest, MessageKind};
+    use crate::session::Role;
+    use crate::transfer::ack::{build_completion_ack, is_transfer_complete_ack};
+    use crate::transfer::chunk::DEFAULT_CHUNK_SIZE;
+    use crate::transport::lan::LanTransport;
+    use crate::transport::{Channel, ConnState, TransportError, TransportEvent};
+    use prost::Message;
+    use std::collections::{HashMap, HashSet};
+    use std::io::Cursor;
+    use std::net::{Ipv4Addr, SocketAddrV4};
+    use std::path::PathBuf;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    fn make_temp_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("bw_e2e_{}_{}_{}", label, std::process::id(), nanos));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    struct LanPair {
+        a: LanTransport,
+        b: LanTransport,
+        conn_a: u64,
+        conn_b: u64,
+        static_b: [u8; 32],
+    }
+
+    impl LanPair {
+        fn new() -> Self {
+            let keys_a = DeviceKeys::generate();
+            let keys_b = DeviceKeys::generate();
+            let static_b = keys_b.static_public();
+            let mut a = LanTransport::bind(keys_a, "PeerA".into(), "Linux".into(), 0).unwrap();
+            let mut b = LanTransport::bind(keys_b, "PeerB".into(), "Android".into(), 0).unwrap();
+            let (conn_a, conn_b) = Self::handshake_pair(&mut a, &mut b);
+            Self {
+                a,
+                b,
+                conn_a,
+                conn_b,
+                static_b,
+            }
+        }
+
+        fn connect_unready(&mut self) -> u64 {
+            let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, self.b.port());
+            self.a.connect(addr.into()).unwrap()
+        }
+
+        fn handshake_pair(a: &mut LanTransport, b: &mut LanTransport) -> (u64, u64) {
+            let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, b.port());
+            let conn_a = a.connect(addr.into()).unwrap();
+            let conn_b = Self::finish_handshake(a, b, conn_a);
+            (conn_a, conn_b)
+        }
+
+        fn finish_handshake(a: &mut LanTransport, b: &mut LanTransport, conn_a: u64) -> u64 {
+            let mut conn_b = 0u64;
+            let mut connected_a = false;
+            let mut connected_b = false;
+            for _ in 0..100 {
+                for ev in a.poll().unwrap() {
+                    if let TransportEvent::Connected(c) = ev {
+                        if c.handle == conn_a && c.role == Role::Initiator {
+                            connected_a = true;
+                        }
+                    }
+                }
+                for ev in b.poll().unwrap() {
+                    match ev {
+                        TransportEvent::Incoming(c) => {
+                            conn_b = c.handle;
+                        }
+                        TransportEvent::Connected(c) if c.role == Role::Responder => {
+                            conn_b = c.handle;
+                            connected_b = true;
+                        }
+                        _ => {}
+                    }
+                }
+                if connected_a
+                    && connected_b
+                    && a.conn_state(conn_a) == ConnState::Ready
+                    && b.conn_state(conn_b) == ConnState::Ready
+                {
+                    return conn_b;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            panic!("Noise XX рукопожатие не завершилось");
+        }
+
+        fn drop_and_reconnect(&mut self) -> (u64, u64) {
+            let old_a = self.conn_a;
+            let old_b = self.conn_b;
+            let _ = self.b.close(old_b);
+            let mut a_saw_closed = false;
+            for _ in 0..80 {
+                for ev in self.a.poll().unwrap() {
+                    if let TransportEvent::Closed { conn, .. } = ev {
+                        if conn == old_a {
+                            a_saw_closed = true;
+                        }
+                    }
+                }
+                let _ = self.b.poll().unwrap();
+                if a_saw_closed && self.a.conn_state(old_a) != ConnState::Ready {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert!(a_saw_closed, "A должен увидеть Closed для старого conn");
+            assert_ne!(self.a.conn_state(old_a), ConnState::Ready);
+
+            let (new_a, new_b) = Self::handshake_pair(&mut self.a, &mut self.b);
+            assert_ne!(new_a, old_a);
+            assert_eq!(self.a.conn_remote_static(new_a), Some(self.static_b));
+            self.conn_a = new_a;
+            self.conn_b = new_b;
+            (old_a, new_a)
+        }
+    }
+
+    /// Идемпотентный обработчик входящей стороны (зеркалит логику Android-получателя:
+    /// повторный FileOffer, повторный последний блок, защита от дублей и выдача ACK только после BLAKE3).
+    struct ReceiverEndpoint {
+        dir: PathBuf,
+        active: HashMap<Vec<u8>, (FileReceiver, u64)>,
+        completed: HashSet<Vec<u8>>,
+        acks_sent: usize,
+        last_ack_conn: Option<u64>,
+    }
+
+    impl ReceiverEndpoint {
+        fn new(dir: PathBuf) -> Self {
+            Self {
+                dir,
+                active: HashMap::new(),
+                completed: HashSet::new(),
+                acks_sent: 0,
+                last_ack_conn: None,
+            }
+        }
+
+        fn send_ack(&mut self, b: &mut LanTransport, conn: u64, tid: &[u8]) {
+            let ack = build_completion_ack(tid);
+            let frame_bytes = frame::encode(MessageKind::KindFileRequest as i32, 0, &ack).unwrap();
+            b.send(conn, &frame_bytes).unwrap();
+            self.acks_sent += 1;
+            self.last_ack_conn = Some(conn);
+        }
+
+        fn handle_frame(
+            &mut self,
+            b: &mut LanTransport,
+            conn: u64,
+            kind: i32,
+            body: &[u8],
+            suppress_ack_once: &mut bool,
+        ) {
+            if kind == MessageKind::KindFileOffer as i32 {
+                let offer = FileOffer::decode(body).unwrap();
+                let tid = offer.transfer_id.to_vec();
+                if self.completed.contains(&tid) {
+                    self.send_ack(b, conn, &tid);
+                    return;
+                }
+                if let Some((rec, active_conn)) = self.active.get_mut(&tid) {
+                    *active_conn = conn;
+                    let req = rec.build_request();
+                    if is_transfer_complete_ack(&req) {
+                        if rec.finish_and_verify().is_ok() {
+                            self.completed.insert(tid.clone());
+                            self.active.remove(&tid);
+                            self.send_ack(b, conn, &tid);
+                        }
+                    } else {
+                        let req_frame =
+                            frame::encode(MessageKind::KindFileRequest as i32, 0, &req).unwrap();
+                        b.send(conn, &req_frame).unwrap();
+                    }
+                    return;
+                }
+                let temp = self.dir.join("transfer.part");
+                let state = self.dir.join("transfer.state");
+                let dest = self.dir.join(&offer.file_name);
+                let rec =
+                    FileReceiver::from_offer(&offer, temp, dest, Some(state), DEFAULT_CHUNK_SIZE)
+                        .unwrap();
+                self.active.insert(tid, (rec, conn));
+            } else if kind == MessageKind::KindFileBlock as i32 {
+                let block = FileBlock::decode(body).unwrap();
+                let tid = block.transfer_id.to_vec();
+                if self.completed.contains(&tid) {
+                    self.send_ack(b, conn, &tid);
+                    return;
+                }
+                if let Some((rec, active_conn)) = self.active.get_mut(&tid) {
+                    *active_conn = conn;
+                    let outcome = rec.write_block(&block).unwrap();
+                    if outcome == BlockWriteResult::Complete && rec.finish_and_verify().is_ok() {
+                        self.completed.insert(tid.clone());
+                        self.active.remove(&tid);
+                        if *suppress_ack_once {
+                            *suppress_ack_once = false;
+                        } else {
+                            self.send_ack(b, conn, &tid);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn drain_a_into_sender(a: &mut LanTransport, sender: &mut FileSender) -> bool {
+        let mut got_ack = false;
+        for ev in a.poll().unwrap() {
+            if let TransportEvent::Frame { header, body, .. } = ev {
+                if header.kind == MessageKind::KindFileRequest as i32 {
+                    let req = FileRequest::decode(body.as_slice()).unwrap();
+                    if is_transfer_complete_ack(&req) {
+                        got_ack = true;
+                    } else {
+                        sender.handle_request(&req).unwrap();
+                    }
+                }
+            }
+        }
+        got_ack
+    }
+
+    fn drain_b_into_receiver(
+        b: &mut LanTransport,
+        receiver: &mut ReceiverEndpoint,
+        suppress_ack_once: &mut bool,
+    ) {
+        for ev in b.poll().unwrap() {
+            if let TransportEvent::Frame {
+                conn, header, body, ..
+            } = ev
+            {
+                receiver.handle_frame(b, conn, header.kind, &body, suppress_ack_once);
+            }
+        }
+    }
+
+    #[test]
+    fn e2e_обычная_передача_без_разрывов() {
+        let dir = make_temp_dir("normal");
+        let data = vec![0x5Au8; (DEFAULT_CHUNK_SIZE as usize) * 4 + 123];
+        let mut cursor = Cursor::new(data.clone());
+        let mut sender = FileSender::from_reader(
+            b"tid_e2e_normal_1".to_vec(),
+            "normal.bin".into(),
+            &mut cursor,
+            DEFAULT_CHUNK_SIZE,
+        )
+        .unwrap();
+
+        let mut pair = LanPair::new();
+        let mut receiver = ReceiverEndpoint::new(dir.clone());
+        let mut suppress = false;
+
+        let offer_frame =
+            frame::encode(MessageKind::KindFileOffer as i32, 0, &sender.build_offer()).unwrap();
+        pair.a.send(pair.conn_a, &offer_frame).unwrap();
+
+        let mut acked = false;
+        for _ in 0..100 {
+            drain_b_into_receiver(&mut pair.b, &mut receiver, &mut suppress);
+            if drain_a_into_sender(&mut pair.a, &mut sender) {
+                acked = true;
+                break;
+            }
+            if let Some(block) = sender.next_block(&mut cursor).unwrap() {
+                let f = frame::encode(MessageKind::KindFileBlock as i32, 0, &block).unwrap();
+                pair.a.send(pair.conn_a, &f).unwrap();
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        assert!(acked);
+        assert_eq!(std::fs::read(dir.join("normal.bin")).unwrap(), data);
+        assert!(!dir.join("transfer.part").exists());
+        assert!(!dir.join("transfer.state").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn e2e_отправка_до_рукопожатия_отвергается_и_затем_проходит() {
+        let dir = make_temp_dir("handshake_gate");
+        let data = vec![0x11u8; 4096];
+        let mut cursor = Cursor::new(data.clone());
+        let sender = FileSender::from_reader(
+            b"tid_e2e_hs_gate1".to_vec(),
+            "hs.bin".into(),
+            &mut cursor,
+            DEFAULT_CHUNK_SIZE,
+        )
+        .unwrap();
+
+        let mut pair = LanPair::new();
+        let pending_conn = pair.connect_unready();
+        assert_eq!(pair.a.conn_state(pending_conn), ConnState::Handshaking);
+
+        let offer_frame =
+            frame::encode(MessageKind::KindFileOffer as i32, 0, &sender.build_offer()).unwrap();
+        let early = pair.a.send(pending_conn, &offer_frame);
+        assert!(matches!(early, Err(TransportError::Unsupported(_))));
+
+        // После завершения Noise XX кадр уходит успешно
+        let _ = LanPair::finish_handshake(&mut pair.a, &mut pair.b, pending_conn);
+        assert_eq!(pair.a.conn_state(pending_conn), ConnState::Ready);
+        assert!(pair.a.send(pending_conn, &offer_frame).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn e2e_разрыв_переподключение_новый_conn_без_дублей_и_с_blake3() {
+        let dir = make_temp_dir("reconnect");
+        let data = (0..((DEFAULT_CHUNK_SIZE as usize) * 6 + 777))
+            .map(|i| (i % 251) as u8)
+            .collect::<Vec<_>>();
+        let mut cursor = Cursor::new(data.clone());
+        let mut sender = FileSender::from_reader(
+            b"tid_e2e_reconn_1".to_vec(),
+            "photo.bin".into(),
+            &mut cursor,
+            DEFAULT_CHUNK_SIZE,
+        )
+        .unwrap();
+
+        let mut pair = LanPair::new();
+        let mut receiver = ReceiverEndpoint::new(dir.clone());
+        let mut suppress = false;
+
+        let offer_frame =
+            frame::encode(MessageKind::KindFileOffer as i32, 0, &sender.build_offer()).unwrap();
+        pair.a.send(pair.conn_a, &offer_frame).unwrap();
+
+        // Отправляем только 3 блока из 7 по первому соединению conn1
+        for _ in 0..3 {
+            let block = sender.next_block(&mut cursor).unwrap().unwrap();
+            let f = frame::encode(MessageKind::KindFileBlock as i32, 0, &block).unwrap();
+            pair.a.send(pair.conn_a, &f).unwrap();
+        }
+        for _ in 0..30 {
+            drain_b_into_receiver(&mut pair.b, &mut receiver, &mut suppress);
+            if receiver
+                .active
+                .values()
+                .next()
+                .is_some_and(|(r, _)| r.received_chunks_count() == 3)
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(dir.join("transfer.part").exists());
+        assert!(dir.join("transfer.state").exists());
+
+        // Имитация обрыва и переподключения -> conn1 умирает, появляется conn2
+        let (old_conn, new_conn) = pair.drop_and_reconnect();
+        assert!(matches!(
+            pair.a.send(old_conn, &offer_frame),
+            Err(TransportError::NotRunning)
+        ));
+
+        // По conn2 отправляем idempotent FileOffer probe -> получатель сохраняет .part/.state и просит оставшиеся 4 блока
+        pair.a.send(new_conn, &offer_frame).unwrap();
+        let mut acked = false;
+        for _ in 0..120 {
+            drain_b_into_receiver(&mut pair.b, &mut receiver, &mut suppress);
+            if drain_a_into_sender(&mut pair.a, &mut sender) {
+                acked = true;
+                break;
+            }
+            if let Some(block) = sender.next_block(&mut cursor).unwrap() {
+                let f = frame::encode(MessageKind::KindFileBlock as i32, 0, &block).unwrap();
+                pair.a.send(new_conn, &f).unwrap();
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        assert!(acked);
+        assert_eq!(receiver.last_ack_conn, Some(pair.conn_b));
+        assert_eq!(std::fs::read(dir.join("photo.bin")).unwrap(), data);
+        assert!(!dir.join("transfer.part").exists());
+        assert!(!dir.join("transfer.state").exists());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn e2e_потеря_первого_ack_и_идемпотентный_ответ_на_probe() {
+        let dir = make_temp_dir("lost_ack");
+        let data = vec![0x7Cu8; (DEFAULT_CHUNK_SIZE as usize) * 2 + 55];
+        let mut cursor = Cursor::new(data.clone());
+        let mut sender = FileSender::from_reader(
+            b"tid_e2e_lostack1".to_vec(),
+            "ack.bin".into(),
+            &mut cursor,
+            DEFAULT_CHUNK_SIZE,
+        )
+        .unwrap();
+
+        let mut pair = LanPair::new();
+        let mut receiver = ReceiverEndpoint::new(dir.clone());
+        // Первый Positive ACK намеренно теряется по пути!
+        let mut suppress_ack = true;
+
+        let offer_frame =
+            frame::encode(MessageKind::KindFileOffer as i32, 0, &sender.build_offer()).unwrap();
+        pair.a.send(pair.conn_a, &offer_frame).unwrap();
+        while let Some(block) = sender.next_block(&mut cursor).unwrap() {
+            let f = frame::encode(MessageKind::KindFileBlock as i32, 0, &block).unwrap();
+            pair.a.send(pair.conn_a, &f).unwrap();
+        }
+        for _ in 0..50 {
+            drain_b_into_receiver(&mut pair.b, &mut receiver, &mut suppress_ack);
+            assert!(!drain_a_into_sender(&mut pair.a, &mut sender));
+            if receiver.completed.contains(b"tid_e2e_lostack1".as_slice()) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(receiver.completed.contains(b"tid_e2e_lostack1".as_slice()));
+        assert_eq!(receiver.acks_sent, 0);
+
+        // Отправитель не дождался ACK и шлёт повторный FileOffer probe -> получатель идемпотентно отдаёт ACK
+        pair.a.send(pair.conn_a, &offer_frame).unwrap();
+        let mut acked = false;
+        for _ in 0..50 {
+            drain_b_into_receiver(&mut pair.b, &mut receiver, &mut suppress_ack);
+            if drain_a_into_sender(&mut pair.a, &mut sender) {
+                acked = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(acked);
+        assert_eq!(receiver.acks_sent, 1);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        assert_eq!(std::fs::read(dir.join("ack.bin")).unwrap(), data);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn e2e_разрыв_между_последним_блоком_и_ack_и_повторный_ack_на_новый_conn() {
+        let dir = make_temp_dir("drop_before_ack");
+        let data = vec![0x33u8; (DEFAULT_CHUNK_SIZE as usize) * 2];
+        let mut cursor = Cursor::new(data.clone());
+        let mut sender = FileSender::from_reader(
+            b"tid_e2e_dropack1".to_vec(),
+            "lastblock.bin".into(),
+            &mut cursor,
+            DEFAULT_CHUNK_SIZE,
+        )
+        .unwrap();
+
+        let mut pair = LanPair::new();
+        let mut receiver = ReceiverEndpoint::new(dir.clone());
+        let mut suppress_ack = true; // обрыв срывает доставку первого ACK до A
+
+        let offer_frame =
+            frame::encode(MessageKind::KindFileOffer as i32, 0, &sender.build_offer()).unwrap();
+        pair.a.send(pair.conn_a, &offer_frame).unwrap();
+        while let Some(block) = sender.next_block(&mut cursor).unwrap() {
+            let f = frame::encode(MessageKind::KindFileBlock as i32, 0, &block).unwrap();
+            pair.a.send(pair.conn_a, &f).unwrap();
+        }
+        for _ in 0..50 {
+            drain_b_into_receiver(&mut pair.b, &mut receiver, &mut suppress_ack);
+            if receiver.completed.contains(b"tid_e2e_dropack1".as_slice()) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(receiver.completed.contains(b"tid_e2e_dropack1".as_slice()));
+
+        // Связь рвётся между последним блоком и ACK, затем поднимается conn2
+        let (old_conn, new_conn) = pair.drop_and_reconnect();
+        assert_ne!(old_conn, new_conn);
+
+        pair.a.send(new_conn, &offer_frame).unwrap();
+        let mut acked = false;
+        for _ in 0..50 {
+            drain_b_into_receiver(&mut pair.b, &mut receiver, &mut suppress_ack);
+            if drain_a_into_sender(&mut pair.a, &mut sender) {
+                acked = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(acked);
+        assert_eq!(receiver.last_ack_conn, Some(pair.conn_b));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn e2e_дубликат_последнего_блока_после_финализации_безопасен() {
+        let dir = make_temp_dir("dup_last_block");
+        let data = vec![0x99u8; (DEFAULT_CHUNK_SIZE as usize) + 512];
+        let mut cursor = Cursor::new(data.clone());
+        let mut sender = FileSender::from_reader(
+            b"tid_e2e_duplast1".to_vec(),
+            "dup.bin".into(),
+            &mut cursor,
+            DEFAULT_CHUNK_SIZE,
+        )
+        .unwrap();
+
+        let mut pair = LanPair::new();
+        let mut receiver = ReceiverEndpoint::new(dir.clone());
+        let mut suppress = false;
+
+        let offer_frame =
+            frame::encode(MessageKind::KindFileOffer as i32, 0, &sender.build_offer()).unwrap();
+        pair.a.send(pair.conn_a, &offer_frame).unwrap();
+
+        let mut last_block_frame = Vec::new();
+        while let Some(block) = sender.next_block(&mut cursor).unwrap() {
+            last_block_frame = frame::encode(MessageKind::KindFileBlock as i32, 0, &block).unwrap();
+            pair.a.send(pair.conn_a, &last_block_frame).unwrap();
+        }
+        for _ in 0..50 {
+            drain_b_into_receiver(&mut pair.b, &mut receiver, &mut suppress);
+            if drain_a_into_sender(&mut pair.a, &mut sender) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(receiver.completed.contains(b"tid_e2e_duplast1".as_slice()));
+        let first_acks = receiver.acks_sent;
+
+        // После финализации повторно приходит последний блок
+        pair.a.send(pair.conn_a, &last_block_frame).unwrap();
+        for _ in 0..30 {
+            drain_b_into_receiver(&mut pair.b, &mut receiver, &mut suppress);
+            if drain_a_into_sender(&mut pair.a, &mut sender) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        assert_eq!(receiver.acks_sent, first_acks + 1);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        assert_eq!(std::fs::read(dir.join("dup.bin")).unwrap(), data);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn e2e_подмена_данных_ломает_blake3_и_запрещает_ack() {
+        let dir = make_temp_dir("bad_blake3");
+        let data = vec![0x42u8; DEFAULT_CHUNK_SIZE as usize];
+        let mut cursor = Cursor::new(data.clone());
+        let mut sender = FileSender::from_reader(
+            b"tid_e2e_badhash1".to_vec(),
+            "corrupt.bin".into(),
+            &mut cursor,
+            DEFAULT_CHUNK_SIZE,
+        )
+        .unwrap();
+
+        let mut bad_offer = sender.build_offer();
+        bad_offer.total_hash = prost::bytes::Bytes::from(vec![0u8; 32]); // чужой хэш файла
+
+        let temp = dir.join("transfer.part");
+        let state = dir.join("transfer.state");
+        let dest = dir.join("corrupt.bin");
+        let mut rec = FileReceiver::from_offer(
+            &bad_offer,
+            temp,
+            dest.clone(),
+            Some(state),
+            DEFAULT_CHUNK_SIZE,
+        )
+        .unwrap();
+        let block = sender.next_block(&mut cursor).unwrap().unwrap();
+        assert_eq!(rec.write_block(&block).unwrap(), BlockWriteResult::Complete);
+        assert!(
+            rec.finish_and_verify().is_err(),
+            "BLAKE3 несоответствие обязано отклонять финализацию и не выдавать Positive ACK"
+        );
+        assert!(!dest.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

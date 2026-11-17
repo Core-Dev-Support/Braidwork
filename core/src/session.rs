@@ -213,6 +213,13 @@ impl Session {
     pub fn role(&self) -> Role {
         self.role
     }
+
+    /// Публичный статический ключ X25519 удалённой стороны после завершения Noise XX.
+    pub fn remote_static(&self) -> Option<[u8; 32]> {
+        self.transport
+            .get_remote_static()
+            .and_then(|s| s.try_into().ok())
+    }
 }
 
 /// То, что устройство рассказывает о себе словами.

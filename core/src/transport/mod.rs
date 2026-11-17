@@ -28,6 +28,22 @@ use crate::frame::FrameHeader;
 #[cfg(feature = "transport-lan")]
 pub mod lan;
 
+/// Состояние конкретного соединения внутри транспорта.
+#[repr(u32)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ConnState {
+    /// Соединения с таким хэндлом нет (не создано или уже удалено).
+    NotFound = 0,
+    /// Идёт обмен ключами Noise XX; отправлять прикладные кадры ещё рано.
+    Handshaking = 1,
+    /// Рукопожатие Noise XX завершено, соединение готово к шифрованной передаче.
+    Ready = 2,
+    /// Соединение помечено закрытым или оборванным и больше не принимает кадры.
+    Closed = 3,
+    /// Сам транспорт по этому хэндлу не запущен или уже остановлен.
+    NoTransport = 4,
+}
+
 /// Состояние транспорта.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TransportState {

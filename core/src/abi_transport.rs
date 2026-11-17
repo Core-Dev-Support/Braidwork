@@ -24,9 +24,26 @@ use std::sync::OnceLock;
 use crate::crypto::DeviceKeys;
 use crate::registry::Registry;
 use crate::transport::lan::LanTransport;
-use crate::transport::Channel;
-use crate::transport::{TransportEvent, TransportState};
-use crate::{guard, guard_value, FlHandle, FlStatus, FL_ERR_INVALID_ARG, FL_ERR_NO_MEMORY, FL_OK};
+use crate::transport::{Channel, ConnState, TransportError, TransportEvent, TransportState};
+use crate::{
+    guard, guard_value, FlHandle, FlStatus, FL_ERR_CRYPTO, FL_ERR_INVALID_ARG, FL_ERR_NO_MEMORY,
+    FL_ERR_TRANSPORT, FL_OK,
+};
+
+// =============================================================================
+// Состояния соединения (для `fl_transport_conn_state`)
+// =============================================================================
+
+/// Соединения с таким хэндлом нет (не создано или уже удалено).
+pub const FL_CONN_UNKNOWN: u32 = ConnState::NotFound as u32;
+/// Идёт рукопожатие Noise XX; отправлять кадры данных ещё рано.
+pub const FL_CONN_HANDSHAKING: u32 = ConnState::Handshaking as u32;
+/// Рукопожатие завершено, соединение готово к шифрованной отправке кадров.
+pub const FL_CONN_READY: u32 = ConnState::Ready as u32;
+/// Соединение закрыто или оборвано и не принимает данные.
+pub const FL_CONN_CLOSED: u32 = ConnState::Closed as u32;
+/// Сам транспорт не запущен или уже остановлен.
+pub const FL_CONN_NO_TRANSPORT: u32 = ConnState::NoTransport as u32;
 
 // =============================================================================
 // Типы событий
@@ -477,8 +494,67 @@ pub unsafe extern "C" fn fl_transport_send(
 
         match реестр().with(handle, |t| t.send(conn, данные)) {
             Some(Ok(())) => FL_OK,
-            Some(Err(_)) => crate::FL_ERR_TRANSPORT,
+            // Рукопожатие Noise XX не завершено или ошибка формата кадра
+            Some(Err(TransportError::Unsupported(_) | TransportError::Frame(_))) => {
+                FL_ERR_INVALID_ARG
+            }
+            // Ошибка шифрования Noise session.seal
+            Some(Err(TransportError::Other(_))) => FL_ERR_CRYPTO,
+            // Соединение закрыто / отсутствует / сетевая ошибка
+            Some(Err(
+                TransportError::NotRunning
+                | TransportError::Io(_)
+                | TransportError::Unreachable(_)
+                | TransportError::Bind(_),
+            )) => FL_ERR_TRANSPORT,
             None => FL_ERR_INVALID_ARG,
+        }
+    })
+}
+
+/// Возвращает состояние конкретного соединения `conn` внутри транспорта `handle`:
+/// - `FL_CONN_UNKNOWN` (0) — соединения нет или удалено
+/// - `FL_CONN_HANDSHAKING` (1) — идёт рукопожатие Noise XX
+/// - `FL_CONN_READY` (2) — готово к шифрованной отправке кадров
+/// - `FL_CONN_CLOSED` (3) — соединение помечено закрытым/оборванным
+/// - `FL_CONN_NO_TRANSPORT` (4) — транспорт не запущен или освобождён
+#[no_mangle]
+pub extern "C" fn fl_transport_conn_state(handle: FlHandle, conn: u64) -> u32 {
+    guard_value(
+        || {
+            реестр()
+                .with(handle, |t| t.conn_state(conn) as u32)
+                .unwrap_or(FL_CONN_NO_TRANSPORT)
+        },
+        FL_CONN_NO_TRANSPORT,
+    )
+}
+
+/// Копирует 32-байтный статический ключ удалённой стороны (Noise XX) в `out_key`.
+///
+/// Используется для проверки идентичности устройства после переподключения.
+///
+/// # Safety
+/// `out_key` обязан указывать на буфер размером не менее `out_cap` байт (>= 32).
+#[no_mangle]
+pub unsafe extern "C" fn fl_transport_conn_remote_static(
+    handle: FlHandle,
+    conn: u64,
+    out_key: *mut u8,
+    out_cap: usize,
+) -> FlStatus {
+    guard(|| {
+        if out_key.is_null() || out_cap < 32 {
+            return FL_ERR_INVALID_ARG;
+        }
+        match реестр().with(handle, |t| (t.conn_state(conn), t.conn_remote_static(conn))) {
+            None => FL_ERR_INVALID_ARG,
+            Some((ConnState::Ready, Some(key))) => {
+                std::ptr::copy_nonoverlapping(key.as_ptr(), out_key, 32);
+                FL_OK
+            }
+            Some((ConnState::Handshaking, _)) => FL_ERR_INVALID_ARG,
+            Some(_) => FL_ERR_TRANSPORT,
         }
     })
 }
@@ -1157,5 +1233,179 @@ mod tests {
         let a = std::mem::align_of::<FlTransEvent>();
         assert_eq!(s % a, 0);
         assert!(a >= std::mem::align_of::<u64>());
+    }
+
+    unsafe fn опрос_событий(handle: FlHandle, cap: usize) -> Vec<FlTransEvent> {
+        let mut evs = vec![FlTransEvent::default(); cap];
+        let mut payload = vec![0u8; 64 * 1024];
+        let mut used = 0usize;
+        let mut count = 0usize;
+        let st = fl_transport_poll(
+            handle,
+            evs.as_mut_ptr(),
+            evs.len(),
+            payload.as_mut_ptr(),
+            payload.len(),
+            &mut count,
+            &mut used,
+        );
+        assert_eq!(st, FL_OK);
+        evs.truncate(count);
+        evs
+    }
+
+    #[test]
+    fn состояние_и_ошибки_отправки_классифицируются_точно() {
+        let (keys_a, blob_a) = пара();
+        let (keys_b, blob_b) = пара();
+        let ha = unsafe { старт(&blob_a) };
+        let hb = unsafe { старт(&blob_b) };
+        let port_b = fl_transport_port(hb);
+        assert_ne!(port_b, 0);
+
+        // Несуществующий транспорт -> FL_CONN_NO_TRANSPORT и FL_ERR_INVALID_ARG
+        assert_eq!(
+            fl_transport_conn_state(FlHandle(999_999), 1),
+            FL_CONN_NO_TRANSPORT
+        );
+
+        let ip = [127u8, 0, 0, 1];
+        let mut conn1 = FlHandle(0);
+        let st_conn = unsafe { fl_transport_connect(ha, ip.as_ptr(), port_b, &mut conn1) };
+        assert_eq!(st_conn, FL_OK);
+        assert_ne!(conn1.0, 0);
+
+        // Сразу после TCP connect идет рукопожатие Noise XX: отправлять кадры рано
+        assert_eq!(fl_transport_conn_state(ha, conn1.0), FL_CONN_HANDSHAKING);
+
+        let hb_frame = crate::frame::encode(
+            crate::pb::MessageKind::KindHeartbeat as i32,
+            0,
+            &crate::pb::Heartbeat {
+                unix_time_ms: 1,
+                battery_percent: 90,
+                charging: true,
+                transport: crate::pb::TransportKind::TransportLan as i32,
+                measured_kbps: 0,
+            },
+        )
+        .expect("кадр");
+
+        // До завершения рукопожатия отправка отвергается именно как неготовность handshake (FL_ERR_INVALID_ARG)
+        let early_send =
+            unsafe { fl_transport_send(ha, conn1.0, hb_frame.as_ptr(), hb_frame.len()) };
+        assert_eq!(early_send, FL_ERR_INVALID_ARG);
+
+        let mut key_buf = [0u8; 32];
+        assert_eq!(
+            unsafe {
+                fl_transport_conn_remote_static(ha, conn1.0, key_buf.as_mut_ptr(), key_buf.len())
+            },
+            FL_ERR_INVALID_ARG
+        );
+
+        // Доводим рукопожатие Noise XX до Connected
+        let mut connected_a = false;
+        let mut incoming_b = 0u64;
+        for _ in 0..80 {
+            for ev in unsafe { опрос_событий(ha, 16) } {
+                if ev.event_type == FL_EV_CONNECTED && ev.conn == conn1.0 {
+                    connected_a = true;
+                }
+            }
+            for ev in unsafe { опрос_событий(hb, 16) } {
+                if ev.event_type == FL_EV_INCOMING || ev.event_type == FL_EV_CONNECTED {
+                    incoming_b = ev.conn;
+                }
+            }
+            if connected_a && fl_transport_conn_state(hb, incoming_b) == FL_CONN_READY {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(connected_a);
+        assert_eq!(fl_transport_conn_state(ha, conn1.0), FL_CONN_READY);
+        assert_eq!(
+            unsafe {
+                fl_transport_conn_remote_static(ha, conn1.0, key_buf.as_mut_ptr(), key_buf.len())
+            },
+            FL_OK
+        );
+        assert_eq!(key_buf, keys_b.static_public());
+
+        // После рукопожатия отправка работает
+        assert_eq!(
+            unsafe { fl_transport_send(ha, conn1.0, hb_frame.as_ptr(), hb_frame.len()) },
+            FL_OK
+        );
+
+        // Имитируем обрыв/закрытие на стороне B и убеждаемся, что A детектирует закрытие
+        assert_eq!(fl_transport_conn_close(hb, incoming_b), FL_OK);
+        let mut saw_closed = false;
+        for _ in 0..80 {
+            for ev in unsafe { опрос_событий(ha, 16) } {
+                if ev.event_type == FL_EV_CLOSED && ev.conn == conn1.0 {
+                    saw_closed = true;
+                }
+            }
+            let _ = unsafe { опрос_событий(hb, 16) };
+            if saw_closed {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(saw_closed);
+        assert_ne!(fl_transport_conn_state(ha, conn1.0), FL_CONN_READY);
+        // Отправка по мёртвому conn1 возвращает FL_ERR_TRANSPORT
+        assert_eq!(
+            unsafe { fl_transport_send(ha, conn1.0, hb_frame.as_ptr(), hb_frame.len()) },
+            FL_ERR_TRANSPORT
+        );
+
+        // Переподключение: создаётся новый conn2, проверяется идентичность, старый conn1 отвергается
+        let mut conn2 = FlHandle(0);
+        assert_eq!(
+            unsafe { fl_transport_connect(ha, ip.as_ptr(), port_b, &mut conn2) },
+            FL_OK
+        );
+        assert_ne!(conn2.0, conn1.0);
+
+        let mut connected2 = false;
+        for _ in 0..80 {
+            for ev in unsafe { опрос_событий(ha, 16) } {
+                if ev.event_type == FL_EV_CONNECTED && ev.conn == conn2.0 {
+                    connected2 = true;
+                }
+            }
+            let _ = unsafe { опрос_событий(hb, 16) };
+            if connected2 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(connected2);
+        assert_eq!(fl_transport_conn_state(ha, conn2.0), FL_CONN_READY);
+        let mut key_buf2 = [0u8; 32];
+        assert_eq!(
+            unsafe {
+                fl_transport_conn_remote_static(ha, conn2.0, key_buf2.as_mut_ptr(), key_buf2.len())
+            },
+            FL_OK
+        );
+        assert_eq!(key_buf2, keys_b.static_public());
+        assert_eq!(
+            unsafe { fl_transport_send(ha, conn1.0, hb_frame.as_ptr(), hb_frame.len()) },
+            FL_ERR_TRANSPORT
+        );
+        assert_eq!(
+            unsafe { fl_transport_send(ha, conn2.0, hb_frame.as_ptr(), hb_frame.len()) },
+            FL_OK
+        );
+        let _ = keys_a;
+
+        assert_eq!(fl_transport_stop(ha), FL_OK);
+        assert_eq!(fl_transport_conn_state(ha, conn2.0), FL_CONN_NO_TRANSPORT);
+        assert_eq!(fl_transport_free(ha), FL_OK);
+        assert_eq!(fl_transport_free(hb), FL_OK);
     }
 }

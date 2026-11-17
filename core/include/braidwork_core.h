@@ -586,9 +586,27 @@ fl_status fl_transport_connect(uint64_t handle,
  * событию FL_EV_FRAME.
  *
  * До завершения рукопожатия возвращает FL_ERR_INVALID_ARG: шифровать нечем.
+ * При закрытом соединении возвращает FL_ERR_TRANSPORT, при ошибке шифрования —
+ * FL_ERR_CRYPTO.
  */
 fl_status fl_transport_send(uint64_t handle, uint64_t conn,
                             const uint8_t *frame, size_t frame_len);
+
+/* Состояния соединения, возвращаемые fl_transport_conn_state. */
+#define FL_CONN_UNKNOWN       0u /* соединения нет или оно уже удалено */
+#define FL_CONN_HANDSHAKING   1u /* идёт рукопожатие Noise XX */
+#define FL_CONN_READY         2u /* рукопожатие завершено, соединение готово */
+#define FL_CONN_CLOSED        3u /* соединение закрыто/оборвано */
+#define FL_CONN_NO_TRANSPORT  4u /* транспорт по этому handle не запущен/освобождён */
+
+/* Возвращает состояние конкретного соединения conn внутри транспорта handle. */
+uint32_t fl_transport_conn_state(uint64_t handle, uint64_t conn);
+
+/* Копирует 32-байтный статический публичный ключ удалённой стороны после
+ * завершения Noise XX. Требует out_cap >= 32. Если рукопожатие не завершено
+ * или соединение закрыто, возвращает FL_ERR_TRANSPORT или FL_ERR_INVALID_ARG. */
+fl_status fl_transport_conn_remote_static(uint64_t handle, uint64_t conn,
+                                          uint8_t *out_key, size_t out_cap);
 
 /* Возвращает объём неотправленных данных в очереди соединения (в байтах). */
 fl_status fl_transport_outbox_len(uint64_t handle, uint64_t conn, size_t *out_len);

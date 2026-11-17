@@ -47,6 +47,34 @@ object BraidworkCore {
     const val STATUS_CRYPTO = 3
     const val STATUS_NOT_TRUSTED = 4
 
+    /** Состояния конкретного соединения (из `fl_transport_conn_state`). */
+    const val CONN_UNKNOWN = 0
+    const val CONN_HANDSHAKING = 1
+    const val CONN_READY = 2
+    const val CONN_CLOSED = 3
+    const val CONN_NO_TRANSPORT = 4
+
+    enum class ConnState(val code: Int) {
+        UNKNOWN(CONN_UNKNOWN),
+        HANDSHAKING(CONN_HANDSHAKING),
+        READY(CONN_READY),
+        CLOSED(CONN_CLOSED),
+        NO_TRANSPORT(CONN_NO_TRANSPORT);
+
+        companion object {
+            fun fromCode(code: Int): ConnState =
+                entries.firstOrNull { it.code == code } ?: UNKNOWN
+        }
+    }
+
+    /** Классификация ошибок отправки кадра по каналу. */
+    enum class TransportErrorKind {
+        CONNECTION_CLOSED,
+        HANDSHAKE_INCOMPLETE,
+        TRANSPORT_UNAVAILABLE,
+        ENCRYPTION_OR_SEND,
+    }
+
     /**
      * Канал не в состоянии принять: рукопожатие не завершено, соединения нет.
      *
@@ -687,8 +715,37 @@ object BraidworkCore {
 
     /** Жив ли ещё транспорт по этому хэндлу. */
     fun transportAlive(handle: Long): Boolean {
+        if (handle == 0L) return false
         ensureLoaded()
         return nativeTransportAlive(handle) == 1
+    }
+
+    /** Точное состояние конкретного соединения `conn` внутри транспорта `handle`. */
+    fun transportConnState(handle: Long, conn: Long): ConnState {
+        if (handle == 0L) return ConnState.NO_TRANSPORT
+        if (conn == 0L) return ConnState.UNKNOWN
+        ensureLoaded()
+        return ConnState.fromCode(nativeTransportConnState(handle, conn))
+    }
+
+    /** Готово ли конкретное соединение к шифрованной передаче (Noise XX завершён). */
+    fun transportConnAlive(handle: Long, conn: Long): Boolean =
+        transportConnState(handle, conn) == ConnState.READY
+
+    /** Принудительно закрывает конкретное соединение внутри транспорта. */
+    fun transportConnClose(handle: Long, conn: Long) {
+        if (handle == 0L || conn == 0L) return
+        ensureLoaded()
+        nativeTransportConnClose(handle, conn)
+    }
+
+    /** Возвращает 32-байтный статический ключ X25519 удалённой стороны, если соединение готово. */
+    fun transportConnRemoteStatic(handle: Long, conn: Long): ByteArray? {
+        if (handle == 0L || conn == 0L) return null
+        ensureLoaded()
+        val key = ByteArray(32)
+        val status = nativeTransportConnRemoteStatic(handle, conn, key)
+        return if (status == STATUS_OK) key else null
     }
 
     /**
@@ -716,19 +773,38 @@ object BraidworkCore {
         require(frame.isNotEmpty()) { "пустой кадр отправлять нечем" }
         ensureLoaded()
 
+        if (handle == 0L) {
+            throw TransportSendException(
+                STATUS_INVALID_ARG,
+                TransportErrorKind.TRANSPORT_UNAVAILABLE,
+                "транспорт не запущен (handle=0)",
+            )
+        }
+
         val status = nativeTransportSend(handle, conn, frame)
         if (status != STATUS_OK) {
-            // Рукопожатие не завершено — самая частая причина, и человеку
-            // сказать «не удалось отправить» бесполезно: он ничего не сможет
-            // с этим сделать. Поэтому в сообщении названа причина.
-            throw BraidworkException(
-                status,
-                if (status == STATUS_TRANSPORT) {
-                    "канал ещё не готов: рукопожатие не завершено"
-                } else {
-                    "не удалось отправить в соединение"
-                },
-            )
+            val connState = transportConnState(handle, conn)
+            val kind = when {
+                status == STATUS_CRYPTO -> TransportErrorKind.ENCRYPTION_OR_SEND
+                connState == ConnState.NO_TRANSPORT -> TransportErrorKind.TRANSPORT_UNAVAILABLE
+                connState == ConnState.HANDSHAKING -> TransportErrorKind.HANDSHAKE_INCOMPLETE
+                connState == ConnState.CLOSED ||
+                    connState == ConnState.UNKNOWN ||
+                    status == STATUS_TRANSPORT -> TransportErrorKind.CONNECTION_CLOSED
+                else -> TransportErrorKind.ENCRYPTION_OR_SEND
+            }
+            val msg = when (kind) {
+                TransportErrorKind.HANDSHAKE_INCOMPLETE ->
+                    "рукопожатие Noise XX ещё не завершено (conn=$conn)"
+                TransportErrorKind.CONNECTION_CLOSED ->
+                    "соединение закрыто или потеряно (conn=$conn, state=$connState)"
+                TransportErrorKind.TRANSPORT_UNAVAILABLE ->
+                    "транспорт недоступен или остановлен"
+                TransportErrorKind.ENCRYPTION_OR_SEND ->
+                    if (status == STATUS_CRYPTO) "ошибка шифрования кадра (STATUS_CRYPTO)"
+                    else "ошибка отправки кадра"
+            }
+            throw TransportSendException(status, kind, msg)
         }
     }
 
@@ -1489,6 +1565,9 @@ object BraidworkCore {
     private external fun nativeTransportStop(handle: Long): Int
     private external fun nativeTransportFree(handle: Long): Int
     private external fun nativeTransportAlive(handle: Long): Int
+    private external fun nativeTransportConnState(handle: Long, conn: Long): Int
+    private external fun nativeTransportConnClose(handle: Long, conn: Long): Int
+    private external fun nativeTransportConnRemoteStatic(handle: Long, conn: Long, outKey: ByteArray): Int
     private external fun nativeFrameEncode(
         kind: Int,
         flags: Int,
@@ -1499,4 +1578,11 @@ object BraidworkCore {
 }
 
 /** Ошибка ядра с её статус-кодом. */
-class BraidworkException(val status: Int, message: String) : RuntimeException("$message (статус $status)")
+open class BraidworkException(val status: Int, message: String) : RuntimeException("$message (статус $status)")
+
+/** Классифицированная ошибка отправки по транспортному соединению. */
+class TransportSendException(
+    status: Int,
+    val kind: BraidworkCore.TransportErrorKind,
+    message: String,
+) : BraidworkException(status, message)
