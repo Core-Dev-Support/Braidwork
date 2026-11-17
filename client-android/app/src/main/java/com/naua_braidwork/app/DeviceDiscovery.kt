@@ -1128,6 +1128,8 @@ class DeviceDiscovery(
      * идентификатором: сопоставить их иначе не с чем, и список не знал бы,
      * какое именно устройство подключилось.
      */
+    private val соединения = java.util.concurrent.ConcurrentHashMap<Long, String>()
+
     private fun findConnForDevice(deviceId: String): Long {
         return соединения.entries.find { it.value == deviceId }?.key ?: 0L
     }
@@ -1655,7 +1657,7 @@ class DeviceDiscovery(
                                         if (e.status == BraidworkCore.STATUS_TRANSPORT && attempts < 4) {
                                             attempts++
                                             записать("соединение потеряно (код 6), ждём восстановления...")
-                                            val newConn = waitForReconnection(transfer.deviceId)
+                                            val newConn = waitForReconnection(transfer.peerId)
                                             if (newConn != 0L) {
                                                 conn = newConn
                                                 transfer.conn = conn
