@@ -1128,7 +1128,21 @@ class DeviceDiscovery(
      * идентификатором: сопоставить их иначе не с чем, и список не знал бы,
      * какое именно устройство подключилось.
      */
-    private val соединения = java.util.concurrent.ConcurrentHashMap<Long, String>()
+    private fun findConnForDevice(deviceId: String): Long {
+        return соединения.entries.find { it.value == deviceId }?.key ?: 0L
+    }
+
+    private fun waitForReconnection(deviceId: String, timeoutMs: Long = 10000): Long {
+        val start = System.currentTimeMillis()
+        while (System.currentTimeMillis() - start < timeoutMs) {
+            val conn = findConnForDevice(deviceId)
+            if (conn != 0L && BraidworkCore.transportAlive(хэндл.get(), conn)) {
+                return conn
+            }
+            Thread.sleep(500)
+        }
+        return 0L
+    }
 
 
     /**
@@ -1629,7 +1643,31 @@ class DeviceDiscovery(
                                 }
 
                                 val blockFrame = BraidworkCore.fileSenderBuildBlock(sHandle, chunkInfo.offset, buf.array())
-                                BraidworkCore.transportSend(h, conn, blockFrame)
+                                
+                                // Retry mechanism
+                                var sent = false
+                                var attempts = 0
+                                while (!sent && attempts < 5) {
+                                    try {
+                                        BraidworkCore.transportSend(h, conn, blockFrame)
+                                        sent = true
+                                    } catch (e: BraidworkException) {
+                                        if (e.status == BraidworkCore.STATUS_TRANSPORT && attempts < 4) {
+                                            attempts++
+                                            записать("соединение потеряно (код 6), ждём восстановления...")
+                                            val newConn = waitForReconnection(transfer.deviceId)
+                                            if (newConn != 0L) {
+                                                conn = newConn
+                                                transfer.conn = conn
+                                                записать("соединение восстановлено, продолжаем передачу")
+                                            } else {
+                                                Thread.sleep(1000)
+                                            }
+                                        } else {
+                                            throw e
+                                        }
+                                    }
+                                }
 
                                 transfer.transferredBytes = (chunkInfo.offset + readTotal).coerceAtMost(fileSize)
 
