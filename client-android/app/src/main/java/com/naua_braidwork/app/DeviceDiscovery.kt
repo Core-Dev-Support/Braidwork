@@ -847,7 +847,7 @@ class DeviceDiscovery(
         var finalFile: File? = null,
         var stateFile: File? = null,
         @Volatile var conn: Long = 0L,
-        private val connLock: Any = Any(),
+        val connLock: Any = Any(),
         var raf: RandomAccessFile? = null,
         var senderHandle: Long = 0L,
         var receiverHandle: Long = 0L,
