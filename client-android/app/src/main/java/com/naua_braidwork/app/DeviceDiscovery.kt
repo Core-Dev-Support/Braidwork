@@ -1135,6 +1135,18 @@ class DeviceDiscovery(
         return соединения.entries.find { it.value == deviceId }?.key ?: 0L
     }
 
+    private fun waitForReconnection(deviceId: String, timeoutMs: Long = 10000): Long {
+        val start = System.currentTimeMillis()
+        while (System.currentTimeMillis() - start < timeoutMs) {
+            val conn = findConnForDevice(deviceId)
+            if (conn != 0L && BraidworkCore.transportAlive(хэндл.get(), conn)) {
+                return conn
+            }
+            Thread.sleep(500)
+        }
+        return 0L
+    }
+
     /**
      * Безопасная отправка кадра с автоматическим переподключением.
      */
