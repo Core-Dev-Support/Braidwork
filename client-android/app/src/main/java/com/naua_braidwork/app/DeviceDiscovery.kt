@@ -1138,7 +1138,7 @@ class DeviceDiscovery(
         val start = System.currentTimeMillis()
         while (System.currentTimeMillis() - start < timeoutMs) {
             val conn = findConnForDevice(deviceId)
-            if (conn != 0L && BraidworkCore.transportAlive(хэндл.get(), conn)) {
+            if (conn != 0L && BraidworkCore.transportAlive(conn)) {
                 return conn
             }
             Thread.sleep(500)
@@ -1659,8 +1659,7 @@ class DeviceDiscovery(
                                             записать("соединение потеряно (код 6), ждём восстановления...")
                                             val newConn = waitForReconnection(transfer.peerId)
                                             if (newConn != 0L) {
-                                                conn = newConn
-                                                transfer.conn = conn
+                                                transfer.conn = newConn
                                                 записать("соединение восстановлено, продолжаем передачу")
                                             } else {
                                                 Thread.sleep(1000)
